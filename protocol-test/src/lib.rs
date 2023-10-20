@@ -1,13 +1,56 @@
-use std::{collections::HashMap, fs::File, path::PathBuf, process::Command};
+use std::{collections::HashMap, ffi::OsString, fs::File, path::PathBuf, process::Command};
 
 use csv::{Reader, ReaderBuilder};
+use rand::prelude::Distribution;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, PartialEq, Eq, Hash)]
-pub struct HookId(String);
+#[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+struct HookId(String);
 
-fn get_counts(executable: PathBuf) -> HashMap<HookId, u32> {
+#[derive(Debug)]
+struct InvocationCounts(HashMap<HookId, u32>);
+
+#[derive(Debug, Default)]
+struct EnvironmentUpdate(HashMap<OsString, OsString>);
+
+#[derive(Debug)]
+struct Traces(HashMap<String, Reader<File>>);
+
+#[derive(Debug)]
+struct DelayVector(Vec<u64>);
+
+struct DelayParams {
+  pub max_expected_wallclock_overhead: u64,
+}
+
+impl InvocationCounts {
+  fn len(&self) -> usize {
+    self.0.values().map(|it| *it as usize).sum::<usize>()
+  }
+  fn to_vec(&self) -> Vec<(&HookId, &u32)> {
+    let mut keys: Vec<_> = self.0.iter().collect();
+    keys.sort();
+    keys
+  }
+}
+
+impl DelayVector {
+  fn random(ic: &InvocationCounts, rng: &mut rand::rngs::ThreadRng, dp: DelayParams) -> Self {
+    let mut v = vec![];
+    v.reserve_exact(ic.len());
+    for _ in 0..ic.len() {
+      v.push(
+        rand::distributions::Uniform::try_from(0..dp.max_expected_wallclock_overhead)
+          .unwrap()
+          .sample(rng),
+      );
+    }
+    Self(v)
+  }
+}
+
+fn get_counts(executable: PathBuf) -> InvocationCounts {
   let output = Command::new(executable.as_os_str())
     .env("LF_LOGTRACE", "YES")
     .output()
@@ -28,7 +71,7 @@ fn get_counts(executable: PathBuf) -> HashMap<HookId, u32> {
       ret.insert(hid, next);
     }
   }
-  ret
+  InvocationCounts(ret)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,13 +96,14 @@ struct TraceRecord {
   extra_delay: u64,
 }
 
-fn get_traces(executable: PathBuf, scratch: PathBuf) -> HashMap<String, Reader<File>> {
+fn get_traces(executable: PathBuf, scratch: PathBuf, evars: EnvironmentUpdate) -> Traces {
   Command::new(
     executable
       .canonicalize()
       .expect("failed to resolve executable path")
       .as_os_str(),
   )
+  .envs(evars.0)
   .current_dir(scratch.clone())
   .output()
   .expect("failed to execute program to get trace");
@@ -100,7 +144,39 @@ fn get_traces(executable: PathBuf, scratch: PathBuf) -> HashMap<String, Reader<F
         .expect("failed to open CSV reader"),
     );
   }
-  ret
+  Traces(ret)
+}
+
+fn stringify_dvec(dvec: &[u64]) -> OsString {
+  OsString::from(dvec.iter().fold(String::from(""), |mut acc, x| {
+    acc.push_str(&x.to_string());
+    acc
+  }))
+}
+
+fn assert_compatible(ic: &InvocationCounts, dvec: &DelayVector) {
+  if ic.len() != dvec.0.len() {
+    panic!("ic and dvec correspond to a different number of hook invocations");
+  }
+}
+
+fn run_with_parameters(
+  executable: PathBuf,
+  scratch: PathBuf,
+  ic: InvocationCounts,
+  dvec: DelayVector,
+) -> Traces {
+  assert_compatible(&ic, &dvec);
+  let mut ev = HashMap::new();
+  let mut cumsum: usize = 0;
+  for (hid, k) in ic.to_vec() {
+    ev.insert(
+      OsString::from(hid.0.clone()),
+      stringify_dvec(&dvec.0[cumsum..cumsum + (*k as usize)]),
+    );
+    cumsum += *k as usize;
+  }
+  get_traces(executable, scratch, EnvironmentUpdate(ev))
 }
 
 #[cfg(test)]
@@ -110,7 +186,7 @@ mod tests {
   use std::{fs::DirEntry, path::PathBuf};
 
   fn tests_relpath() -> PathBuf {
-    PathBuf::from("../../../../lingua-franca/test/C/bin")
+    PathBuf::from("../lf-264/test/C/bin")
   }
 
   fn scratch_relpath() -> PathBuf {
@@ -138,23 +214,28 @@ mod tests {
   fn test_get_traces() {
     for entry in test_progs() {
       println!("{entry:?}");
-      let csvs: HashMap<String, Vec<String>> = get_traces(entry.path(), scratch_relpath())
-        .iter_mut()
-        .map(|(name, reader)| {
-          println!("{name:?}");
-          (
-            name.clone(),
-            reader
-              .deserialize()
-              .map(|r| {
-                println!("{r:?}");
-                let r: TraceRecord = r.expect("could not read record");
-                r.event
-              })
-              .collect(),
-          )
-        })
-        .collect();
+      let csvs: HashMap<String, Vec<String>> = get_traces(
+        entry.path(),
+        scratch_relpath(),
+        EnvironmentUpdate::default(),
+      )
+      .0
+      .iter_mut()
+      .map(|(name, reader)| {
+        println!("{name:?}");
+        (
+          name.clone(),
+          reader
+            .deserialize()
+            .map(|r| {
+              println!("{r:?}");
+              let r: TraceRecord = r.expect("could not read record");
+              r.event
+            })
+            .collect(),
+        )
+      })
+      .collect();
       println!("{csvs:?}");
     }
   }

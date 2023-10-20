@@ -1,0 +1,3 @@
+[submodule "lf-264"]
+	path = lf-264
+	url = https://github.com/lf-lang/lingua-franca.git
