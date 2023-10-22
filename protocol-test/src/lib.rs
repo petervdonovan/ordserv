@@ -9,21 +9,21 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-struct HookId(String);
+pub struct HookId(String);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct InvocationCounts(HashMap<HookId, u32>);
 
 #[derive(Debug, Default)]
-struct EnvironmentUpdate(HashMap<OsString, OsString>);
+pub struct EnvironmentUpdate(HashMap<OsString, OsString>);
 
 #[derive(Debug)]
-struct Traces(HashMap<String, Reader<File>>);
+pub struct Traces(HashMap<String, Reader<File>>);
 
 #[derive(Debug, Serialize, Deserialize)]
-struct DelayVector(Vec<u64>);
+pub struct DelayVector(Vec<u64>);
 #[derive(Debug, Serialize, Deserialize)]
-struct DelayParams {
+pub struct DelayParams {
   pub max_expected_wallclock_overhead: u64,
 }
 

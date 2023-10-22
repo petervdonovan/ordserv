@@ -1,10 +1,12 @@
-use std::{collections::HashMap, ffi::OsString, fs::File, path::PathBuf, process::Command};
+use std::{collections::HashMap, ffi::OsString, path::PathBuf, process::Command};
 
-use csv::{Reader, ReaderBuilder};
+use csv::ReaderBuilder;
 use rand::prelude::Distribution;
 use regex::Regex;
 
-use crate::{DelayParams, DelayVector, EnvironmentUpdate, HookId, InvocationCounts, Traces};
+use crate::{
+  state::Crash, DelayParams, DelayVector, EnvironmentUpdate, HookId, InvocationCounts, Traces,
+};
 
 impl InvocationCounts {
   fn len(&self) -> usize {
@@ -18,7 +20,7 @@ impl InvocationCounts {
 }
 
 impl DelayVector {
-  fn random(ic: &InvocationCounts, rng: &mut rand::rngs::ThreadRng, dp: DelayParams) -> Self {
+  pub fn random(ic: &InvocationCounts, rng: &mut rand::rngs::ThreadRng, dp: &DelayParams) -> Self {
     let mut v = vec![];
     v.reserve_exact(ic.len());
     for _ in 0..ic.len() {
@@ -76,7 +78,7 @@ pub fn get_commit_hash(src_dir: &PathBuf) -> u128 {
   u128::from_str_radix(s.trim(), 16).expect("failed to parse commit hash")
 }
 
-fn get_counts(executable: PathBuf) -> InvocationCounts {
+pub fn get_counts(executable: &PathBuf) -> InvocationCounts {
   let output = Command::new(executable.as_os_str())
     .env("LF_LOGTRACE", "YES")
     .output()
@@ -100,8 +102,12 @@ fn get_counts(executable: PathBuf) -> InvocationCounts {
   InvocationCounts(ret)
 }
 
-fn get_traces(executable: PathBuf, scratch: PathBuf, evars: EnvironmentUpdate) -> Traces {
-  Command::new(
+pub fn get_traces(
+  executable: &PathBuf,
+  scratch: &PathBuf,
+  evars: EnvironmentUpdate,
+) -> Result<Traces, Crash> {
+  let run = Command::new(
     executable
       .canonicalize()
       .expect("failed to resolve executable path")
@@ -111,6 +117,13 @@ fn get_traces(executable: PathBuf, scratch: PathBuf, evars: EnvironmentUpdate) -
   .current_dir(scratch.clone())
   .output()
   .expect("failed to execute program to get trace");
+  if !run.status.success() {
+    return Err(Crash {
+      exit_code: run.status.code().expect("failed to get exit code"),
+      stdout: String::from_utf8(run.stdout).expect("expected stdout to be UTF-8"),
+      stderr: String::from_utf8(run.stderr).expect("expected stderr to be UTF-8"),
+    });
+  }
   for entry in scratch
     .read_dir()
     .expect("failed to read tracefiles from scratch")
@@ -148,7 +161,7 @@ fn get_traces(executable: PathBuf, scratch: PathBuf, evars: EnvironmentUpdate) -
         .expect("failed to open CSV reader"),
     );
   }
-  Traces(ret)
+  Ok(Traces(ret))
 }
 
 fn stringify_dvec(dvec: &[u64]) -> OsString {
@@ -164,12 +177,12 @@ fn assert_compatible(ic: &InvocationCounts, dvec: &DelayVector) {
   }
 }
 
-fn run_with_parameters(
-  executable: PathBuf,
-  scratch: PathBuf,
-  ic: InvocationCounts,
-  dvec: DelayVector,
-) -> Traces {
+pub fn run_with_parameters(
+  executable: &PathBuf,
+  scratch: &PathBuf,
+  ic: &InvocationCounts,
+  dvec: &DelayVector,
+) -> Result<Traces, Crash> {
   assert_compatible(&ic, &dvec);
   let mut ev = HashMap::new();
   let mut cumsum: usize = 0;
@@ -211,7 +224,7 @@ mod tests {
   #[test]
   fn test_get_counts() {
     for entry in test_progs() {
-      let counts = get_counts(entry.path());
+      let counts = get_counts(&entry.path());
       println!("{counts:?}");
     }
   }
@@ -221,10 +234,11 @@ mod tests {
     for entry in test_progs() {
       println!("{entry:?}");
       let csvs: HashMap<String, Vec<String>> = get_traces(
-        entry.path(),
-        scratch_relpath(),
+        &entry.path(),
+        &scratch_relpath(),
         EnvironmentUpdate::default(),
       )
+      .unwrap()
       .0
       .iter_mut()
       .map(|(name, reader)| {

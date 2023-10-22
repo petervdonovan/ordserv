@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
-  io::{get_commit_hash, get_lf_files_non_recursive},
-  DelayParams, DelayVector, InvocationCounts, TraceRecord,
+  io::{get_commit_hash, get_counts, get_lf_files_non_recursive, get_traces, run_with_parameters},
+  DelayParams, DelayVector, InvocationCounts, TraceRecord, Traces,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -38,13 +38,17 @@ pub struct CompiledState {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct KnownCountsState {
   cs: CompiledState,
-  ic: InvocationCounts,
-  ovkey: OutputVectorKey,
+  metadata: HashMap<TestId, TestMetadata>,
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AccumulatingTracesState {
   kcs: KnownCountsState,
   runs: HashMap<TestId, TestRuns>,
+}
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TestMetadata {
+  ic: InvocationCounts,
+  ovkey: OutputVectorKey,
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TestRuns {
@@ -89,10 +93,10 @@ struct OutputVectorKey(HashMap<TracePointId, Vec<usize>>);
 
 type SuccessfulRun = (OutputVector, TraceHash, VectorfyStatus);
 #[derive(Debug, Serialize, Deserialize)]
-struct Crash {
-  exit_status: i32,
-  stdout: String,
-  stderr: String,
+pub struct Crash {
+  pub exit_code: i32,
+  pub stdout: String,
+  pub stderr: String,
 }
 
 impl OutputVectorKey {
@@ -209,13 +213,130 @@ impl State {
       .write_all(&rmp_serde::to_vec(self).expect("could not serialize state"))
       .expect("could not write to file");
   }
-  fn run(&mut self) {
-    todo!()
+  fn run(self) -> Self {
+    match self {
+      Self::Initial(is) => Self::Compiled(is.compile()),
+      Self::Compiled(cs) => Self::KnownCounts(cs.known_counts()),
+      Self::KnownCounts(kcs) => Self::AccumulatingTraces(kcs.advance()),
+      Self::AccumulatingTraces(mut ats) => {
+        ats.accumulate_traces();
+        Self::AccumulatingTraces(ats)
+      }
+    }
+  }
+}
+
+impl InitialState {
+  fn compile(self) -> CompiledState {
+    let executables = self
+      .src_files
+      .iter()
+      .map(|(id, src)| {
+        let exe = src
+          .parent()
+          .expect("could not get parent of src")
+          .join("bin")
+          .join(src.file_stem().expect("could not get file stem"));
+        std::process::Command::new("lfcpartest")
+          .args(src)
+          .output()
+          .expect("failed to run lfcpartest");
+        (*id, exe)
+      })
+      .collect();
+    CompiledState {
+      initial: self,
+      executables,
+    }
+  }
+}
+
+impl CompiledState {
+  const ATTEMPTS: u32 = 10;
+  fn get_traces_attempts(executable: &PathBuf, scratch_dir: &PathBuf) -> Traces {
+    for _ in 0..Self::ATTEMPTS {
+      let ret = get_traces(executable, scratch_dir, crate::EnvironmentUpdate::default());
+      if ret.is_ok() {
+        return ret.unwrap();
+      }
+    }
+    panic!("could not get metadata for executable");
+  }
+  fn known_counts(self) -> KnownCountsState {
+    let metadata = self
+      .executables
+      .iter()
+      .map(|(id, exe)| {
+        let ic = get_counts(exe);
+        let mut traces_map = CompiledState::get_traces_attempts(exe, &self.initial.scratch_dir).0;
+        let traces = traces_map
+          .get_mut("rti.csv")
+          .expect("no trace file named rti.csv")
+          .deserialize()
+          .map(|r| r.expect("could not read record"))
+          .map(|tr| TracePointId::new(&tr));
+        let ovkey = OutputVectorKey::new(traces);
+        (*id, TestMetadata { ic, ovkey })
+      })
+      .collect::<HashMap<_, _>>();
+    KnownCountsState { cs: self, metadata }
+  }
+}
+
+impl KnownCountsState {
+  fn advance(self) -> AccumulatingTracesState {
+    AccumulatingTracesState {
+      kcs: self,
+      runs: HashMap::new(),
+    }
   }
 }
 
 impl AccumulatingTracesState {
   fn total_runs(&self) -> usize {
     self.runs.values().map(|tr| tr.raw_traces.len()).sum()
+  }
+  fn get_delay_vector(&self, id: &TestId) -> DelayVector {
+    let params = &self.kcs.cs.initial.delay_params;
+    let mut rng = rand::thread_rng();
+    DelayVector::random(&self.kcs.metadata[id].ic, &mut rng, params)
+  }
+  fn get_run(
+    &self,
+    id: &TestId,
+    exe: &PathBuf,
+    dvec: &DelayVector,
+  ) -> Result<SuccessfulRun, Crash> {
+    let mut traces_map = run_with_parameters(
+      exe,
+      &self.kcs.cs.initial.scratch_dir,
+      &self.kcs.metadata[id].ic,
+      dvec,
+    )?;
+    let raw_traces = traces_map
+      .0
+      .get_mut("rti.csv")
+      .expect("no trace file named rti.csv")
+      .deserialize()
+      .map(|r| r.expect("could not read record"));
+    let (ov, th, status) = self.kcs.metadata[id].ovkey.vectorfy(raw_traces);
+    Ok((ov, th, status))
+  }
+  fn accumulate_traces(&mut self) {
+    // TODO: validate and fix this
+    for (id, exe) in &self.kcs.cs.executables {
+      let dvec = self.get_delay_vector(id);
+      let run = self.get_run(id, exe, &dvec);
+      self
+        .runs
+        .entry(*id)
+        .or_insert(TestRuns {
+          raw_traces: vec![],
+          iomat_global: Array2::zeros((0, 0)),
+          iomats: HashMap::new(),
+        })
+        .raw_traces
+        .push((dvec, run));
+    }
   }
 }
