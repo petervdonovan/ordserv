@@ -258,7 +258,7 @@ impl State {
     };
     format!("{}-{}.mpk", phase, self.get_initial_state().src_commit)
   }
-  fn save_to_scratch_dir(&self) {
+  pub fn save_to_scratch_dir(&self) {
     File::create(self.get_initial_state().scratch_dir.join(self.file_name()))
       .expect("could not create file")
       .write_all(&rmp_serde::to_vec(self).expect("could not serialize state"))
@@ -283,15 +283,30 @@ impl InitialState {
       .src_files
       .iter()
       .map(|(id, src)| {
-        let exe = src
-          .parent()
-          .expect("could not get parent of src")
+        let mut exe = src.clone();
+        loop {
+          exe = exe
+            .parent()
+            .expect("could not get parent of exe")
+            .to_path_buf();
+          if exe.ends_with("src") {
+            break;
+          }
+        }
+        exe = exe
           .join("bin")
           .join(src.file_stem().expect("could not get file stem"));
-        std::process::Command::new("lfcpartest")
-          .args(src)
+        println!("compiling {src:?}...",);
+        let output = std::process::Command::new("lfcpartest")
+          .arg(src)
           .output()
           .expect("failed to run lfcpartest");
+        if !output.status.success() {
+          panic!(
+            "failed to compile {}:\n{output:?}\n",
+            src.to_str().expect("os string is not UTF-8")
+          );
+        }
         (*id, exe)
       })
       .collect();
@@ -304,11 +319,11 @@ impl InitialState {
 
 impl CompiledState {
   const ATTEMPTS: u32 = 10;
-  fn get_traces_attempts(executable: &PathBuf, scratch_dir: &PathBuf) -> Traces {
+  fn get_traces_attempts(executable: &Path, scratch_dir: &Path) -> Traces {
     for _ in 0..Self::ATTEMPTS {
       let ret = get_traces(executable, scratch_dir, crate::EnvironmentUpdate::default());
-      if ret.is_ok() {
-        return ret.unwrap();
+      if let Ok(ret) = ret {
+        return ret;
       }
     }
     panic!("could not get metadata for executable");
@@ -352,12 +367,7 @@ impl AccumulatingTracesState {
     let mut rng = rand::thread_rng();
     DelayVector::random(&self.kcs.metadata[id].ic, &mut rng, params)
   }
-  fn get_run(
-    &self,
-    id: &TestId,
-    exe: &PathBuf,
-    dvec: &DelayVector,
-  ) -> Result<SuccessfulRun, Crash> {
+  fn get_run(&self, id: &TestId, exe: &Path, dvec: &DelayVector) -> Result<SuccessfulRun, Crash> {
     let mut traces_map = run_with_parameters(
       exe,
       &self.kcs.cs.initial.scratch_dir,

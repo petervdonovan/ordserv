@@ -1,4 +1,9 @@
-use std::{collections::HashMap, ffi::OsString, path::PathBuf, process::Command};
+use std::{
+  collections::HashMap,
+  ffi::OsString,
+  path::{Path, PathBuf},
+  process::Command,
+};
 
 use csv::ReaderBuilder;
 use rand::prelude::Distribution;
@@ -34,7 +39,7 @@ impl DelayVector {
   }
 }
 
-pub fn get_lf_files_non_recursive(src_dir: &PathBuf) -> Vec<PathBuf> {
+pub fn get_lf_files_non_recursive(src_dir: &Path) -> Vec<PathBuf> {
   let mut ret = vec![];
   for entry in src_dir.read_dir().expect("failed to read source directory") {
     let path = entry.expect("failed to read dir entry").path();
@@ -45,7 +50,7 @@ pub fn get_lf_files_non_recursive(src_dir: &PathBuf) -> Vec<PathBuf> {
   ret
 }
 
-fn check_if_clean(src_dir: &PathBuf) {
+fn check_if_clean(src_dir: &Path) {
   let output = Command::new("git")
     .arg("status")
     .arg("--porcelain")
@@ -63,8 +68,8 @@ fn check_if_clean(src_dir: &PathBuf) {
   }
 }
 
-pub fn get_commit_hash(src_dir: &PathBuf) -> u128 {
-  check_if_clean(&src_dir);
+pub fn get_commit_hash(src_dir: &Path) -> u128 {
+  check_if_clean(src_dir);
   let output = Command::new("git")
     .arg("rev-parse")
     .arg("HEAD")
@@ -75,7 +80,7 @@ pub fn get_commit_hash(src_dir: &PathBuf) -> u128 {
     panic!("failed to get commit hash");
   }
   let s = std::str::from_utf8(&output.stdout).expect("expected output to be UTF-8");
-  u128::from_str_radix(s.trim(), 16).expect("failed to parse commit hash")
+  u128::from_str_radix(&s.trim()[..32], 16).expect("failed to parse commit hash")
 }
 
 pub fn get_counts(executable: &PathBuf) -> InvocationCounts {
@@ -103,8 +108,8 @@ pub fn get_counts(executable: &PathBuf) -> InvocationCounts {
 }
 
 pub fn get_traces(
-  executable: &PathBuf,
-  scratch: &PathBuf,
+  executable: &Path,
+  scratch: &Path,
   evars: EnvironmentUpdate,
 ) -> Result<Traces, Crash> {
   let run = Command::new(
@@ -178,12 +183,12 @@ fn assert_compatible(ic: &InvocationCounts, dvec: &DelayVector) {
 }
 
 pub fn run_with_parameters(
-  executable: &PathBuf,
-  scratch: &PathBuf,
+  executable: &Path,
+  scratch: &Path,
   ic: &InvocationCounts,
   dvec: &DelayVector,
 ) -> Result<Traces, Crash> {
-  assert_compatible(&ic, &dvec);
+  assert_compatible(ic, dvec);
   let mut ev = HashMap::new();
   let mut cumsum: usize = 0;
   for (hid, k) in ic.to_vec() {

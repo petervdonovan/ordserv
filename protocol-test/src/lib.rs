@@ -1,11 +1,10 @@
+#[allow(dead_code)]
 mod io;
-mod state;
+pub mod state;
 
-use std::{collections::HashMap, ffi::OsString, fs::File, path::PathBuf, process::Command};
+use std::{collections::HashMap, ffi::OsString, fs::File};
 
-use csv::{Reader, ReaderBuilder};
-use rand::prelude::Distribution;
-use regex::Regex;
+use csv::Reader;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
