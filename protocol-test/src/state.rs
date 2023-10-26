@@ -278,6 +278,13 @@ impl State {
 }
 
 impl InitialState {
+  fn in_commit_bin(&self, file_name: &std::ffi::OsStr) -> PathBuf {
+    let mut ret = self.scratch_dir.clone();
+    ret.push(format!("bin{}", self.src_commit));
+    std::fs::create_dir_all(&ret).unwrap_or_else(|_| panic!("failed to create {ret:?}"));
+    ret.push(file_name);
+    ret
+  }
   fn compile(self) -> CompiledState {
     let executables = self
       .src_files
@@ -285,17 +292,17 @@ impl InitialState {
       .map(|(id, src)| {
         let mut exe = src.clone();
         loop {
+          let do_break = exe.ends_with("src");
           exe = exe
             .parent()
             .expect("could not get parent of exe")
             .to_path_buf();
-          if exe.ends_with("src") {
+          if do_break {
             break;
           }
         }
-        exe = exe
-          .join("bin")
-          .join(src.file_stem().expect("could not get file stem"));
+        let src_stem = src.file_stem().expect("could not get file stem");
+        exe = exe.join("bin").join(src_stem);
         println!("compiling {src:?}...",);
         let output = std::process::Command::new("lfcpartest")
           .arg(src)
@@ -307,7 +314,9 @@ impl InitialState {
             src.to_str().expect("os string is not UTF-8")
           );
         }
-        (*id, exe)
+        let exe_scratch = self.in_commit_bin(src_stem);
+        std::fs::copy(exe, &exe_scratch).expect("failed to copy to scratch directory");
+        (*id, exe_scratch)
       })
       .collect();
     CompiledState {
