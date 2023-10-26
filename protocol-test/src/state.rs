@@ -1,6 +1,6 @@
 use std::{
   collections::{hash_map::DefaultHasher, HashMap},
-  fs::File,
+  fs::{DirEntry, File},
   hash::{Hash, Hasher},
   io::Write,
   os::unix::prelude::OsStrExt,
@@ -177,8 +177,56 @@ enum VectorfyStatus {
 }
 
 impl State {
-  fn new(src_dir: PathBuf, scratch_dir: PathBuf, delay_params: DelayParams) -> Self {
+  const INITIAL_NAME: &'static str = "initial";
+  const COMPILED_NAME: &'static str = "compiled";
+  const KNOWN_COUNTS_NAME: &'static str = "known-counts";
+  const ACCUMULATING_TRACES_NAME: &'static str = "accumulating-traces";
+
+  pub fn load(src_dir: PathBuf, scratch_dir: PathBuf, delay_params: DelayParams) -> Self {
     let src_commit = get_commit_hash(&src_dir);
+    let state_files: Vec<_> = scratch_dir
+      .read_dir()
+      .expect("failed to read scratch directory")
+      .map(|it| it.expect("failed to read entry of scratch directory"))
+      .map(|it| {
+        let s = it
+          .file_name()
+          .to_str()
+          .expect("os string is not UTF-8")
+          .to_string();
+        (it, s)
+      })
+      .filter(|(_, f)| f.contains(&src_commit.to_string()))
+      .collect();
+    let get_files = |kind: &str| {
+      state_files
+        .iter()
+        .filter(|(_, f)| f.contains(kind))
+        .collect()
+    };
+    let deserialize_one = |de: Vec<&(DirEntry, _)>| {
+      if de.len() != 1 {
+        panic!("expected exactly one file");
+      }
+      let ret: Self = rmp_serde::from_read(
+        File::open(de.get(0).expect("impossible").0.path()).expect("could not open file"),
+      )
+      .expect("failed to deserialize");
+      ret
+    };
+    let ats_files: Vec<_> = get_files(Self::ACCUMULATING_TRACES_NAME);
+    if !ats_files.is_empty() {
+      return rmp_serde::from_read(File::open(ats_files[0].0.path()).expect("could not open file"))
+        .expect("failed to deserialize");
+    }
+    let kc_files = get_files(Self::KNOWN_COUNTS_NAME);
+    if !kc_files.is_empty() {
+      return deserialize_one(kc_files);
+    }
+    let c_files = get_files(Self::COMPILED_NAME);
+    if !c_files.is_empty() {
+      return deserialize_one(c_files);
+    }
     let src_files = get_lf_files_non_recursive(&src_dir)
       .into_iter()
       .map(|f| (TestId::new(&f), f))
@@ -190,6 +238,7 @@ impl State {
       delay_params,
     })
   }
+
   fn get_initial_state(&self) -> &InitialState {
     match self {
       Self::Initial(s) => s,
@@ -200,10 +249,12 @@ impl State {
   }
   fn file_name(&self) -> String {
     let phase = match self {
-      Self::Initial(_) => "initial".to_string(),
-      Self::Compiled(_) => "compiled".to_string(),
-      Self::KnownCounts(_) => "known-counts".to_string(),
-      Self::AccumulatingTraces(ref ats) => format!("accumulating-traces-{}", ats.total_runs()),
+      Self::Initial(_) => Self::INITIAL_NAME.to_string(),
+      Self::Compiled(_) => Self::COMPILED_NAME.to_string(),
+      Self::KnownCounts(_) => Self::KNOWN_COUNTS_NAME.to_string(),
+      Self::AccumulatingTraces(ref ats) => {
+        format!("{}-{}", Self::ACCUMULATING_TRACES_NAME, ats.total_runs())
+      }
     };
     format!("{}-{}.mpk", phase, self.get_initial_state().src_commit)
   }
@@ -213,7 +264,7 @@ impl State {
       .write_all(&rmp_serde::to_vec(self).expect("could not serialize state"))
       .expect("could not write to file");
   }
-  fn run(self) -> Self {
+  pub fn run(self) -> Self {
     match self {
       Self::Initial(is) => Self::Compiled(is.compile()),
       Self::Compiled(cs) => Self::KnownCounts(cs.known_counts()),
