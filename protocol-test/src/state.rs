@@ -1,3 +1,5 @@
+use rayon::prelude::*;
+
 use std::{
   collections::{hash_map::DefaultHasher, HashMap},
   fs::{DirEntry, File},
@@ -288,7 +290,7 @@ impl InitialState {
   fn compile(self) -> CompiledState {
     let executables = self
       .src_files
-      .iter()
+      .par_iter()
       .map(|(id, src)| {
         let mut exe = src.clone();
         loop {
