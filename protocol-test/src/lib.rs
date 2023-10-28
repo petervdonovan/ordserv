@@ -18,7 +18,9 @@ pub mod exec {
     fmt::{Display, Formatter},
     io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
+    sync::mpsc,
+    thread,
   };
 
   use serde::{Deserialize, Serialize};
@@ -28,6 +30,8 @@ pub mod exec {
 
   #[derive(Debug, Serialize, Deserialize)]
   pub struct Executable(PathBuf);
+
+  const TEST_TIMEOUT_SECS: u64 = 45;
 
   #[derive(Debug, Serialize, Deserialize)]
   pub enum Status {
@@ -87,6 +91,12 @@ pub mod exec {
     }
   }
 
+  impl ExecResult {
+    pub fn retain_output(&mut self, f: impl Fn(&str) -> bool) {
+      self.selected_output.retain(|s| f(s));
+    }
+  }
+
   impl Display for Executable {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
       write!(f, "{}", self.0.display())
@@ -102,7 +112,7 @@ pub mod exec {
       &self,
       env: EnvironmentUpdate,
       cwd: &Path,
-      output_filter: impl Fn(&str) -> bool,
+      output_filter: Box<impl Fn(&str) -> bool + std::marker::Send + 'static>,
     ) -> ExecResult {
       println!("running with evars: {:?}", env.get_evars());
       let mut child = Command::new(
@@ -114,18 +124,28 @@ pub mod exec {
       )
       .envs(env.get_evars())
       .current_dir(cwd)
-      // .stdout(Stdio::piped())
+      .stdout(Stdio::piped())
+      .stderr(Stdio::piped())
       .spawn()
       .expect("failed to execute program");
+      let (tselected_output, rselected_output) = mpsc::channel();
+      let stdout = child.stdout.take();
+      thread::spawn(move || {
+        let selected_output: Vec<String> = BufReader::new(stdout.unwrap())
+          .lines()
+          .map(|l| l.expect("failed to read line of output"))
+          .filter(|s| output_filter(s))
+          .collect();
+        tselected_output.send(selected_output).unwrap();
+      });
       let result = child
-        .wait_timeout(core::time::Duration::from_secs(10))
-        .expect("failed to wait for program");
-      let selected_output: Vec<String> = BufReader::new(child.stdout.take().unwrap())
-        .lines()
-        .map(|l| l.expect("failed to read line of output"))
-        .filter(|s| output_filter(s))
-        .collect();
+        .wait_timeout(std::time::Duration::from_secs(TEST_TIMEOUT_SECS))
+        .expect("failed to wait for child process");
+      if result.is_none() {
+        child.kill().expect("failed to kill child process");
+      }
       let mut stderr = String::new();
+      child.wait().expect("failed to wait for child process");
       child
         .stderr
         .take()
@@ -134,7 +154,7 @@ pub mod exec {
         .expect("output of run executable is not utf-8");
       ExecResult {
         status: Status::from_result(result),
-        selected_output,
+        selected_output: rselected_output.recv().unwrap(),
         stderr,
       }
     }

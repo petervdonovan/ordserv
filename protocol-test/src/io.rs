@@ -105,12 +105,13 @@ pub fn get_commit_hash(src_dir: &Path) -> CommitHash {
 pub fn get_counts(executable: &Executable, scratch: &Path) -> InvocationCounts {
   let rand_subdir = get_random_subdir(scratch);
   println!("getting invocationcounts for {}...", executable);
-  let output = executable.run(
+  let mut output = executable.run(
     EnvironmentUpdate::new(&[("LF_LOGTRACE", "YES")]),
     &rand_subdir,
-    |s| s.starts_with("<<<"), // Warning: must define superset of set defined by regex below
+    Box::new(|s: &str| s.starts_with("<<<")), // Warning: must define superset of set defined by regex below
   );
   if !output.status.is_success() {
+    output.retain_output(|s| s.to_lowercase().contains("fail"));
     println!("Failed to get correct initial counts for {executable:?}. Re-running.");
     println!("summary of failed run:\n{output}");
     std::fs::remove_dir_all(rand_subdir).expect("failed to remove garbage dir");
@@ -146,7 +147,11 @@ pub fn get_traces(
 ) -> (PathBuf, Result<Traces, ExecResult>) {
   let rand_subdir = get_random_subdir(scratch);
   println!("getting traces for {}...", executable);
-  let run = executable.run(evars, &rand_subdir, |_| true); // TODO: filter output
+  let run = executable.run(
+    evars,
+    &rand_subdir,
+    Box::new(|s: &str| s.to_lowercase().contains("fail")),
+  );
   if !run.status.is_success() {
     println!("Failed to get correct traces for {executable}.");
     println!("summary of failed run:\n{run}");
