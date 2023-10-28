@@ -2,6 +2,7 @@ use rayon::prelude::*;
 
 use std::{
   collections::{hash_map::DefaultHasher, HashMap},
+  fmt::Display,
   fs::{DirEntry, File},
   hash::{Hash, Hasher},
   io::Write,
@@ -14,7 +15,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
-  io::{get_commit_hash, get_counts, get_lf_files_non_recursive, get_traces, run_with_parameters},
+  exec::{ExecResult, Executable},
+  io::{
+    clean, get_commit_hash, get_counts, get_lf_files_non_recursive, get_traces, run_with_parameters,
+  },
   DelayParams, DelayVector, InvocationCounts, TraceRecord, Traces,
 };
 
@@ -26,8 +30,20 @@ pub enum State {
   AccumulatingTraces(AccumulatingTracesState),
 }
 #[derive(Debug, Serialize, Deserialize)]
+pub struct CommitHash(u128);
+impl CommitHash {
+  pub fn new(hash: u128) -> Self {
+    Self(hash)
+  }
+}
+impl Display for CommitHash {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{:x?}", self.0)
+  }
+}
+#[derive(Debug, Serialize, Deserialize)]
 pub struct InitialState {
-  src_commit: u128,
+  src_commit: CommitHash,
   src_files: HashMap<TestId, PathBuf>,
   scratch_dir: PathBuf,
   delay_params: DelayParams,
@@ -35,7 +51,7 @@ pub struct InitialState {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CompiledState {
   initial: InitialState,
-  executables: HashMap<TestId, PathBuf>,
+  executables: HashMap<TestId, Executable>,
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct KnownCountsState {
@@ -54,7 +70,7 @@ pub struct TestMetadata {
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TestRuns {
-  raw_traces: Vec<(DelayVector, Result<SuccessfulRun, Crash>)>,
+  raw_traces: Vec<(DelayVector, Result<SuccessfulRun, ExecResult>)>,
   #[serde(skip)] // derived from raw_traces
   iomat_global: Array2<i64>,
   iomats: HashMap<CoarseTraceHash, HashMap<FineTraceHash, u64>>,
@@ -94,12 +110,6 @@ struct OutputVector(Vec<i64>);
 struct OutputVectorKey(HashMap<TracePointId, Vec<usize>>);
 
 type SuccessfulRun = (OutputVector, TraceHash, VectorfyStatus);
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Crash {
-  pub exit_code: i32,
-  pub stdout: String,
-  pub stderr: String,
-}
 
 impl OutputVectorKey {
   fn new(tpis: impl Iterator<Item = TracePointId>) -> Self {
@@ -185,6 +195,7 @@ impl State {
   const ACCUMULATING_TRACES_NAME: &'static str = "accumulating-traces";
 
   pub fn load(src_dir: PathBuf, scratch_dir: PathBuf, delay_params: DelayParams) -> Self {
+    clean(&scratch_dir);
     let src_commit = get_commit_hash(&src_dir);
     let state_files: Vec<_> = scratch_dir
       .read_dir()
@@ -312,7 +323,18 @@ impl InitialState {
             src.to_str().expect("os string is not UTF-8")
           );
         }
-        (*id, exe)
+        let exe_renamed = exe
+          .parent()
+          .expect("executable should have a parent directory")
+          .join(format!(
+            "{}-{}",
+            src_stem
+              .to_str()
+              .expect("executable file name is not UTF-8"),
+            self.src_commit
+          ));
+        std::fs::rename(exe, &exe_renamed).expect("failed to rename executable");
+        (*id, Executable::new(exe_renamed))
       })
       .collect();
     CompiledState {
@@ -324,11 +346,15 @@ impl InitialState {
 
 impl CompiledState {
   const ATTEMPTS: u32 = 10;
-  fn get_traces_attempts(executable: &Path, scratch_dir: &Path) -> Traces {
+  fn get_traces_attempts(executable: &Executable, scratch_dir: &Path) -> (PathBuf, Traces) {
     for _ in 0..Self::ATTEMPTS {
-      let ret = get_traces(executable, scratch_dir, crate::EnvironmentUpdate::default());
+      let (junk, ret) = get_traces(
+        executable,
+        scratch_dir,
+        crate::env::EnvironmentUpdate::default(),
+      );
       if let Ok(ret) = ret {
-        return ret;
+        return (junk, ret);
       }
     }
     panic!("could not get metadata for executable");
@@ -338,18 +364,22 @@ impl CompiledState {
       .executables
       .par_iter()
       .map(|(id, exe)| {
-        let ic = get_counts(exe);
-        let mut traces_map = CompiledState::get_traces_attempts(exe, &self.initial.scratch_dir).0;
+        let ic = get_counts(exe, &self.initial.scratch_dir);
+        let (junk, mut traces_map) =
+          CompiledState::get_traces_attempts(exe, &self.initial.scratch_dir);
         let traces = traces_map
+          .0
           .get_mut("rti.csv")
           .expect("no trace file named rti.csv")
           .deserialize()
           .map(|r| r.expect("could not read record"))
           .map(|tr| TracePointId::new(&tr));
         let ovkey = OutputVectorKey::new(traces);
+        std::fs::remove_dir_all(junk).expect("failed to delete garbage directory");
         (*id, TestMetadata { ic, ovkey })
       })
       .collect::<HashMap<_, _>>();
+    println!("metadata collected.");
     KnownCountsState { cs: self, metadata }
   }
 }
@@ -372,19 +402,26 @@ impl AccumulatingTracesState {
     let mut rng = rand::thread_rng();
     DelayVector::random(&self.kcs.metadata[id].ic, &mut rng, params)
   }
-  fn get_run(&self, id: &TestId, exe: &Path, dvec: &DelayVector) -> Result<SuccessfulRun, Crash> {
-    let mut traces_map = run_with_parameters(
+  fn get_run(
+    &self,
+    id: &TestId,
+    exe: &Executable,
+    dvec: &DelayVector,
+  ) -> Result<SuccessfulRun, ExecResult> {
+    let (junk, traces_map) = run_with_parameters(
       exe,
       &self.kcs.cs.initial.scratch_dir,
       &self.kcs.metadata[id].ic,
       dvec,
-    )?;
+    );
+    let mut traces_map = traces_map?;
     let raw_traces = traces_map
       .0
       .get_mut("rti.csv")
       .expect("no trace file named rti.csv")
       .deserialize()
       .map(|r| r.expect("could not read record"));
+    std::fs::remove_dir_all(junk).expect("failed to delete garbage directory");
     let (ov, th, status) = self.kcs.metadata[id].ovkey.vectorfy(raw_traces);
     Ok((ov, th, status))
   }

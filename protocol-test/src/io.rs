@@ -1,23 +1,31 @@
 use std::{
   collections::HashMap,
-  ffi::OsString,
   path::{Path, PathBuf},
   process::Command,
 };
 
 use csv::ReaderBuilder;
-use rand::prelude::Distribution;
+use rand::{
+  distributions::{Alphanumeric, DistString},
+  prelude::Distribution,
+};
 use regex::Regex;
 
 use crate::{
-  state::Crash, DelayParams, DelayVector, EnvironmentUpdate, HookId, InvocationCounts, Traces,
+  env::EnvironmentUpdate,
+  exec::{ExecResult, Executable},
+  state::CommitHash,
+  DelayParams, DelayVector, HookId, InvocationCounts, Traces,
 };
 
 impl InvocationCounts {
-  fn len(&self) -> usize {
+  pub fn len(&self) -> usize {
     self.0.values().map(|it| *it as usize).sum::<usize>()
   }
-  fn to_vec(&self) -> Vec<(&HookId, &u32)> {
+  pub fn is_empty(&self) -> bool {
+    self.len() == 0
+  }
+  pub fn to_vec(&self) -> Vec<(&HookId, &u32)> {
     let mut keys: Vec<_> = self.0.iter().collect();
     keys.sort();
     keys
@@ -68,7 +76,7 @@ fn check_if_clean(src_dir: &Path) {
   }
 }
 
-pub fn get_commit_hash(src_dir: &Path) -> u128 {
+pub fn get_commit_hash(src_dir: &Path) -> CommitHash {
   check_if_clean(src_dir);
   let output = Command::new("git")
     .arg("rev-parse")
@@ -80,70 +88,84 @@ pub fn get_commit_hash(src_dir: &Path) -> u128 {
     panic!("failed to get commit hash");
   }
   let s = std::str::from_utf8(&output.stdout).expect("expected output to be UTF-8");
-  u128::from_str_radix(&s.trim()[..32], 16).expect("failed to parse commit hash")
+  CommitHash::new(u128::from_str_radix(&s.trim()[..32], 16).expect("failed to parse commit hash"))
 }
 
-pub fn get_counts(executable: &PathBuf) -> InvocationCounts {
-  let output = Command::new(executable.as_os_str())
-    .env("LF_LOGTRACE", "YES")
-    .output()
-    .expect("failed to execute subprocess");
-  if !output.status.success() {
+// pub fn print_failure(output: &std::process::Output) {
+//   for line in std::str::from_utf8(&output.stdout)
+//     .unwrap()
+//     .lines()
+//     .filter(|s| s.contains("ERROR") || s.to_lowercase().contains("failed"))
+//   {
+//     println!("  {}", line);
+//   }
+//   println!("stderr: {}", std::str::from_utf8(&output.stderr).unwrap());
+// }
+
+pub fn get_counts(executable: &Executable, scratch: &Path) -> InvocationCounts {
+  let rand_subdir = get_random_subdir(scratch);
+  println!("getting invocationcounts for {}...", executable);
+  let output = executable.run(
+    EnvironmentUpdate::new(&[("LF_LOGTRACE", "YES")]),
+    &rand_subdir,
+    |s| s.starts_with("<<<"), // Warning: must define superset of set defined by regex below
+  );
+  if !output.status.is_success() {
     println!("Failed to get correct initial counts for {executable:?}. Re-running.");
-    return get_counts(executable);
+    println!("summary of failed run:\n{output}");
+    std::fs::remove_dir_all(rand_subdir).expect("failed to remove garbage dir");
+    return get_counts(executable, scratch);
   }
   let regex = Regex::new(r"<<< (?<HookId>.*) >>>").unwrap();
   let mut ret = HashMap::new();
-  for line in std::str::from_utf8(&output.stdout)
-    .expect("expected output to be UTF-8")
-    .lines()
-  {
+  for line in output.selected_output.iter() {
     if let Some(caps) = regex.captures(line) {
       let hid = HookId(caps["HookId"].to_string());
       let next = ret.get(&hid).unwrap_or(&0) + 1;
       ret.insert(hid, next);
     }
   }
+  std::fs::remove_dir_all(rand_subdir).expect("failed to remove garbage dir");
   InvocationCounts(ret)
 }
 
+fn get_random_subdir(scratch: &Path) -> PathBuf {
+  let mut rand_subdir = String::from("rand");
+  rand_subdir.push_str(&Alphanumeric.sample_string(&mut rand::thread_rng(), 16));
+  let rand_subdir = scratch.join(rand_subdir);
+  std::fs::create_dir_all(&rand_subdir).expect("failed to create random subdir");
+  rand_subdir
+    .canonicalize()
+    .expect("failed to canonicalize random subdir")
+}
+
 pub fn get_traces(
-  executable: &Path,
+  executable: &Executable,
   scratch: &Path,
   evars: EnvironmentUpdate,
-) -> Result<Traces, Crash> {
-  let run = Command::new(
-    executable
-      .canonicalize()
-      .expect("failed to resolve executable path")
-      .as_os_str(),
-  )
-  .envs(evars.0)
-  .current_dir(scratch.clone())
-  .output()
-  .expect("failed to execute program to get trace");
-  if !run.status.success() {
-    return Err(Crash {
-      exit_code: run.status.code().expect("failed to get exit code"),
-      stdout: String::from_utf8(run.stdout).expect("expected stdout to be UTF-8"),
-      stderr: String::from_utf8(run.stderr).expect("expected stderr to be UTF-8"),
-    });
+) -> (PathBuf, Result<Traces, ExecResult>) {
+  let rand_subdir = get_random_subdir(scratch);
+  println!("getting traces for {}...", executable);
+  let run = executable.run(evars, &rand_subdir, |_| true); // TODO: filter output
+  if !run.status.is_success() {
+    println!("Failed to get correct traces for {executable}.");
+    println!("summary of failed run:\n{run}");
+    return (rand_subdir, Err(run));
   }
-  for entry in scratch
+  for entry in rand_subdir
     .read_dir()
     .expect("failed to read tracefiles from scratch")
     .flatten()
     .filter(|it| it.file_name().to_str().unwrap().ends_with(".lft"))
   {
-    println!("{entry:?}");
     Command::new("trace_to_csv")
-      .current_dir(scratch.clone())
+      .current_dir(&rand_subdir)
       .arg(entry.file_name())
       .output()
       .expect("failed to execute trace_to_csv");
   }
   let mut ret = HashMap::new();
-  for entry in scratch
+  for entry in rand_subdir
     .read_dir()
     .expect("failed to read csvs from scratch")
     .flatten()
@@ -162,18 +184,11 @@ pub fn get_traces(
         .to_string(),
       ReaderBuilder::new()
         .trim(csv::Trim::All)
-        .from_path(scratch.join(entry.file_name()))
+        .from_path(rand_subdir.join(entry.file_name()))
         .expect("failed to open CSV reader"),
     );
   }
-  Ok(Traces(ret))
-}
-
-fn stringify_dvec(dvec: &[u64]) -> OsString {
-  OsString::from(dvec.iter().fold(String::from(""), |mut acc, x| {
-    acc.push_str(&x.to_string());
-    acc
-  }))
+  (rand_subdir, Ok(Traces(ret)))
 }
 
 fn assert_compatible(ic: &InvocationCounts, dvec: &DelayVector) {
@@ -183,22 +198,13 @@ fn assert_compatible(ic: &InvocationCounts, dvec: &DelayVector) {
 }
 
 pub fn run_with_parameters(
-  executable: &Path,
+  executable: &Executable,
   scratch: &Path,
   ic: &InvocationCounts,
   dvec: &DelayVector,
-) -> Result<Traces, Crash> {
+) -> (PathBuf, Result<Traces, ExecResult>) {
   assert_compatible(ic, dvec);
-  let mut ev = HashMap::new();
-  let mut cumsum: usize = 0;
-  for (hid, k) in ic.to_vec() {
-    ev.insert(
-      OsString::from(hid.0.clone()),
-      stringify_dvec(&dvec.0[cumsum..cumsum + (*k as usize)]),
-    );
-    cumsum += *k as usize;
-  }
-  get_traces(executable, scratch, EnvironmentUpdate(ev))
+  get_traces(executable, scratch, EnvironmentUpdate::delayed(ic, dvec))
 }
 
 #[cfg(test)]
@@ -229,7 +235,7 @@ mod tests {
   #[test]
   fn test_get_counts() {
     for entry in test_progs() {
-      let counts = get_counts(&entry.path());
+      let counts = get_counts(&Executable::new(entry.path()), &scratch_relpath());
       println!("{counts:?}");
     }
   }
@@ -239,10 +245,11 @@ mod tests {
     for entry in test_progs() {
       println!("{entry:?}");
       let csvs: HashMap<String, Vec<String>> = get_traces(
-        &entry.path(),
+        &Executable::new(entry.path()),
         &scratch_relpath(),
         EnvironmentUpdate::default(),
       )
+      .1
       .unwrap()
       .0
       .iter_mut()
@@ -262,6 +269,18 @@ mod tests {
       })
       .collect();
       println!("{csvs:?}");
+    }
+  }
+}
+
+pub fn clean(scratch: &Path) {
+  for entry in scratch.read_dir().expect("failed to read scratch dir") {
+    let entry = entry.expect("failed to read scratch dir entry");
+    if entry.file_type().expect("failed to get file type").is_dir()
+      && entry.file_name().to_str().unwrap().starts_with("rand")
+    {
+      println!("removing {}", entry.path().to_str().unwrap());
+      std::fs::remove_dir_all(entry.path()).expect("failed to remove scratch dir");
     }
   }
 }
