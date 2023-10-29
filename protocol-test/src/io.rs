@@ -75,6 +75,50 @@ fn check_if_clean(src_dir: &Path) {
     panic!("git repo is not clean");
   }
 }
+fn check_if_deps_up_to_date(src_dir: &Path) {
+  let submodule_status = Command::new("git")
+    .arg("submodule")
+    .arg("status")
+    .current_dir(src_dir)
+    .output()
+    .expect("failed to execute git");
+  if !submodule_status.status.success() {
+    panic!("failed to check git submodule versions");
+  }
+  let submodule_status =
+    std::str::from_utf8(&submodule_status.stdout).expect("expected output to be UTF-8");
+  let commits: Vec<_> = submodule_status
+    .lines()
+    .filter(|it| !it.is_empty())
+    .map(|line| {
+      let mut parts = line.split_whitespace();
+      parts
+        .next()
+        .expect("expected submodule status to have at least one part")
+    })
+    .map(|it| {
+      if let Some(s) = it.strip_prefix('+') {
+        s
+      } else {
+        it
+      }
+    })
+    .collect();
+  let output = Command::new("RTI")
+    .arg("--version")
+    .output()
+    .expect("failed to check RTI version");
+  if !output.status.success() {
+    panic!("failed to check RTI version");
+  }
+  let output = std::str::from_utf8(&output.stdout).expect("expected output to be UTF-8");
+  if !commits.iter().any(|it| output.contains(it)) {
+    panic!("RTI version is not up to date");
+  }
+  if !output.contains("dirty") {
+    panic!("RTI was built from a dirty repo (i.e., without all changes commmitted)");
+  }
+}
 
 pub fn get_commit_hash(src_dir: &Path) -> CommitHash {
   check_if_clean(src_dir);
@@ -90,17 +134,6 @@ pub fn get_commit_hash(src_dir: &Path) -> CommitHash {
   let s = std::str::from_utf8(&output.stdout).expect("expected output to be UTF-8");
   CommitHash::new(u128::from_str_radix(&s.trim()[..32], 16).expect("failed to parse commit hash"))
 }
-
-// pub fn print_failure(output: &std::process::Output) {
-//   for line in std::str::from_utf8(&output.stdout)
-//     .unwrap()
-//     .lines()
-//     .filter(|s| s.contains("ERROR") || s.to_lowercase().contains("failed"))
-//   {
-//     println!("  {}", line);
-//   }
-//   println!("stderr: {}", std::str::from_utf8(&output.stderr).unwrap());
-// }
 
 pub fn get_counts(executable: &Executable, scratch: &Path) -> InvocationCounts {
   let rand_subdir = get_random_subdir(scratch);
@@ -212,6 +245,18 @@ pub fn run_with_parameters(
   get_traces(executable, scratch, EnvironmentUpdate::delayed(ic, dvec))
 }
 
+pub fn clean(scratch: &Path) {
+  for entry in scratch.read_dir().expect("failed to read scratch dir") {
+    let entry = entry.expect("failed to read scratch dir entry");
+    if entry.file_type().expect("failed to get file type").is_dir()
+      && entry.file_name().to_str().unwrap().starts_with("rand")
+    {
+      println!("removing {}", entry.path().to_str().unwrap());
+      std::fs::remove_dir_all(entry.path()).expect("failed to remove scratch dir");
+    }
+  }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -274,18 +319,6 @@ mod tests {
       })
       .collect();
       println!("{csvs:?}");
-    }
-  }
-}
-
-pub fn clean(scratch: &Path) {
-  for entry in scratch.read_dir().expect("failed to read scratch dir") {
-    let entry = entry.expect("failed to read scratch dir entry");
-    if entry.file_type().expect("failed to get file type").is_dir()
-      && entry.file_name().to_str().unwrap().starts_with("rand")
-    {
-      println!("removing {}", entry.path().to_str().unwrap());
-      std::fs::remove_dir_all(entry.path()).expect("failed to remove scratch dir");
     }
   }
 }

@@ -310,7 +310,7 @@ impl InitialState {
         let src_stem = src.file_stem().expect("could not get file stem");
         exe = exe.join("bin").join(src_stem);
         println!("compiling {src:?}...",);
-        let output = std::process::Command::new("lfcpartest")
+        let output = std::process::Command::new(format!("lfcpartest-{}", self.src_commit))
           .arg(src)
           .arg("--trace")
           .arg("--logging")
