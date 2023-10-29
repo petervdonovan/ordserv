@@ -148,6 +148,9 @@ struct FineTraceHash(u64);
 #[derive(Debug, Serialize, Deserialize)]
 struct TraceHash(CoarseTraceHash, FineTraceHash);
 
+// ~31K network ports, each test may use up to 10 ports
+const CONCURRENCY_LIMIT: usize = 3000;
+
 struct TraceHasher {
   coarse: DefaultHasher,
   fine: DefaultHasher,
@@ -309,8 +312,9 @@ impl InitialState {
         }
         let src_stem = src.file_stem().expect("could not get file stem");
         exe = exe.join("bin").join(src_stem);
-        println!("compiling {src:?}...",);
-        let output = std::process::Command::new(format!("lfcpartest-{}", self.src_commit))
+        let lfc_name = format!("lfcpartest-{}", self.src_commit);
+        println!("compiling {src:?} with {lfc_name}...",);
+        let output = std::process::Command::new(lfc_name)
           .arg(src)
           .arg("--trace")
           .arg("--logging")
@@ -359,8 +363,8 @@ impl CompiledState {
     }
     panic!("could not get metadata for executable");
   }
-  fn known_counts(self) -> KnownCountsState {
-    let metadata = self
+  fn get_metadata(&self) -> HashMap<TestId, TestMetadata> {
+    self
       .executables
       .par_iter()
       .map(|(id, exe)| {
@@ -378,7 +382,14 @@ impl CompiledState {
         std::fs::remove_dir_all(junk).expect("failed to delete garbage directory");
         (*id, TestMetadata { ic, ovkey })
       })
-      .collect::<HashMap<_, _>>();
+      .collect::<HashMap<_, _>>()
+  }
+  fn known_counts(self) -> KnownCountsState {
+    let pool = rayon::ThreadPoolBuilder::new()
+      .num_threads(std::cmp::min(CONCURRENCY_LIMIT, self.executables.len()))
+      .build()
+      .expect("failed to build thread pool");
+    let metadata = pool.install(|| self.get_metadata());
     println!("metadata collected.");
     KnownCountsState { cs: self, metadata }
   }
