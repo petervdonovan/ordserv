@@ -17,7 +17,7 @@ pub mod exec {
   use std::{
     fmt::{Display, Formatter},
     io::{BufRead, BufReader, Read},
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command, Stdio},
     sync::mpsc,
     thread,
@@ -26,14 +26,14 @@ pub mod exec {
   use serde::{Deserialize, Serialize};
   use wait_timeout::ChildExt;
 
-  use crate::env::EnvironmentUpdate;
+  use crate::{env::EnvironmentUpdate, io::TempDir};
 
   #[derive(Debug, Serialize, Deserialize)]
   pub struct Executable(PathBuf);
 
   const TEST_TIMEOUT_SECS: u64 = 45;
 
-  #[derive(Debug, Serialize, Deserialize)]
+  #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
   pub enum Status {
     Timeout,
     TerminatedBySignal,
@@ -75,7 +75,7 @@ pub mod exec {
     }
   }
 
-  #[derive(Debug, Serialize, Deserialize)]
+  #[derive(Debug, Serialize, Deserialize, Clone)]
   pub struct ExecResult {
     pub status: Status,
     pub selected_output: Vec<String>,
@@ -111,10 +111,9 @@ pub mod exec {
     pub fn run(
       &self,
       env: EnvironmentUpdate,
-      cwd: &Path,
+      cwd: &TempDir,
       output_filter: Box<impl Fn(&str) -> bool + std::marker::Send + 'static>,
     ) -> ExecResult {
-      println!("running with evars: {:?}", env.get_evars());
       let mut child = Command::new(
         self
           .0
@@ -123,7 +122,7 @@ pub mod exec {
           .as_os_str(),
       )
       .envs(env.get_evars())
-      .current_dir(cwd)
+      .current_dir(&cwd.0)
       .stdout(Stdio::piped())
       .stderr(Stdio::piped())
       .spawn()

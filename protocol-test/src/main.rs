@@ -17,6 +17,7 @@ struct Cli {
 }
 
 const DEFAULT_SCRATCH_DIR: &str = "scratch";
+const DEFAULT_SAVE_INTERVAL_SECONDS: u32 = 60;
 
 fn main() {
   let args = Cli::parse();
@@ -32,6 +33,8 @@ fn main() {
       }),
   };
   let mut state = State::load(args.src_dir, scratch_dir, delay_params);
-  state = state.run();
-  state.save_to_scratch_dir();
+  loop {
+    state = state.run(DEFAULT_SAVE_INTERVAL_SECONDS);
+    state.save_to_scratch_dir();
+  }
 }

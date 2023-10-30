@@ -1,3 +1,4 @@
+ulimit -n 4096
 cd protocol-test/
 time cargo build
 cd ..

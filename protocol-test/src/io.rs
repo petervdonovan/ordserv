@@ -136,7 +136,7 @@ pub fn get_commit_hash(src_dir: &Path) -> CommitHash {
 }
 
 pub fn get_counts(executable: &Executable, scratch: &Path) -> InvocationCounts {
-  let rand_subdir = get_random_subdir(scratch);
+  let rand_subdir = TempDir::new(scratch);
   println!("getting invocationcounts for {}...", executable);
   let mut output = executable.run(
     EnvironmentUpdate::new(&[("LF_LOGTRACE", "YES")]),
@@ -147,7 +147,6 @@ pub fn get_counts(executable: &Executable, scratch: &Path) -> InvocationCounts {
     output.retain_output(|s| s.to_lowercase().contains("fail"));
     println!("Failed to get correct initial counts for {executable:?}. Re-running.");
     println!("summary of failed run:\n{output}");
-    std::fs::remove_dir_all(rand_subdir).expect("failed to remove garbage dir");
     return get_counts(executable, scratch);
   }
   let regex = Regex::new(r"<<< (?<HookId>.*) >>>").unwrap();
@@ -159,26 +158,42 @@ pub fn get_counts(executable: &Executable, scratch: &Path) -> InvocationCounts {
       ret.insert(hid, next);
     }
   }
-  std::fs::remove_dir_all(rand_subdir).expect("failed to remove garbage dir");
   InvocationCounts(ret)
 }
 
-fn get_random_subdir(scratch: &Path) -> PathBuf {
-  let mut rand_subdir = String::from("rand");
-  rand_subdir.push_str(&Alphanumeric.sample_string(&mut rand::thread_rng(), 16));
-  let rand_subdir = scratch.join(rand_subdir);
-  std::fs::create_dir_all(&rand_subdir).expect("failed to create random subdir");
-  rand_subdir
-    .canonicalize()
-    .expect("failed to canonicalize random subdir")
+pub struct TempDir(pub PathBuf);
+
+impl TempDir {
+  fn new(scratch: &Path) -> Self {
+    let mut rand_subdir = String::from("rand");
+    rand_subdir.push_str(&Alphanumeric.sample_string(&mut rand::thread_rng(), 16));
+    let rand_subdir = scratch.join(rand_subdir);
+    std::fs::create_dir_all(&rand_subdir).expect("failed to create random subdir");
+    TempDir(
+      rand_subdir
+        .canonicalize()
+        .expect("failed to canonicalize random subdir"),
+    )
+  }
+  fn rand_file(&self, prefix: &str) -> PathBuf {
+    let mut rand_file = String::from(prefix);
+    rand_file.push_str(&Alphanumeric.sample_string(&mut rand::thread_rng(), 16));
+    self.0.join(rand_file)
+  }
+}
+
+impl Drop for TempDir {
+  fn drop(&mut self) {
+    std::fs::remove_dir_all(&self.0).expect("failed to remove random subdir");
+  }
 }
 
 pub fn get_traces(
   executable: &Executable,
   scratch: &Path,
   evars: EnvironmentUpdate,
-) -> (PathBuf, Result<Traces, ExecResult>) {
-  let rand_subdir = get_random_subdir(scratch);
+) -> (TempDir, Result<Traces, ExecResult>) {
+  let rand_subdir = TempDir::new(scratch);
   println!("getting traces for {}...", executable);
   let run = executable.run(
     evars,
@@ -191,19 +206,21 @@ pub fn get_traces(
     return (rand_subdir, Err(run));
   }
   for entry in rand_subdir
+    .0
     .read_dir()
     .expect("failed to read tracefiles from scratch")
     .flatten()
     .filter(|it| it.file_name().to_str().unwrap().ends_with(".lft"))
   {
     Command::new("trace_to_csv")
-      .current_dir(&rand_subdir)
+      .current_dir(&rand_subdir.0)
       .arg(entry.file_name())
       .output()
       .expect("failed to execute trace_to_csv");
   }
   let mut ret = HashMap::new();
   for entry in rand_subdir
+    .0
     .read_dir()
     .expect("failed to read csvs from scratch")
     .flatten()
@@ -222,7 +239,7 @@ pub fn get_traces(
         .to_string(),
       ReaderBuilder::new()
         .trim(csv::Trim::All)
-        .from_path(rand_subdir.join(entry.file_name()))
+        .from_path(rand_subdir.0.join(entry.file_name()))
         .expect("failed to open CSV reader"),
     );
   }
@@ -240,7 +257,7 @@ pub fn run_with_parameters(
   scratch: &Path,
   ic: &InvocationCounts,
   dvec: &DelayVector,
-) -> (PathBuf, Result<Traces, ExecResult>) {
+) -> (TempDir, Result<Traces, ExecResult>) {
   assert_compatible(ic, dvec);
   get_traces(executable, scratch, EnvironmentUpdate::delayed(ic, dvec))
 }

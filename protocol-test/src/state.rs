@@ -1,3 +1,4 @@
+use rand::seq::SliceRandom;
 use rayon::prelude::*;
 
 use std::{
@@ -8,16 +9,18 @@ use std::{
   io::Write,
   os::unix::prelude::OsStrExt,
   path::{Path, PathBuf},
+  sync::{Arc, Mutex},
 };
 
-use ndarray::Array2;
+use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
   exec::{ExecResult, Executable},
   io::{
-    clean, get_commit_hash, get_counts, get_lf_files_non_recursive, get_traces, run_with_parameters,
+    clean, get_commit_hash, get_counts, get_lf_files_non_recursive, get_traces,
+    run_with_parameters, TempDir,
   },
   DelayParams, DelayVector, InvocationCounts, TraceRecord, Traces,
 };
@@ -61,7 +64,7 @@ pub struct KnownCountsState {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AccumulatingTracesState {
   kcs: KnownCountsState,
-  runs: HashMap<TestId, TestRuns>,
+  runs: HashMap<TestId, Arc<Mutex<TestRuns>>>, // TODO: consider using a rwlock
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TestMetadata {
@@ -71,9 +74,11 @@ pub struct TestMetadata {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TestRuns {
   raw_traces: Vec<(DelayVector, Result<SuccessfulRun, ExecResult>)>,
-  #[serde(skip)] // derived from raw_traces
-  iomat_global: Array2<i64>,
-  iomats: HashMap<CoarseTraceHash, HashMap<FineTraceHash, u64>>,
+  #[serde(skip)] // derived from raw_traces (successes only)
+  in_mat_global: Array2<i64>,
+  #[serde(skip)]
+  out_vectors_global: Vec<Array1<i64>>,
+  iomats: HashMap<CoarseTraceHash, HashMap<FineTraceHash, Vec<usize>>>,
 }
 
 #[derive(Default, Debug, Hash, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
@@ -141,15 +146,15 @@ impl OutputVectorKey {
     (OutputVector(ov), th.finish(), status)
   }
 }
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Copy)]
 struct CoarseTraceHash(u64);
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Copy)]
 struct FineTraceHash(u64);
 #[derive(Debug, Serialize, Deserialize)]
 struct TraceHash(CoarseTraceHash, FineTraceHash);
 
 // ~31K network ports, each test may use up to 10 ports
-const CONCURRENCY_LIMIT: usize = 3000;
+const CONCURRENCY_LIMIT: usize = 30;
 
 struct TraceHasher {
   coarse: DefaultHasher,
@@ -280,13 +285,13 @@ impl State {
       .write_all(&rmp_serde::to_vec(self).expect("could not serialize state"))
       .expect("could not write to file");
   }
-  pub fn run(self) -> Self {
+  pub fn run(self, time_seconds: u32) -> Self {
     match self {
       Self::Initial(is) => Self::Compiled(is.compile()),
       Self::Compiled(cs) => Self::KnownCounts(cs.known_counts()),
       Self::KnownCounts(kcs) => Self::AccumulatingTraces(kcs.advance()),
       Self::AccumulatingTraces(mut ats) => {
-        ats.accumulate_traces();
+        ats.accumulate_traces(time_seconds);
         Self::AccumulatingTraces(ats)
       }
     }
@@ -350,7 +355,7 @@ impl InitialState {
 
 impl CompiledState {
   const ATTEMPTS: u32 = 10;
-  fn get_traces_attempts(executable: &Executable, scratch_dir: &Path) -> (PathBuf, Traces) {
+  fn get_traces_attempts(executable: &Executable, scratch_dir: &Path) -> (TempDir, Traces) {
     for _ in 0..Self::ATTEMPTS {
       let (junk, ret) = get_traces(
         executable,
@@ -369,7 +374,7 @@ impl CompiledState {
       .par_iter()
       .map(|(id, exe)| {
         let ic = get_counts(exe, &self.initial.scratch_dir);
-        let (junk, mut traces_map) =
+        let (_, mut traces_map) =
           CompiledState::get_traces_attempts(exe, &self.initial.scratch_dir);
         let traces = traces_map
           .0
@@ -379,7 +384,6 @@ impl CompiledState {
           .map(|r| r.expect("could not read record"))
           .map(|tr| TracePointId::new(&tr));
         let ovkey = OutputVectorKey::new(traces);
-        std::fs::remove_dir_all(junk).expect("failed to delete garbage directory");
         (*id, TestMetadata { ic, ovkey })
       })
       .collect::<HashMap<_, _>>()
@@ -397,16 +401,34 @@ impl CompiledState {
 
 impl KnownCountsState {
   fn advance(self) -> AccumulatingTracesState {
-    AccumulatingTracesState {
-      kcs: self,
-      runs: HashMap::new(),
-    }
+    let runs = self
+      .cs
+      .initial
+      .src_files
+      .keys()
+      .map(|id| {
+        (
+          *id,
+          Arc::new(Mutex::new(TestRuns {
+            raw_traces: vec![],
+            in_mat_global: Array2::zeros((0, self.metadata[id].ic.len())),
+            out_vectors_global: vec![],
+            iomats: HashMap::new(),
+          })),
+        )
+      })
+      .collect();
+    AccumulatingTracesState { kcs: self, runs }
   }
 }
 
 impl AccumulatingTracesState {
   fn total_runs(&self) -> usize {
-    self.runs.values().map(|tr| tr.raw_traces.len()).sum()
+    self
+      .runs
+      .values()
+      .map(|tr| tr.lock().unwrap().raw_traces.len())
+      .sum()
   }
   fn get_delay_vector(&self, id: &TestId) -> DelayVector {
     let params = &self.kcs.cs.initial.delay_params;
@@ -419,7 +441,7 @@ impl AccumulatingTracesState {
     exe: &Executable,
     dvec: &DelayVector,
   ) -> Result<SuccessfulRun, ExecResult> {
-    let (junk, traces_map) = run_with_parameters(
+    let (_, traces_map) = run_with_parameters(
       exe,
       &self.kcs.cs.initial.scratch_dir,
       &self.kcs.metadata[id].ic,
@@ -432,25 +454,47 @@ impl AccumulatingTracesState {
       .expect("no trace file named rti.csv")
       .deserialize()
       .map(|r| r.expect("could not read record"));
-    std::fs::remove_dir_all(junk).expect("failed to delete garbage directory");
     let (ov, th, status) = self.kcs.metadata[id].ovkey.vectorfy(raw_traces);
     Ok((ov, th, status))
   }
-  fn accumulate_traces(&mut self) {
-    // TODO: validate and fix this
-    for (id, exe) in &self.kcs.cs.executables {
-      let dvec = self.get_delay_vector(id);
-      let run = self.get_run(id, exe, &dvec);
-      self
-        .runs
-        .entry(*id)
-        .or_insert(TestRuns {
-          raw_traces: vec![],
-          iomat_global: Array2::zeros((0, 0)),
-          iomats: HashMap::new(),
-        })
-        .raw_traces
-        .push((dvec, run));
+  fn add_run(&self, id: TestId, dvec: DelayVector, run: Result<SuccessfulRun, ExecResult>) {
+    let entry = self.runs.get(&id).unwrap().clone();
+    let mut entry = entry.lock().unwrap();
+    if let Ok(run) = &run {
+      let dvec_int = dvec.0.iter().map(|it| *it as i64).collect::<Array1<_>>();
+      let ov = Array1::from_vec(run.0 .0.clone());
+      entry
+        .in_mat_global
+        .push_row(dvec_int.view())
+        .expect("shape error: should be impossible");
+      entry.out_vectors_global.push(ov);
+      let idx = entry.in_mat_global.nrows() - 1;
+      let vec = entry
+        .iomats
+        .entry(run.1 .0)
+        .or_insert_with(HashMap::new)
+        .entry(run.1 .1)
+        .or_insert_with(Vec::new);
+      vec.push(idx);
     }
+    entry.raw_traces.push((dvec, run));
+  }
+  fn accumulate_traces(&mut self, time_seconds: u32) {
+    let t0 = std::time::Instant::now();
+    let executables = self.kcs.cs.executables.iter().collect::<Vec<_>>();
+    std::thread::scope(|scope| {
+      for _ in 0..CONCURRENCY_LIMIT {
+        scope.spawn(|| {
+          while std::time::Instant::now() - t0 < std::time::Duration::from_secs(time_seconds as u64)
+          {
+            let mut rng = rand::thread_rng();
+            let (id, exe) = executables.choose(&mut rng).unwrap();
+            let dvec = self.get_delay_vector(id);
+            let run = self.get_run(id, exe, &dvec);
+            self.add_run(**id, dvec, run);
+          }
+        });
+      }
+    });
   }
 }
