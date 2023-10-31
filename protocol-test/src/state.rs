@@ -112,26 +112,34 @@ impl TestId {
 #[derive(Debug, Serialize, Deserialize)]
 struct OutputVector(Vec<i64>);
 #[derive(Debug, Serialize, Deserialize)]
-struct OutputVectorKey(HashMap<TracePointId, Vec<usize>>);
+struct OutputVectorKey {
+  map: HashMap<TracePointId, Vec<usize>>,
+  n_tracepoints: usize,
+}
 
 type SuccessfulRun = (OutputVector, TraceHash, VectorfyStatus);
 
 impl OutputVectorKey {
   fn new(tpis: impl Iterator<Item = TracePointId>) -> Self {
     let mut ret = HashMap::new();
-    for (idx, tpi) in tpis.enumerate() {
+    let mut idx = 0;
+    for tpi in tpis {
       ret.entry(tpi).or_insert(vec![]).push(idx);
+      idx += 1;
     }
-    Self(ret)
+    Self {
+      map: ret,
+      n_tracepoints: idx + 1,
+    }
   }
   fn vectorfy(&self, records: impl Iterator<Item = TraceRecord>) -> SuccessfulRun {
-    let mut ov = vec![];
+    let mut ov = vec![0; self.n_tracepoints];
     let mut th = TraceHasher::new();
     let mut status = VectorfyStatus::Ok;
     let mut subidxs = HashMap::new();
     for tr in records {
       let tpi = TracePointId::new(&tr);
-      if let Some(idxs) = self.0.get(&tpi) {
+      if let Some(idxs) = self.map.get(&tpi) {
         subidxs.entry(tpi).or_insert(0);
         if let Some(idx) = idxs.get(subidxs[&tpi]) {
           ov[*idx] = tr.elapsed_physical_time;
@@ -357,13 +365,10 @@ impl CompiledState {
   const ATTEMPTS: u32 = 10;
   fn get_traces_attempts(executable: &Executable, scratch_dir: &Path) -> (TempDir, Traces) {
     for _ in 0..Self::ATTEMPTS {
-      let (junk, ret) = get_traces(
-        executable,
-        scratch_dir,
-        crate::env::EnvironmentUpdate::default(),
-      );
+      let tmp = TempDir::new(scratch_dir);
+      let ret = get_traces(executable, &tmp, crate::env::EnvironmentUpdate::default());
       if let Ok(ret) = ret {
-        return (junk, ret);
+        return (tmp, ret);
       }
     }
     panic!("could not get metadata for executable");

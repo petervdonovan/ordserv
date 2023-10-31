@@ -161,44 +161,61 @@ pub mod exec {
 }
 
 pub mod env {
+  use std::io::Write;
+  use std::sync::Mutex;
   use std::{collections::HashMap, ffi::OsString};
 
-  use crate::{DelayVector, InvocationCounts};
+  use crate::{io::TempDir, DelayVector, InvocationCounts};
 
   const LF_FED_PORT: &str = "LF_FED_PORT";
 
   #[derive(Debug)]
-  pub struct EnvironmentUpdate {
+  pub struct EnvironmentUpdate<'a> {
     evars: HashMap<OsString, OsString>,
+    _scratch: Option<&'a TempDir>, // enforce that the scratch directory is not dropped before the environment update
   }
 
-  fn stringify_dvec(dvec: &[u64]) -> OsString {
-    OsString::from(dvec.iter().fold(String::from(""), |mut acc, x| {
+  fn stringify_dvec(dvec: &[u64]) -> String {
+    dvec.iter().fold(String::from(""), |mut acc, x| {
       acc.push_str(&x.to_string());
+      acc.push('\n');
       acc
-    }))
+    })
   }
+
+  use once_cell::sync::Lazy;
+
+  static OPEN_PORTS: Lazy<Vec<u16>> = Lazy::new(|| {
+    (1024..32768)
+      .filter(|p| std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok())
+      .collect()
+  });
+  static OPEN_PORTS_IDX: Mutex<usize> = Mutex::new(0);
 
   fn get_valid_port() -> OsString {
-    let tid = rayon::current_thread_index().unwrap_or(0);
     // 1024 is the first valid port, and one test may use a few ports (by trying them in sequence)
     // if they have physical connections. Assume the tests do not use more than 10 ports each.
-    let tid = tid * 10 + 1024;
-    if tid > 2_usize.pow(15) - 1 {
-      panic!("too many threads");
+    let mut open_ports_idx = OPEN_PORTS_IDX.lock().unwrap();
+    let mut current: usize = *open_ports_idx;
+    while OPEN_PORTS[current + 3] > OPEN_PORTS[current] + 3 {
+      current += 1;
     }
-    OsString::from((tid as u16).to_string())
+    *open_ports_idx = current + 10;
+    let port = OPEN_PORTS[current];
+    // An IndexOutOfBounds exception around here indicates that we are trying to open too many sockets
+    OsString::from(port.to_string())
   }
 
-  impl Default for EnvironmentUpdate {
+  impl<'a> Default for EnvironmentUpdate<'a> {
     fn default() -> Self {
       Self {
         evars: HashMap::from([(LF_FED_PORT.into(), get_valid_port())]),
+        _scratch: None,
       }
     }
   }
 
-  impl EnvironmentUpdate {
+  impl<'a> EnvironmentUpdate<'a> {
     pub fn new(tups: &[(&str, &str)]) -> Self {
       let mut ret = Self::default();
       for (k, v) in tups {
@@ -215,14 +232,21 @@ pub mod env {
       &self.evars
     }
 
-    pub fn delayed(ic: &InvocationCounts, dvec: &DelayVector) -> Self {
+    pub fn delayed(ic: &InvocationCounts, dvec: &DelayVector, tmp: &TempDir) -> Self {
       let mut ret = Self::default();
       let mut cumsum: usize = 0;
       for (hid, k) in ic.to_vec() {
-        ret.evars.insert(
-          OsString::from(hid.0.clone()),
+        let delay = tmp.rand_file("delay");
+        let mut delay_f = std::fs::File::create(&delay).expect("could not create delay file");
+        write!(
+          delay_f,
+          "{}",
           stringify_dvec(&dvec.0[cumsum..cumsum + (*k as usize)]),
-        );
+        )
+        .expect("could not write delay file");
+        ret
+          .evars
+          .insert(OsString::from(hid.0.clone()), delay.into_os_string());
         cumsum += *k as usize;
       }
       ret

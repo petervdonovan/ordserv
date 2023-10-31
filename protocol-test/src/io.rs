@@ -161,10 +161,11 @@ pub fn get_counts(executable: &Executable, scratch: &Path) -> InvocationCounts {
   InvocationCounts(ret)
 }
 
+#[derive(Debug)]
 pub struct TempDir(pub PathBuf);
 
 impl TempDir {
-  fn new(scratch: &Path) -> Self {
+  pub fn new(scratch: &Path) -> Self {
     let mut rand_subdir = String::from("rand");
     rand_subdir.push_str(&Alphanumeric.sample_string(&mut rand::thread_rng(), 16));
     let rand_subdir = scratch.join(rand_subdir);
@@ -175,7 +176,7 @@ impl TempDir {
         .expect("failed to canonicalize random subdir"),
     )
   }
-  fn rand_file(&self, prefix: &str) -> PathBuf {
+  pub fn rand_file(&self, prefix: &str) -> PathBuf {
     let mut rand_file = String::from(prefix);
     rand_file.push_str(&Alphanumeric.sample_string(&mut rand::thread_rng(), 16));
     self.0.join(rand_file)
@@ -190,22 +191,28 @@ impl Drop for TempDir {
 
 pub fn get_traces(
   executable: &Executable,
-  scratch: &Path,
+  tmp: &TempDir,
   evars: EnvironmentUpdate,
-) -> (TempDir, Result<Traces, ExecResult>) {
-  let rand_subdir = TempDir::new(scratch);
+) -> Result<Traces, ExecResult> {
   println!("getting traces for {}...", executable);
+  let evars2 = evars.get_evars().clone();
   let run = executable.run(
     evars,
-    &rand_subdir,
+    tmp,
     Box::new(|s: &str| s.to_lowercase().contains("fail")),
   );
   if !run.status.is_success() {
     println!("Failed to get correct traces for {executable}.");
     println!("summary of failed run:\n{run}");
-    return (rand_subdir, Err(run));
+    evars2
+      .iter()
+      .filter(|(_, s)| s.len() < 100)
+      .for_each(|(k, v)| {
+        println!("{:?}={:?}", k, v);
+      });
+    return Err(run);
   }
-  for entry in rand_subdir
+  for entry in tmp
     .0
     .read_dir()
     .expect("failed to read tracefiles from scratch")
@@ -213,13 +220,13 @@ pub fn get_traces(
     .filter(|it| it.file_name().to_str().unwrap().ends_with(".lft"))
   {
     Command::new("trace_to_csv")
-      .current_dir(&rand_subdir.0)
+      .current_dir(&tmp.0)
       .arg(entry.file_name())
       .output()
       .expect("failed to execute trace_to_csv");
   }
   let mut ret = HashMap::new();
-  for entry in rand_subdir
+  for entry in tmp
     .0
     .read_dir()
     .expect("failed to read csvs from scratch")
@@ -239,11 +246,11 @@ pub fn get_traces(
         .to_string(),
       ReaderBuilder::new()
         .trim(csv::Trim::All)
-        .from_path(rand_subdir.0.join(entry.file_name()))
+        .from_path(tmp.0.join(entry.file_name()))
         .expect("failed to open CSV reader"),
     );
   }
-  (rand_subdir, Ok(Traces(ret)))
+  Ok(Traces(ret))
 }
 
 fn assert_compatible(ic: &InvocationCounts, dvec: &DelayVector) {
@@ -259,7 +266,10 @@ pub fn run_with_parameters(
   dvec: &DelayVector,
 ) -> (TempDir, Result<Traces, ExecResult>) {
   assert_compatible(ic, dvec);
-  get_traces(executable, scratch, EnvironmentUpdate::delayed(ic, dvec))
+  let tmp = TempDir::new(scratch);
+  let evars = EnvironmentUpdate::delayed(ic, dvec, &tmp);
+  let traces = get_traces(executable, &tmp, evars);
+  (tmp, traces)
 }
 
 pub fn clean(scratch: &Path) {
@@ -313,10 +323,9 @@ mod tests {
       println!("{entry:?}");
       let csvs: HashMap<String, Vec<String>> = get_traces(
         &Executable::new(entry.path()),
-        &scratch_relpath(),
+        &TempDir::new(&scratch_relpath()),
         EnvironmentUpdate::default(),
       )
-      .1
       .unwrap()
       .0
       .iter_mut()
