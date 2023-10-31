@@ -15,10 +15,10 @@ use crate::{
   env::EnvironmentUpdate,
   exec::{ExecResult, Executable},
   state::CommitHash,
-  DelayParams, DelayVector, HookId, InvocationCounts, Traces,
+  DelayParams, DelayVector, HookId, HookInvocationCounts, Traces,
 };
 
-impl InvocationCounts {
+impl HookInvocationCounts {
   pub fn len(&self) -> usize {
     self.0.values().map(|it| *it as usize).sum::<usize>()
   }
@@ -33,7 +33,11 @@ impl InvocationCounts {
 }
 
 impl DelayVector {
-  pub fn random(ic: &InvocationCounts, rng: &mut rand::rngs::ThreadRng, dp: &DelayParams) -> Self {
+  pub fn random(
+    ic: &HookInvocationCounts,
+    rng: &mut rand::rngs::ThreadRng,
+    dp: &DelayParams,
+  ) -> Self {
     let mut v = vec![];
     v.reserve_exact(ic.len());
     for _ in 0..ic.len() {
@@ -135,7 +139,7 @@ pub fn get_commit_hash(src_dir: &Path) -> CommitHash {
   CommitHash::new(u128::from_str_radix(&s.trim()[..32], 16).expect("failed to parse commit hash"))
 }
 
-pub fn get_counts(executable: &Executable, scratch: &Path) -> InvocationCounts {
+pub fn get_counts(executable: &Executable, scratch: &Path) -> HookInvocationCounts {
   let rand_subdir = TempDir::new(scratch);
   println!("getting invocationcounts for {}...", executable);
   let mut output = executable.run(
@@ -158,7 +162,7 @@ pub fn get_counts(executable: &Executable, scratch: &Path) -> InvocationCounts {
       ret.insert(hid, next);
     }
   }
-  InvocationCounts(ret)
+  HookInvocationCounts(ret)
 }
 
 #[derive(Debug)]
@@ -253,7 +257,7 @@ pub fn get_traces(
   Ok(Traces(ret))
 }
 
-fn assert_compatible(ic: &InvocationCounts, dvec: &DelayVector) {
+fn assert_compatible(ic: &HookInvocationCounts, dvec: &DelayVector) {
   if ic.len() != dvec.0.len() {
     panic!("ic and dvec correspond to a different number of hook invocations");
   }
@@ -262,7 +266,7 @@ fn assert_compatible(ic: &InvocationCounts, dvec: &DelayVector) {
 pub fn run_with_parameters(
   executable: &Executable,
   scratch: &Path,
-  ic: &InvocationCounts,
+  ic: &HookInvocationCounts,
   dvec: &DelayVector,
 ) -> (TempDir, Result<Traces, ExecResult>) {
   assert_compatible(ic, dvec);

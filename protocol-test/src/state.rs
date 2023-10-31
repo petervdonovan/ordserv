@@ -1,4 +1,3 @@
-use rand::seq::SliceRandom;
 use rayon::prelude::*;
 
 use std::{
@@ -9,20 +8,16 @@ use std::{
   io::Write,
   os::unix::prelude::OsStrExt,
   path::{Path, PathBuf},
-  sync::{Arc, Mutex},
 };
 
-use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
-  exec::{ExecResult, Executable},
-  io::{
-    clean, get_commit_hash, get_counts, get_lf_files_non_recursive, get_traces,
-    run_with_parameters, TempDir,
-  },
-  DelayParams, DelayVector, InvocationCounts, TraceRecord, Traces,
+  exec::Executable,
+  io::{clean, get_commit_hash, get_counts, get_lf_files_non_recursive, get_traces, TempDir},
+  testing::AccumulatingTracesState,
+  DelayParams, HookInvocationCounts, TraceRecord, Traces,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -62,32 +57,18 @@ pub struct KnownCountsState {
   metadata: HashMap<TestId, TestMetadata>,
 }
 #[derive(Debug, Serialize, Deserialize)]
-pub struct AccumulatingTracesState {
-  kcs: KnownCountsState,
-  runs: HashMap<TestId, Arc<Mutex<TestRuns>>>, // TODO: consider using a rwlock
-}
-#[derive(Debug, Serialize, Deserialize)]
 pub struct TestMetadata {
-  ic: InvocationCounts,
-  ovkey: OutputVectorKey,
-}
-#[derive(Debug, Serialize, Deserialize)]
-pub struct TestRuns {
-  raw_traces: Vec<(DelayVector, Result<SuccessfulRun, ExecResult>)>,
-  #[serde(skip)] // derived from raw_traces (successes only)
-  in_mat_global: Array2<i64>,
-  #[serde(skip)]
-  out_vectors_global: Vec<Array1<i64>>,
-  iomats: HashMap<CoarseTraceHash, HashMap<FineTraceHash, Vec<usize>>>,
+  pub hic: HookInvocationCounts,
+  pub ovkey: OutputVectorKey,
 }
 
 #[derive(Default, Debug, Hash, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
-struct TracePointId(u64);
+pub struct TracePointId(u64);
 #[derive(Default, Debug, Hash, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
-struct TestId(u128);
+pub struct TestId(u128);
 
 impl TracePointId {
-  fn new(tr: &TraceRecord) -> Self {
+  pub fn new(tr: &TraceRecord) -> Self {
     let mut hash = DefaultHasher::new();
     tr.event.hash(&mut hash);
     tr.reactor.hash(&mut hash);
@@ -110,14 +91,12 @@ impl TestId {
   }
 }
 #[derive(Debug, Serialize, Deserialize)]
-struct OutputVector(Vec<i64>);
+pub struct OutputVector(pub Vec<i64>);
 #[derive(Debug, Serialize, Deserialize)]
-struct OutputVectorKey {
-  map: HashMap<TracePointId, Vec<usize>>,
-  n_tracepoints: usize,
+pub struct OutputVectorKey {
+  pub map: HashMap<TracePointId, Vec<usize>>,
+  pub n_tracepoints: usize,
 }
-
-type SuccessfulRun = (OutputVector, TraceHash, VectorfyStatus);
 
 impl OutputVectorKey {
   fn new(tpis: impl Iterator<Item = TracePointId>) -> Self {
@@ -132,77 +111,10 @@ impl OutputVectorKey {
       n_tracepoints: idx + 1,
     }
   }
-  fn vectorfy(&self, records: impl Iterator<Item = TraceRecord>) -> SuccessfulRun {
-    let mut ov = vec![0; self.n_tracepoints];
-    let mut th = TraceHasher::new();
-    let mut status = VectorfyStatus::Ok;
-    let mut subidxs = HashMap::new();
-    for tr in records {
-      let tpi = TracePointId::new(&tr);
-      if let Some(idxs) = self.map.get(&tpi) {
-        subidxs.entry(tpi).or_insert(0);
-        if let Some(idx) = idxs.get(subidxs[&tpi]) {
-          ov[*idx] = tr.elapsed_physical_time;
-        } else {
-          status = VectorfyStatus::ExtraTracePointId;
-        }
-      } else {
-        status = VectorfyStatus::MissingTracePointId;
-      }
-      th.update(&tr);
-    }
-    (OutputVector(ov), th.finish(), status)
-  }
 }
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Copy)]
-struct CoarseTraceHash(u64);
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Copy)]
-struct FineTraceHash(u64);
-#[derive(Debug, Serialize, Deserialize)]
-struct TraceHash(CoarseTraceHash, FineTraceHash);
 
 // ~31K network ports, each test may use up to 10 ports
-const CONCURRENCY_LIMIT: usize = 30;
-
-struct TraceHasher {
-  coarse: DefaultHasher,
-  fine: DefaultHasher,
-}
-
-impl TraceHasher {
-  fn new() -> Self {
-    Self {
-      coarse: DefaultHasher::new(),
-      fine: DefaultHasher::new(),
-    }
-  }
-  fn update(&mut self, tr: &TraceRecord) {
-    tr.event.hash(&mut self.coarse);
-    tr.destination.hash(&mut self.coarse);
-    tr.elapsed_logical_time.hash(&mut self.coarse);
-    tr.microstep.hash(&mut self.coarse);
-    tr.event.hash(&mut self.fine);
-    tr.reactor.hash(&mut self.fine);
-    tr.source.hash(&mut self.fine);
-    tr.destination.hash(&mut self.fine);
-    tr.elapsed_logical_time.hash(&mut self.fine);
-    tr.microstep.hash(&mut self.fine);
-    tr.trigger.hash(&mut self.fine);
-    tr.extra_delay.hash(&mut self.fine);
-  }
-  fn finish(self) -> TraceHash {
-    TraceHash(
-      CoarseTraceHash(self.coarse.finish()),
-      FineTraceHash(self.fine.finish()),
-    )
-  }
-}
-#[derive(Debug, Serialize, Deserialize)]
-enum VectorfyStatus {
-  Ok,
-  MissingTracePointId,
-  ExtraTracePointId,
-}
+pub const CONCURRENCY_LIMIT: usize = 30;
 
 impl State {
   const INITIAL_NAME: &'static str = "initial";
@@ -273,7 +185,7 @@ impl State {
       Self::Initial(s) => s,
       Self::Compiled(s) => &s.initial,
       Self::KnownCounts(s) => &s.cs.initial,
-      Self::AccumulatingTraces(s) => &s.kcs.cs.initial,
+      Self::AccumulatingTraces(s) => s.get_initial_state(),
     }
   }
   fn file_name(&self) -> String {
@@ -389,7 +301,7 @@ impl CompiledState {
           .map(|r| r.expect("could not read record"))
           .map(|tr| TracePointId::new(&tr));
         let ovkey = OutputVectorKey::new(traces);
-        (*id, TestMetadata { ic, ovkey })
+        (*id, TestMetadata { hic: ic, ovkey })
       })
       .collect::<HashMap<_, _>>()
   }
@@ -406,100 +318,24 @@ impl CompiledState {
 
 impl KnownCountsState {
   fn advance(self) -> AccumulatingTracesState {
-    let runs = self
-      .cs
-      .initial
-      .src_files
-      .keys()
-      .map(|id| {
-        (
-          *id,
-          Arc::new(Mutex::new(TestRuns {
-            raw_traces: vec![],
-            in_mat_global: Array2::zeros((0, self.metadata[id].ic.len())),
-            out_vectors_global: vec![],
-            iomats: HashMap::new(),
-          })),
-        )
-      })
-      .collect();
-    AccumulatingTracesState { kcs: self, runs }
+    AccumulatingTracesState::new(self)
   }
-}
-
-impl AccumulatingTracesState {
-  fn total_runs(&self) -> usize {
-    self
-      .runs
-      .values()
-      .map(|tr| tr.lock().unwrap().raw_traces.len())
-      .sum()
+  pub fn get_initial_state(&self) -> &InitialState {
+    &self.cs.initial
   }
-  fn get_delay_vector(&self, id: &TestId) -> DelayVector {
-    let params = &self.kcs.cs.initial.delay_params;
-    let mut rng = rand::thread_rng();
-    DelayVector::random(&self.kcs.metadata[id].ic, &mut rng, params)
+  pub fn tids(&self) -> impl Iterator<Item = &TestId> {
+    self.metadata.keys()
   }
-  fn get_run(
-    &self,
-    id: &TestId,
-    exe: &Executable,
-    dvec: &DelayVector,
-  ) -> Result<SuccessfulRun, ExecResult> {
-    let (_, traces_map) = run_with_parameters(
-      exe,
-      &self.kcs.cs.initial.scratch_dir,
-      &self.kcs.metadata[id].ic,
-      dvec,
-    );
-    let mut traces_map = traces_map?;
-    let raw_traces = traces_map
-      .0
-      .get_mut("rti.csv")
-      .expect("no trace file named rti.csv")
-      .deserialize()
-      .map(|r| r.expect("could not read record"));
-    let (ov, th, status) = self.kcs.metadata[id].ovkey.vectorfy(raw_traces);
-    Ok((ov, th, status))
+  pub fn executables(&self) -> &HashMap<TestId, Executable> {
+    &self.cs.executables
   }
-  fn add_run(&self, id: TestId, dvec: DelayVector, run: Result<SuccessfulRun, ExecResult>) {
-    let entry = self.runs.get(&id).unwrap().clone();
-    let mut entry = entry.lock().unwrap();
-    if let Ok(run) = &run {
-      let dvec_int = dvec.0.iter().map(|it| *it as i64).collect::<Array1<_>>();
-      let ov = Array1::from_vec(run.0 .0.clone());
-      entry
-        .in_mat_global
-        .push_row(dvec_int.view())
-        .expect("shape error: should be impossible");
-      entry.out_vectors_global.push(ov);
-      let idx = entry.in_mat_global.nrows() - 1;
-      let vec = entry
-        .iomats
-        .entry(run.1 .0)
-        .or_insert_with(HashMap::new)
-        .entry(run.1 .1)
-        .or_insert_with(Vec::new);
-      vec.push(idx);
-    }
-    entry.raw_traces.push((dvec, run));
+  pub fn scratch_dir(&self) -> &Path {
+    &self.cs.initial.scratch_dir
   }
-  fn accumulate_traces(&mut self, time_seconds: u32) {
-    let t0 = std::time::Instant::now();
-    let executables = self.kcs.cs.executables.iter().collect::<Vec<_>>();
-    std::thread::scope(|scope| {
-      for _ in 0..CONCURRENCY_LIMIT {
-        scope.spawn(|| {
-          while std::time::Instant::now() - t0 < std::time::Duration::from_secs(time_seconds as u64)
-          {
-            let mut rng = rand::thread_rng();
-            let (id, exe) = executables.choose(&mut rng).unwrap();
-            let dvec = self.get_delay_vector(id);
-            let run = self.get_run(id, exe, &dvec);
-            self.add_run(**id, dvec, run);
-          }
-        });
-      }
-    });
+  pub fn metadata(&self, id: &TestId) -> &TestMetadata {
+    self.metadata.get(id).expect("unknown test id")
+  }
+  pub fn delay_params(&self) -> &DelayParams {
+    &self.cs.initial.delay_params
   }
 }

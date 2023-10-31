@@ -1,6 +1,7 @@
 #[allow(dead_code)]
 mod io;
 pub mod state;
+mod testing;
 
 use std::{collections::HashMap, fs::File};
 
@@ -11,7 +12,7 @@ use serde::{Deserialize, Serialize};
 pub struct HookId(String);
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct InvocationCounts(HashMap<HookId, u32>);
+pub struct HookInvocationCounts(HashMap<HookId, u32>);
 
 pub mod exec {
   use std::{
@@ -165,7 +166,7 @@ pub mod env {
   use std::sync::Mutex;
   use std::{collections::HashMap, ffi::OsString};
 
-  use crate::{io::TempDir, DelayVector, InvocationCounts};
+  use crate::{io::TempDir, DelayVector, HookInvocationCounts};
 
   const LF_FED_PORT: &str = "LF_FED_PORT";
 
@@ -232,7 +233,7 @@ pub mod env {
       &self.evars
     }
 
-    pub fn delayed(ic: &InvocationCounts, dvec: &DelayVector, tmp: &TempDir) -> Self {
+    pub fn delayed(ic: &HookInvocationCounts, dvec: &DelayVector, tmp: &TempDir) -> Self {
       let mut ret = Self::default();
       let mut cumsum: usize = 0;
       for (hid, k) in ic.to_vec() {
