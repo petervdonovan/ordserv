@@ -114,7 +114,7 @@ impl OutputVectorKey {
 }
 
 // ~31K network ports, each test may use up to 10 ports
-pub const CONCURRENCY_LIMIT: usize = 30;
+pub const CONCURRENCY_LIMIT: usize = 3000;
 
 impl State {
   const INITIAL_NAME: &'static str = "initial";

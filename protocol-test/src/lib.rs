@@ -196,7 +196,13 @@ pub mod env {
   fn get_valid_port() -> OsString {
     // 1024 is the first valid port, and one test may use a few ports (by trying them in sequence)
     // if they have physical connections. Assume the tests do not use more than 10 ports each.
-    let mut open_ports_idx = OPEN_PORTS_IDX.lock().unwrap();
+    let mut open_ports_idx = match OPEN_PORTS_IDX.lock() {
+      Ok(guard) => guard,
+      Err(poisoned) => {
+        println!("poisoned mutex: {:?}", poisoned);
+        panic!("poisoned mutex")
+      }
+    };
     let mut current: usize = *open_ports_idx;
     while OPEN_PORTS[current + 3] > OPEN_PORTS[current] + 3 {
       current += 1;

@@ -166,10 +166,18 @@ impl AccumulatingTracesState {
     if let Ok(run) = &run {
       let dvec_int = dvec.0.iter().map(|it| *it as i64).collect::<Array1<_>>();
       let ov = Array1::from_vec(run.0 .0.clone());
-      entry
-        .in_mat_global
-        .push_row(dvec_int.view())
-        .expect("shape error: should be impossible");
+      match entry.in_mat_global.push_row(dvec_int.view()) {
+        Ok(ov) => ov,
+        Err(e) => {
+          println!(
+            "shape error: {} with shape {:?} and length {}",
+            e,
+            entry.in_mat_global.shape(),
+            dvec_int.len()
+          );
+          panic!("shape error")
+        }
+      };
       entry.out_vectors_global.push(ov);
       let idx = entry.in_mat_global.nrows() - 1;
       let vec = entry
