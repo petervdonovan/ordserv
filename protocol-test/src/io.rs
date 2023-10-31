@@ -15,7 +15,7 @@ use crate::{
   env::EnvironmentUpdate,
   exec::{ExecResult, Executable},
   state::CommitHash,
-  DelayParams, DelayVector, HookId, HookInvocationCounts, Traces,
+  DelayParams, DelayVector, HookId, HookInvocationCounts, ThreadId, Traces,
 };
 
 impl HookInvocationCounts {
@@ -139,11 +139,11 @@ pub fn get_commit_hash(src_dir: &Path) -> CommitHash {
   CommitHash::new(u128::from_str_radix(&s.trim()[..32], 16).expect("failed to parse commit hash"))
 }
 
-pub fn get_counts(executable: &Executable, scratch: &Path) -> HookInvocationCounts {
+pub fn get_counts(executable: &Executable, scratch: &Path, tid: ThreadId) -> HookInvocationCounts {
   let rand_subdir = TempDir::new(scratch);
   println!("getting invocationcounts for {}...", executable);
   let mut output = executable.run(
-    EnvironmentUpdate::new(&[("LF_LOGTRACE", "YES")]),
+    EnvironmentUpdate::new(tid, &[("LF_LOGTRACE", "YES")]),
     &rand_subdir,
     Box::new(|s: &str| s.starts_with("<<<")), // Warning: must define superset of set defined by regex below
   );
@@ -151,7 +151,7 @@ pub fn get_counts(executable: &Executable, scratch: &Path) -> HookInvocationCoun
     output.retain_output(|s| s.to_lowercase().contains("fail"));
     println!("Failed to get correct initial counts for {executable:?}. Re-running.");
     println!("summary of failed run:\n{output}");
-    return get_counts(executable, scratch);
+    return get_counts(executable, scratch, tid);
   }
   let regex = Regex::new(r"<<< (?<HookId>.*) >>>").unwrap();
   let mut ret = HashMap::new();
@@ -198,7 +198,6 @@ pub fn get_traces(
   tmp: &TempDir,
   evars: EnvironmentUpdate,
 ) -> Result<Traces, ExecResult> {
-  println!("getting traces for {}...", executable);
   let evars2 = evars.get_evars().clone();
   let run = executable.run(
     evars,
@@ -268,10 +267,11 @@ pub fn run_with_parameters(
   scratch: &Path,
   ic: &HookInvocationCounts,
   dvec: &DelayVector,
+  tid: ThreadId,
 ) -> (TempDir, Result<Traces, ExecResult>) {
   assert_compatible(ic, dvec);
   let tmp = TempDir::new(scratch);
-  let evars = EnvironmentUpdate::delayed(ic, dvec, &tmp);
+  let evars = EnvironmentUpdate::delayed(ic, dvec, &tmp, tid);
   let traces = get_traces(executable, &tmp, evars);
   (tmp, traces)
 }
@@ -316,7 +316,11 @@ mod tests {
   #[test]
   fn test_get_counts() {
     for entry in test_progs() {
-      let counts = get_counts(&Executable::new(entry.path()), &scratch_relpath());
+      let counts = get_counts(
+        &Executable::new(entry.path()),
+        &scratch_relpath(),
+        ThreadId(0),
+      );
       println!("{counts:?}");
     }
   }
@@ -328,7 +332,7 @@ mod tests {
       let csvs: HashMap<String, Vec<String>> = get_traces(
         &Executable::new(entry.path()),
         &TempDir::new(&scratch_relpath()),
-        EnvironmentUpdate::default(),
+        EnvironmentUpdate::new(ThreadId(0), &[]),
       )
       .unwrap()
       .0

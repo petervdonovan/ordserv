@@ -8,8 +8,15 @@ use std::{collections::HashMap, fs::File};
 use csv::Reader;
 use serde::{Deserialize, Serialize};
 
+pub const CONCURRENCY_LIMIT: usize = 350;
+
+const TEST_TIMEOUT_SECS: u64 = 45;
+
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct HookId(String);
+
+#[derive(Debug, Clone, Copy)]
+pub struct ThreadId(usize);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HookInvocationCounts(HashMap<HookId, u32>);
@@ -27,12 +34,10 @@ pub mod exec {
   use serde::{Deserialize, Serialize};
   use wait_timeout::ChildExt;
 
-  use crate::{env::EnvironmentUpdate, io::TempDir};
+  use crate::{env::EnvironmentUpdate, io::TempDir, TEST_TIMEOUT_SECS};
 
   #[derive(Debug, Serialize, Deserialize)]
   pub struct Executable(PathBuf);
-
-  const TEST_TIMEOUT_SECS: u64 = 45;
 
   #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
   pub enum Status {
@@ -166,6 +171,8 @@ pub mod env {
   use std::sync::Mutex;
   use std::{collections::HashMap, ffi::OsString};
 
+  use crate::ThreadId;
+  use crate::CONCURRENCY_LIMIT;
   use crate::{io::TempDir, DelayVector, HookInvocationCounts};
 
   const LF_FED_PORT: &str = "LF_FED_PORT";
@@ -192,6 +199,16 @@ pub mod env {
       .collect()
   });
   static OPEN_PORTS_IDX: Mutex<usize> = Mutex::new(0);
+  static PORTS_BY_TID: Lazy<Vec<OsString>> = Lazy::new(|| {
+    let mut ret = Vec::new();
+    for _ in 0..CONCURRENCY_LIMIT {
+      ret.push(get_valid_port());
+    }
+    ret
+  });
+
+  const REQUIRED_CONTIGUOUS_PORTS: u16 = 5;
+  const MAX_REQUIRED_PORTS: u16 = 10;
 
   fn get_valid_port() -> OsString {
     // 1024 is the first valid port, and one test may use a few ports (by trying them in sequence)
@@ -204,31 +221,31 @@ pub mod env {
       }
     };
     let mut current: usize = *open_ports_idx;
-    while OPEN_PORTS[current + 3] > OPEN_PORTS[current] + 3 {
+    if current + 10 >= OPEN_PORTS.len() {
+      panic!("not enough open ports");
+    }
+    while OPEN_PORTS[current + (REQUIRED_CONTIGUOUS_PORTS as usize)]
+      > OPEN_PORTS[current] + REQUIRED_CONTIGUOUS_PORTS
+    {
       current += 1;
     }
-    *open_ports_idx = current + 10;
+    *open_ports_idx = current + (MAX_REQUIRED_PORTS as usize);
     let port = OPEN_PORTS[current];
     // An IndexOutOfBounds exception around here indicates that we are trying to open too many sockets
     OsString::from(port.to_string())
   }
 
-  impl<'a> Default for EnvironmentUpdate<'a> {
-    fn default() -> Self {
+  impl<'a> EnvironmentUpdate<'a> {
+    pub fn new(tid: ThreadId, tups: &[(&str, &str)]) -> Self {
+      let mut evars = HashMap::new();
+      for (k, v) in tups {
+        evars.insert(OsString::from(*k), OsString::from(*v));
+      }
+      evars.insert(OsString::from(LF_FED_PORT), PORTS_BY_TID[tid.0].clone());
       Self {
-        evars: HashMap::from([(LF_FED_PORT.into(), get_valid_port())]),
+        evars,
         _scratch: None,
       }
-    }
-  }
-
-  impl<'a> EnvironmentUpdate<'a> {
-    pub fn new(tups: &[(&str, &str)]) -> Self {
-      let mut ret = Self::default();
-      for (k, v) in tups {
-        ret.evars.insert(OsString::from(*k), OsString::from(*v));
-      }
-      ret
     }
 
     pub fn insert(&mut self, key: OsString, value: OsString) {
@@ -239,8 +256,13 @@ pub mod env {
       &self.evars
     }
 
-    pub fn delayed(ic: &HookInvocationCounts, dvec: &DelayVector, tmp: &TempDir) -> Self {
-      let mut ret = Self::default();
+    pub fn delayed(
+      ic: &HookInvocationCounts,
+      dvec: &DelayVector,
+      tmp: &TempDir,
+      tid: ThreadId,
+    ) -> Self {
+      let mut ret = Self::new(tid, &[]);
       let mut cumsum: usize = 0;
       for (hid, k) in ic.to_vec() {
         let delay = tmp.rand_file("delay");

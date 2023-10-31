@@ -1,9 +1,10 @@
 use std::{
   collections::{hash_map::DefaultHasher, HashMap},
   hash::{Hash, Hasher},
-  sync::{Arc, Mutex},
+  sync::{Arc, RwLock},
 };
 
+use colored::Colorize;
 use ndarray::{Array1, Array2};
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
@@ -11,16 +12,14 @@ use serde::{Deserialize, Serialize};
 use crate::{
   exec::{ExecResult, Executable},
   io::run_with_parameters,
-  state::{
-    InitialState, KnownCountsState, OutputVector, OutputVectorKey, TestId, TracePointId,
-    CONCURRENCY_LIMIT,
-  },
-  DelayVector, TraceRecord,
+  state::{InitialState, KnownCountsState, OutputVector, OutputVectorKey, TestId, TracePointId},
+  DelayVector, ThreadId, TraceRecord, CONCURRENCY_LIMIT,
 };
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AccumulatingTracesState {
   kcs: KnownCountsState,
-  runs: HashMap<TestId, Arc<Mutex<TestRuns>>>, // TODO: consider using a rwlock
+  runs: HashMap<TestId, Arc<RwLock<TestRuns>>>, // TODO: consider using a rwlock
+  dt: std::time::Duration,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -112,7 +111,7 @@ impl AccumulatingTracesState {
       .map(|id| {
         (
           *id,
-          Arc::new(Mutex::new(TestRuns {
+          Arc::new(RwLock::new(TestRuns {
             raw_traces: vec![],
             in_mat_global: Array2::zeros((0, kcs.metadata(id).hic.len())),
             out_vectors_global: vec![],
@@ -121,13 +120,36 @@ impl AccumulatingTracesState {
         )
       })
       .collect();
-    Self { kcs, runs }
+    Self {
+      kcs,
+      runs,
+      dt: std::time::Duration::from_secs(0),
+    }
+  }
+  fn empty_in_mat_global(&self, tid: &TestId) -> Array2<i64> {
+    Array2::zeros((0, self.kcs.metadata(tid).hic.len()))
+  }
+  /// After deserialization, the raw_traces field is the only field that is up to date.
+  pub fn make_consistent(&self) {
+    for tid in self.kcs.tids() {
+      let mut entry = self.runs.get(tid).unwrap().write().unwrap();
+      let entry = &mut *entry;
+      entry.in_mat_global = self.empty_in_mat_global(tid);
+      for (dvec, run) in entry.raw_traces.iter() {
+        self.add_run_from_raw(
+          dvec,
+          run,
+          &mut entry.in_mat_global,
+          &mut entry.out_vectors_global,
+        );
+      }
+    }
   }
   pub fn total_runs(&self) -> usize {
     self
       .runs
       .values()
-      .map(|tr| tr.lock().unwrap().raw_traces.len())
+      .map(|tr| tr.read().unwrap().raw_traces.len())
       .sum()
   }
   pub fn get_initial_state(&self) -> &InitialState {
@@ -143,12 +165,14 @@ impl AccumulatingTracesState {
     id: &TestId,
     exe: &Executable,
     dvec: &DelayVector,
+    tidx: ThreadId,
   ) -> Result<SuccessfulRun, ExecResult> {
     let (_, traces_map) = run_with_parameters(
       exe,
       self.kcs.scratch_dir(),
       &self.kcs.metadata(id).hic,
       dvec,
+      tidx,
     );
     let mut traces_map = traces_map?;
     let raw_traces = traces_map
@@ -160,25 +184,42 @@ impl AccumulatingTracesState {
     let (ov, th, status) = self.kcs.metadata(id).ovkey.vectorfy(raw_traces);
     Ok((ov, th, status))
   }
-  fn add_run(&self, id: TestId, dvec: DelayVector, run: Result<SuccessfulRun, ExecResult>) {
-    let entry = self.runs.get(&id).unwrap().clone();
-    let mut entry = entry.lock().unwrap();
+  fn add_run_from_raw(
+    &self,
+    dvec: &DelayVector,
+    run: &Result<SuccessfulRun, ExecResult>,
+    in_mat_global: &mut Array2<i64>,
+    out_vectors_global: &mut Vec<Array1<i64>>,
+  ) {
     if let Ok(run) = &run {
       let dvec_int = dvec.0.iter().map(|it| *it as i64).collect::<Array1<_>>();
       let ov = Array1::from_vec(run.0 .0.clone());
-      match entry.in_mat_global.push_row(dvec_int.view()) {
+      match in_mat_global.push_row(dvec_int.view()) {
         Ok(ov) => ov,
         Err(e) => {
           println!(
             "shape error: {} with shape {:?} and length {}",
             e,
-            entry.in_mat_global.shape(),
+            in_mat_global.shape(),
             dvec_int.len()
           );
           panic!("shape error")
         }
       };
-      entry.out_vectors_global.push(ov);
+      out_vectors_global.push(ov);
+    }
+  }
+  fn add_run(&self, tid: TestId, dvec: DelayVector, run: Result<SuccessfulRun, ExecResult>) {
+    let entry = self.runs.get(&tid).unwrap().clone();
+    let mut entry = entry.write().unwrap();
+    let entry = &mut *entry;
+    self.add_run_from_raw(
+      &dvec,
+      &run,
+      &mut entry.in_mat_global,
+      &mut entry.out_vectors_global,
+    );
+    if let Ok(run) = &run {
       let idx = entry.in_mat_global.nrows() - 1;
       let vec = entry
         .iomats
@@ -192,20 +233,34 @@ impl AccumulatingTracesState {
   }
   pub fn accumulate_traces(&mut self, time_seconds: u32) {
     let t0 = std::time::Instant::now();
+    let initial_total_runs = self.total_runs();
     let executables = self.kcs.executables().iter().collect::<Vec<_>>();
+    let executables = &executables;
     std::thread::scope(|scope| {
-      for _ in 0..CONCURRENCY_LIMIT {
-        scope.spawn(|| {
+      let self_immut = &self;
+      for tidx in 0..CONCURRENCY_LIMIT {
+        scope.spawn(move || {
           while std::time::Instant::now() - t0 < std::time::Duration::from_secs(time_seconds as u64)
           {
             let mut rng = rand::thread_rng();
             let (id, exe) = executables.choose(&mut rng).unwrap();
-            let dvec = self.get_delay_vector(id);
-            let run = self.get_run(id, exe, &dvec);
-            self.add_run(**id, dvec, run);
+            let dvec = self_immut.get_delay_vector(id);
+            let run = self_immut.get_run(id, exe, &dvec, ThreadId(tidx));
+            self_immut.add_run(**id, dvec, run);
           }
         });
       }
     });
+    let dt = std::time::Instant::now() - t0;
+    self.dt += dt;
+    let msg = format!(
+      "Accumulated {} traces in {} seconds = {:.2} hours.",
+      self.total_runs() - initial_total_runs,
+      dt.as_secs(),
+      dt.as_secs_f64() / 3600.0
+    )
+    .bold()
+    .on_green();
+    println!("{}", msg);
   }
 }

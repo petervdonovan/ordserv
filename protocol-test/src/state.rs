@@ -17,7 +17,7 @@ use crate::{
   exec::Executable,
   io::{clean, get_commit_hash, get_counts, get_lf_files_non_recursive, get_traces, TempDir},
   testing::AccumulatingTracesState,
-  DelayParams, HookInvocationCounts, TraceRecord, Traces,
+  DelayParams, HookInvocationCounts, ThreadId, TraceRecord, Traces, CONCURRENCY_LIMIT,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -113,9 +113,6 @@ impl OutputVectorKey {
   }
 }
 
-// ~31K network ports, each test may use up to 10 ports
-pub const CONCURRENCY_LIMIT: usize = 3000;
-
 impl State {
   const INITIAL_NAME: &'static str = "initial";
   const COMPILED_NAME: &'static str = "compiled";
@@ -157,8 +154,11 @@ impl State {
     };
     let ats_files: Vec<_> = get_files(Self::ACCUMULATING_TRACES_NAME);
     if !ats_files.is_empty() {
-      return rmp_serde::from_read(File::open(ats_files[0].0.path()).expect("could not open file"))
-        .expect("failed to deserialize");
+      let mut ret: Self =
+        rmp_serde::from_read(File::open(ats_files[0].0.path()).expect("could not open file"))
+          .expect("failed to deserialize");
+      ret.make_consistent();
+      return ret;
     }
     let kc_files = get_files(Self::KNOWN_COUNTS_NAME);
     if !kc_files.is_empty() {
@@ -178,6 +178,14 @@ impl State {
       scratch_dir,
       delay_params,
     })
+  }
+  fn make_consistent(&mut self) {
+    match self {
+      Self::Initial(_) => {}
+      Self::Compiled(_) => {}
+      Self::KnownCounts(_) => {}
+      Self::AccumulatingTraces(ats) => ats.make_consistent(),
+    }
   }
 
   fn get_initial_state(&self) -> &InitialState {
@@ -275,10 +283,18 @@ impl InitialState {
 
 impl CompiledState {
   const ATTEMPTS: u32 = 10;
-  fn get_traces_attempts(executable: &Executable, scratch_dir: &Path) -> (TempDir, Traces) {
+  fn get_traces_attempts(
+    executable: &Executable,
+    scratch_dir: &Path,
+    tid: ThreadId,
+  ) -> (TempDir, Traces) {
     for _ in 0..Self::ATTEMPTS {
       let tmp = TempDir::new(scratch_dir);
-      let ret = get_traces(executable, &tmp, crate::env::EnvironmentUpdate::default());
+      let ret = get_traces(
+        executable,
+        &tmp,
+        crate::env::EnvironmentUpdate::new(tid, &[]),
+      );
       if let Ok(ret) = ret {
         return (tmp, ret);
       }
@@ -290,9 +306,16 @@ impl CompiledState {
       .executables
       .par_iter()
       .map(|(id, exe)| {
-        let ic = get_counts(exe, &self.initial.scratch_dir);
-        let (_, mut traces_map) =
-          CompiledState::get_traces_attempts(exe, &self.initial.scratch_dir);
+        let ic = get_counts(
+          exe,
+          &self.initial.scratch_dir,
+          ThreadId(rayon::current_thread_index().unwrap()),
+        );
+        let (_, mut traces_map) = CompiledState::get_traces_attempts(
+          exe,
+          &self.initial.scratch_dir,
+          ThreadId(rayon::current_thread_index().unwrap()),
+        );
         let traces = traces_map
           .0
           .get_mut("rti.csv")
