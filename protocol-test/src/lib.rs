@@ -1,7 +1,7 @@
 #[allow(dead_code)]
 mod io;
 pub mod state;
-mod testing;
+pub mod testing;
 
 use std::{collections::HashMap, fs::File};
 

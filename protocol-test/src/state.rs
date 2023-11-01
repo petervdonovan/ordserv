@@ -154,10 +154,10 @@ impl State {
     };
     let ats_files: Vec<_> = get_files(Self::ACCUMULATING_TRACES_NAME);
     if !ats_files.is_empty() {
-      let mut ret: Self =
-        rmp_serde::from_read(File::open(ats_files[0].0.path()).expect("could not open file"))
-          .expect("failed to deserialize");
-      ret.make_consistent();
+      let path = ats_files[0].0.path();
+      let mut ret: Self = rmp_serde::from_read(File::open(&path).expect("could not open file"))
+        .expect("failed to deserialize");
+      ret.make_consistent(path);
       return ret;
     }
     let kc_files = get_files(Self::KNOWN_COUNTS_NAME);
@@ -179,12 +179,12 @@ impl State {
       delay_params,
     })
   }
-  fn make_consistent(&mut self) {
+  fn make_consistent(&mut self, path: PathBuf) {
     match self {
       Self::Initial(_) => {}
       Self::Compiled(_) => {}
       Self::KnownCounts(_) => {}
-      Self::AccumulatingTraces(ats) => ats.make_consistent(),
+      Self::AccumulatingTraces(ats) => ats.make_consistent(path),
     }
   }
 

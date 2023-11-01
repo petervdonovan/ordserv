@@ -1,7 +1,9 @@
 use std::{
   collections::{hash_map::DefaultHasher, HashMap},
   hash::{Hash, Hasher},
+  path::PathBuf,
   sync::{Arc, RwLock},
+  time::Duration,
 };
 
 use colored::Colorize;
@@ -18,6 +20,7 @@ use crate::{
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AccumulatingTracesState {
   kcs: KnownCountsState,
+  parent: Option<PathBuf>,
   runs: HashMap<TestId, Arc<RwLock<TestRuns>>>, // TODO: consider using a rwlock
   dt: std::time::Duration,
 }
@@ -122,6 +125,7 @@ impl AccumulatingTracesState {
       .collect();
     Self {
       kcs,
+      parent: None,
       runs,
       dt: std::time::Duration::from_secs(0),
     }
@@ -130,7 +134,8 @@ impl AccumulatingTracesState {
     Array2::zeros((0, self.kcs.metadata(tid).hic.len()))
   }
   /// After deserialization, the raw_traces field is the only field that is up to date.
-  pub fn make_consistent(&self) {
+  pub fn make_consistent(&mut self, path: PathBuf) {
+    self.parent = Some(path);
     for tid in self.kcs.tids() {
       let mut entry = self.runs.get(tid).unwrap().write().unwrap();
       let entry = &mut *entry;
@@ -154,6 +159,9 @@ impl AccumulatingTracesState {
   }
   pub fn get_initial_state(&self) -> &InitialState {
     self.kcs.get_initial_state()
+  }
+  pub fn get_dt(&self) -> Duration {
+    self.dt
   }
   fn get_delay_vector(&self, id: &TestId) -> DelayVector {
     let params = &self.kcs.delay_params();

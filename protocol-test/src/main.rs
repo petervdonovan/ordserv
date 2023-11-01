@@ -17,9 +17,9 @@ struct Cli {
 }
 
 const DEFAULT_SCRATCH_DIR: &str = "scratch";
-const MIN_SAVE_INTERVAL_SECONDS: u32 = 120;
+const MIN_SAVE_INTERVAL_SECONDS: u32 = 60;
 const MAX_SAVE_INTERVAL_SECONDS: u32 = 3600;
-const SAVE_INTERVAL_INCREASE_PER_ITERATION: u32 = 300;
+const SAVE_INTERVAL_INCREASE_PER_ITERATION: u32 = 60;
 
 fn main() {
   let args = Cli::parse();
