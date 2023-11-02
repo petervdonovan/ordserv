@@ -1,45 +1,21 @@
-use std::{fs::File, path::PathBuf};
-
-use protocol_test::{state::State, testing::AccumulatingTracesState};
-
-fn get_atses(scratch: &PathBuf) -> Vec<AccumulatingTracesState> {
-    let mut atses = Vec::new();
-    for entry in std::fs::read_dir(scratch)
-        .expect("failed to read scratch dir")
-        .map(|entry| entry.unwrap())
-        .filter(|entry| entry.path().is_file())
-        .filter(|entry| {
-            entry
-                .path()
-                .file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .starts_with("accumulating-traces")
-        })
-    {
-        println!("reading {:?}...", entry.path());
-        let ats: State = rmp_serde::from_read(File::open(entry.path()).unwrap()).unwrap();
-        match ats {
-            State::AccumulatingTraces(ats) => atses.push(ats),
-            _ => panic!("expected State::AccumulatingTraces"),
-        }
-    }
-    atses
-}
-
-fn get_n_runs_over_time(atses: &Vec<AccumulatingTracesState>) -> Vec<(f64, usize)> {
-    let mut ret = Vec::new();
-    for ats in atses {
-        ret.push((ats.get_dt().as_secs_f64(), ats.total_runs()));
-    }
-    ret.sort_by_key(|(_, b)| *b);
-    ret
-}
+use std::path::PathBuf;
 
 const OUT_FILE_NAME: &str = "plots/throughput.png";
 
-use plotters::prelude::*;
+// use plotters::prelude::*;
+use viz264::{get_atses, get_n_runs_over_time};
+
+// 1.6G Nov  1 01:30 accumulating-traces-27428-367a86292fe265f952ae42931e8b3cb8.mpk
+// 829M Nov  1 01:27 accumulating-traces-13440-367a86292fe265f952ae42931e8b3cb8.mpk
+// 280M Nov  1 01:24 accumulating-traces-4521-367a86292fe265f952ae42931e8b3cb8.mpk
+// 316K Nov  1 01:20 accumulating-traces-0-367a86292fe265f952ae42931e8b3cb8.mpk
+// 315K Oct 30 22:07 known-counts-367a86292fe265f952ae42931e8b3cb8.mpk
+// 5.8K Oct 30 17:36 compiled-367a86292fe265f952ae42931e8b3cb8.mpk
+
+// 0 minutes: 0 runs
+// 4 minutes: 4521 runs
+// 7 minutes: 13440 runs
+// 10 minutes: 27428 runs
 
 // const OUT_FILE_NAME: &str = "plotters-doc-data/area-chart.png";
 // fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -87,35 +63,36 @@ use plotters::prelude::*;
 // }
 
 fn main() {
-    let atses = get_atses(&PathBuf::from("scratch"));
+    let atses: Vec<protocol_test::testing::AccumulatingTracesState> =
+        get_atses(&PathBuf::from("scratch"));
     let data = get_n_runs_over_time(&atses);
     println!("{:?}", data);
-    let root = BitMapBackend::new(OUT_FILE_NAME, (1024, 768)).into_drawing_area();
-    root.fill(&WHITE).expect("failed to fill white");
-    let mut chart = ChartBuilder::on(&root)
-        .set_label_area_size(LabelAreaPosition::Left, 60)
-        .set_label_area_size(LabelAreaPosition::Bottom, 60)
-        .caption("Area Chart Demo", ("sans-serif", 40))
-        .build_cartesian_2d(0..(data.len() - 1), 0.0..1500.0)
-        .unwrap();
+    // let root = BitMapBackend::new(OUT_FILE_NAME, (1024, 768)).into_drawing_area();
+    // root.fill(&WHITE).expect("failed to fill white");
+    // let mut chart = ChartBuilder::on(&root)
+    //     .set_label_area_size(LabelAreaPosition::Left, 60)
+    //     .set_label_area_size(LabelAreaPosition::Bottom, 60)
+    //     .caption("Area Chart Demo", ("sans-serif", 40))
+    //     .build_cartesian_2d(0..(data.len() - 1), 0.0..1500.0)
+    //     .unwrap();
 
-    chart
-        .configure_mesh()
-        .disable_x_mesh()
-        .disable_y_mesh()
-        .draw()
-        .unwrap();
+    // chart
+    //     .configure_mesh()
+    //     .disable_x_mesh()
+    //     .disable_y_mesh()
+    //     .draw()
+    //     .unwrap();
 
-    chart
-        .draw_series(
-            AreaSeries::new(
-                data.iter()
-                    .map(|(a, b)| (*a as usize, *b as f64))
-                    .collect::<Vec<_>>(),
-                0.0,
-                RED.mix(0.2),
-            )
-            .border_style(RED),
-        )
-        .unwrap();
+    // chart
+    //     .draw_series(
+    //         plotters::series::LineSeries::new(
+    //             data.iter()
+    //                 .map(|(a, b)| (*a as usize, *b as f64))
+    //                 .collect::<Vec<_>>(),
+    //             0.0,
+    //             RED.mix(0.2),
+    //         )
+    //         .border_style(RED),
+    //     )
+    //     .unwrap();
 }

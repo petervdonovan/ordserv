@@ -19,10 +19,10 @@ use crate::{
 };
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AccumulatingTracesState {
-  kcs: KnownCountsState,
-  parent: Option<PathBuf>,
-  runs: HashMap<TestId, Arc<RwLock<TestRuns>>>, // TODO: consider using a rwlock
-  dt: std::time::Duration,
+  pub kcs: KnownCountsState,
+  pub parent: Option<PathBuf>,
+  pub runs: HashMap<TestId, Arc<RwLock<TestRuns>>>, // TODO: consider using a rwlock
+  pub dt: std::time::Duration,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -32,12 +32,12 @@ pub struct TestRuns {
   in_mat_global: Array2<i64>,
   #[serde(skip)]
   out_vectors_global: Vec<Array1<i64>>,
-  iomats: HashMap<CoarseTraceHash, HashMap<FineTraceHash, Vec<usize>>>,
+  pub iomats: HashMap<CoarseTraceHash, HashMap<FineTraceHash, Vec<usize>>>,
 }
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Copy)]
-struct CoarseTraceHash(u64);
+pub struct CoarseTraceHash(pub u64);
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Copy)]
-struct FineTraceHash(u64);
+pub struct FineTraceHash(pub u64);
 #[derive(Debug, Serialize, Deserialize)]
 struct TraceHash(CoarseTraceHash, FineTraceHash);
 
