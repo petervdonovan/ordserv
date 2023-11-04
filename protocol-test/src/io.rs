@@ -203,7 +203,6 @@ pub fn get_traces(
   tmp: &TempDir,
   evars: EnvironmentUpdate,
 ) -> Result<Traces, ExecResult> {
-  let evars2 = evars.get_evars().clone();
   let run = executable.run(
     evars,
     tmp,
@@ -212,12 +211,6 @@ pub fn get_traces(
   if !run.status.is_success() {
     println!("Failed to get correct traces for {executable}.");
     println!("summary of failed run:\n{run}");
-    evars2
-      .iter()
-      .filter(|(_, s)| s.len() < 100)
-      .for_each(|(k, v)| {
-        println!("{:?}={:?}", k, v);
-      });
     return Err(run);
   }
   for entry in tmp

@@ -1,12 +1,12 @@
 use std::{
-  collections::HashMap,
+  collections::{hash_map::DefaultHasher, HashMap},
   hash::{Hash, Hasher},
   sync::{Arc, Mutex},
 };
 
 use serde::{Deserialize, Serialize};
 
-const OUTPUT_VECTOR_CHUNK_SIZE: usize = 16;
+const OUTPUT_VECTOR_CHUNK_SIZE: usize = 32;
 
 use crate::{
   state::TracePointId,
@@ -57,7 +57,7 @@ pub struct OutputVectorKey {
 #[derive(Debug, Serialize, Deserialize)]
 struct OvrData {
   id2node: Vec<OutputVectorNode>,
-  node2id: HashMap<OutputVectorNode, OutputVectorNodeId>,
+  node2id: HashMap<u64, OutputVectorNodeId>, // FIXME: 128-bit hash
 }
 type OutputVectorRegistry = Arc<Mutex<OvrData>>;
 
@@ -118,6 +118,12 @@ pub enum VectorfyStatus {
   ExtraTracePointId,
 }
 
+fn compute_hash(ovn: OutputVectorNode) -> u64 {
+  let mut hasher = DefaultHasher::default();
+  ovn.hash(&mut hasher);
+  hasher.finish()
+}
+
 impl OutputVector {
   fn new(ov: Vec<u32>, ovr: OutputVectorRegistry) -> Self {
     let ovr = ovr.clone();
@@ -137,12 +143,12 @@ impl OutputVector {
         ranks[i] = (*rank as i32) - (start as i32);
       }
       let chunk = OutputVectorNode::Leaf(OutputVectorChunk { rel_ranks: ranks });
-      if let Some(id) = ovr.node2id.get(&chunk) {
+      if let Some(id) = ovr.node2id.get(&compute_hash(chunk)) {
         *id
       } else {
         let id = OutputVectorNodeId(ovr.id2node.len() as u64);
         ovr.id2node.push(chunk);
-        ovr.node2id.insert(chunk, id);
+        ovr.node2id.insert(compute_hash(chunk), id);
         id
       }
     } else {
@@ -153,12 +159,12 @@ impl OutputVector {
         left,
         right: Some(right),
       });
-      if let Some(id) = ovr.node2id.get(&pair) {
+      if let Some(id) = ovr.node2id.get(&compute_hash(pair)) {
         *id
       } else {
         let id = OutputVectorNodeId(ovr.id2node.len() as u64);
         ovr.id2node.push(pair);
-        ovr.node2id.insert(pair, id);
+        ovr.node2id.insert(compute_hash(pair), id);
         id
       }
     }
