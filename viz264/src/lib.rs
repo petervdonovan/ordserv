@@ -15,7 +15,7 @@ pub fn get_atses(scratch: &PathBuf) -> Vec<AccumulatingTracesState> {
                 .unwrap()
                 .to_str()
                 .unwrap()
-                .contains("4521") // FIXME
+                .contains("accumulating-traces")
         })
     {
         println!("reading {:?}...", entry.path());

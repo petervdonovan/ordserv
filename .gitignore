@@ -4,3 +4,6 @@ todo.md
 libbytehound.so
 Untitled.ipynb
 .ipynb_checkpoints/
+*.zst
+*.dat
+plots/

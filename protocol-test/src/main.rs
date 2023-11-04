@@ -13,12 +13,12 @@ struct Cli {
   scratch_dir: Option<PathBuf>,
 
   #[arg(short, long)]
-  max_wallclock_overhead: Option<u16>,
+  max_wallclock_overhead: Option<i16>,
 }
 
 const DEFAULT_SCRATCH_DIR: &str = "scratch";
-const MIN_SAVE_INTERVAL_SECONDS: u32 = 60;
-const MAX_SAVE_INTERVAL_SECONDS: u32 = 3600;
+const MIN_SAVE_INTERVAL_SECONDS: u32 = 20;
+const MAX_SAVE_INTERVAL_SECONDS: u32 = 20;
 const SAVE_INTERVAL_INCREASE_PER_ITERATION: u32 = 60;
 
 fn main() {
@@ -30,9 +30,7 @@ fn main() {
   let delay_params = protocol_test::DelayParams {
     max_expected_wallclock_overhead: args
       .max_wallclock_overhead
-      .map_or(10e9 as u64, |max_wallclock_overhead| {
-        max_wallclock_overhead as u64 * (1e9 as u64)
-      }),
+      .map_or(5000, |max_wallclock_overhead| max_wallclock_overhead * 1000),
   };
   let mut state = State::load(args.src_dir, scratch_dir, delay_params);
   let mut save_interval = MIN_SAVE_INTERVAL_SECONDS;

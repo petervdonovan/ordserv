@@ -1,5 +1,6 @@
 #[allow(dead_code)]
 mod io;
+mod outputvector;
 pub mod state;
 pub mod testing;
 
@@ -171,9 +172,9 @@ pub mod env {
   use std::sync::Mutex;
   use std::{collections::HashMap, ffi::OsString};
 
-  use crate::ThreadId;
   use crate::CONCURRENCY_LIMIT;
   use crate::{io::TempDir, DelayVector, HookInvocationCounts};
+  use crate::{DelayVectorRegistry, ThreadId};
 
   const LF_FED_PORT: &str = "LF_FED_PORT";
 
@@ -261,6 +262,7 @@ pub mod env {
       dvec: &DelayVector,
       tmp: &TempDir,
       tid: ThreadId,
+      dvr: &DelayVectorRegistry,
     ) -> Self {
       let mut ret = Self::new(tid, &[]);
       let mut cumsum: usize = 0;
@@ -270,7 +272,7 @@ pub mod env {
         write!(
           delay_f,
           "{}",
-          stringify_dvec(&dvec.0[cumsum..cumsum + (*k as usize)]),
+          stringify_dvec(&dvec.unpack(dvr)[cumsum..cumsum + (*k as usize)]),
         )
         .expect("could not write delay file");
         ret
@@ -286,11 +288,36 @@ pub mod env {
 #[derive(Debug)]
 pub struct Traces(HashMap<String, Reader<File>>);
 
+const DELAY_VECTOR_CHUNK_SIZE: usize = 8;
+
 #[derive(Debug, Serialize, Deserialize)]
-pub struct DelayVector(Vec<u64>);
+pub struct DelayVectorIndex(u32);
+pub type DelayVectorRegistry = Vec<DelayVector>;
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DelayVector {
+  idxs: [u32; DELAY_VECTOR_CHUNK_SIZE],
+  delta_delays: [i16; DELAY_VECTOR_CHUNK_SIZE],
+  parent: Option<DelayVectorIndex>,
+  length: u32,
+}
+
+impl DelayVector {
+  pub fn unpack(&self, dvr: &DelayVectorRegistry) -> Vec<u64> {
+    let mut ret: Vec<i64> = vec![0; self.length as usize];
+    let mut current = Some(self);
+    while let Some(node) = current {
+      for i in 0..DELAY_VECTOR_CHUNK_SIZE {
+        ret[node.idxs[i] as usize] += node.delta_delays[i] as i64 * 1_000_000;
+      }
+      current = node.parent.as_ref().map(|idx| &dvr[idx.0 as usize]);
+    }
+    ret.iter().map(|x| *x as u64).collect()
+  }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DelayParams {
-  pub max_expected_wallclock_overhead: u64,
+  pub max_expected_wallclock_overhead: i16,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

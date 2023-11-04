@@ -16,6 +16,7 @@ use sha2::{Digest, Sha256};
 use crate::{
   exec::Executable,
   io::{clean, get_commit_hash, get_counts, get_lf_files_non_recursive, get_traces, TempDir},
+  outputvector::OutputVectorKey,
   testing::AccumulatingTracesState,
   DelayParams, HookInvocationCounts, ThreadId, TraceRecord, Traces, CONCURRENCY_LIMIT,
 };
@@ -90,28 +91,6 @@ impl TestId {
     Self(hash128)
   }
 }
-#[derive(Debug, Serialize, Deserialize)]
-pub struct OutputVector(pub Vec<i64>);
-#[derive(Debug, Serialize, Deserialize)]
-pub struct OutputVectorKey {
-  pub map: HashMap<TracePointId, Vec<usize>>,
-  pub n_tracepoints: usize,
-}
-
-impl OutputVectorKey {
-  fn new(tpis: impl Iterator<Item = TracePointId>) -> Self {
-    let mut ret = HashMap::new();
-    let mut idx = 0;
-    for tpi in tpis {
-      ret.entry(tpi).or_insert(vec![]).push(idx);
-      idx += 1;
-    }
-    Self {
-      map: ret,
-      n_tracepoints: idx + 1,
-    }
-  }
-}
 
 impl State {
   const INITIAL_NAME: &'static str = "initial";
@@ -155,9 +134,8 @@ impl State {
     let ats_files: Vec<_> = get_files(Self::ACCUMULATING_TRACES_NAME);
     if !ats_files.is_empty() {
       let path = ats_files[0].0.path();
-      let mut ret: Self = rmp_serde::from_read(File::open(&path).expect("could not open file"))
+      let ret: Self = rmp_serde::from_read(File::open(path).expect("could not open file"))
         .expect("failed to deserialize");
-      ret.make_consistent(path);
       return ret;
     }
     let kc_files = get_files(Self::KNOWN_COUNTS_NAME);
@@ -178,14 +156,6 @@ impl State {
       scratch_dir,
       delay_params,
     })
-  }
-  fn make_consistent(&mut self, path: PathBuf) {
-    match self {
-      Self::Initial(_) => {}
-      Self::Compiled(_) => {}
-      Self::KnownCounts(_) => {}
-      Self::AccumulatingTraces(ats) => ats.make_consistent(path),
-    }
   }
 
   fn get_initial_state(&self) -> &InitialState {

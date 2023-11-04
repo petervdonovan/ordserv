@@ -15,7 +15,8 @@ use crate::{
   env::EnvironmentUpdate,
   exec::{ExecResult, Executable},
   state::CommitHash,
-  DelayParams, DelayVector, HookId, HookInvocationCounts, ThreadId, Traces,
+  DelayParams, DelayVector, DelayVectorRegistry, HookId, HookInvocationCounts, ThreadId, Traces,
+  DELAY_VECTOR_CHUNK_SIZE,
 };
 
 impl HookInvocationCounts {
@@ -38,16 +39,20 @@ impl DelayVector {
     rng: &mut rand::rngs::ThreadRng,
     dp: &DelayParams,
   ) -> Self {
-    let mut v = vec![];
-    v.reserve_exact(ic.len());
-    for _ in 0..ic.len() {
-      v.push(
-        rand::distributions::Uniform::try_from(0..dp.max_expected_wallclock_overhead)
-          .unwrap()
-          .sample(rng),
-      );
+    let mut idxs = [0u32; DELAY_VECTOR_CHUNK_SIZE];
+    let mut delta_delays = [0i16; DELAY_VECTOR_CHUNK_SIZE];
+    idxs[0] = rand::distributions::Uniform::try_from(0..ic.len() as u32)
+      .unwrap()
+      .sample(rng);
+    delta_delays[0] = rand::distributions::Uniform::try_from(0..dp.max_expected_wallclock_overhead)
+      .unwrap()
+      .sample(rng);
+    Self {
+      idxs,
+      delta_delays,
+      parent: None,
+      length: ic.len() as u32,
     }
-    Self(v)
   }
 }
 
@@ -257,7 +262,7 @@ pub fn get_traces(
 }
 
 fn assert_compatible(ic: &HookInvocationCounts, dvec: &DelayVector) {
-  if ic.len() != dvec.0.len() {
+  if ic.len() != dvec.length as usize {
     panic!("ic and dvec correspond to a different number of hook invocations");
   }
 }
@@ -268,10 +273,11 @@ pub fn run_with_parameters(
   ic: &HookInvocationCounts,
   dvec: &DelayVector,
   tid: ThreadId,
+  dvr: &DelayVectorRegistry,
 ) -> (TempDir, Result<Traces, ExecResult>) {
   assert_compatible(ic, dvec);
   let tmp = TempDir::new(scratch);
-  let evars = EnvironmentUpdate::delayed(ic, dvec, &tmp, tid);
+  let evars = EnvironmentUpdate::delayed(ic, dvec, &tmp, tid, dvr);
   let traces = get_traces(executable, &tmp, evars);
   (tmp, traces)
 }
