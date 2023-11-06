@@ -144,11 +144,16 @@ pub mod exec {
           .collect();
         tselected_output.send(selected_output).unwrap();
       });
-      let result = child
-        .wait_timeout(std::time::Duration::from_secs(TEST_TIMEOUT_SECS))
-        .expect("failed to wait for child process");
-      if result.is_none() {
-        child.kill().expect("failed to kill child process");
+      let mut result = None;
+      for _ in 0..TEST_TIMEOUT_SECS {
+        if let Some(status) = child
+          .try_wait()
+          .expect("unexpected error occurred while waiting")
+        {
+          result = Some(status);
+          break;
+        }
+        thread::sleep(std::time::Duration::from_secs(1));
       }
       let mut stderr = String::new();
       child.wait().expect("failed to wait for child process");
