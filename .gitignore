@@ -7,3 +7,5 @@ Untitled.ipynb
 *.zst
 *.dat
 plots/
+perf.data
+perf.data.old

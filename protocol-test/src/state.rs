@@ -222,6 +222,8 @@ impl InitialState {
           .arg("--trace")
           .arg("--logging")
           .arg("debug")
+          .arg("--build-type")
+          .arg("release")
           .output()
           .expect("failed to run lfcpartest");
         if !output.status.success() {

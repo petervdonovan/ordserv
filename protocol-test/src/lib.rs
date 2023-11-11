@@ -30,10 +30,10 @@ pub mod exec {
     process::{Command, Stdio},
     sync::mpsc,
     thread,
+    time::Duration,
   };
 
   use serde::{Deserialize, Serialize};
-  use wait_timeout::ChildExt;
 
   use crate::{env::EnvironmentUpdate, io::TempDir, TEST_TIMEOUT_SECS};
 
@@ -136,6 +136,8 @@ pub mod exec {
       .expect("failed to execute program");
       let (tselected_output, rselected_output) = mpsc::channel();
       let stdout = child.stdout.take();
+      let stderr = child.stderr.take();
+      let pid = child.id();
       thread::spawn(move || {
         let selected_output: Vec<String> = BufReader::new(stdout.unwrap())
           .lines()
@@ -144,29 +146,43 @@ pub mod exec {
           .collect();
         tselected_output.send(selected_output).unwrap();
       });
+      let (terr, rerr) = mpsc::channel();
+      thread::spawn(move || {
+        let mut collected = String::new();
+        stderr
+          .unwrap()
+          .read_to_string(&mut collected)
+          .expect("output of run executable is not utf-8");
+        terr.send(collected).unwrap();
+      });
       let mut result = None;
-      for _ in 0..TEST_TIMEOUT_SECS {
+      for _ in 0..(TEST_TIMEOUT_SECS * 100) {
         if let Some(status) = child
           .try_wait()
-          .expect("unexpected error occurred while waiting")
+          .expect("unexpected error occurred while checking if child process has terminated")
         {
           result = Some(status);
           break;
         }
-        thread::sleep(std::time::Duration::from_secs(1));
+        thread::sleep(std::time::Duration::from_millis(10));
       }
-      let mut stderr = String::new();
-      child.wait().expect("failed to wait for child process");
-      child
-        .stderr
-        .take()
-        .expect("failed to take stderr of child process")
-        .read_to_string(&mut stderr)
-        .expect("output of run executable is not utf-8");
+      if result.is_none() {
+        println!("killing child process {:?} due to timeout", pid);
+        child.kill().expect("failed to kill child process");
+        child.wait().expect("failed to wait for child process");
+      }
       ExecResult {
         status: Status::from_result(result),
-        selected_output: rselected_output.recv().unwrap(),
-        stderr,
+        selected_output: rselected_output
+          .recv_timeout(Duration::from_secs(3))
+          .map_err(|e| {
+            println!("failed to read output of child process {pid}: {:?}", e);
+            e
+          })
+          .unwrap_or_default(),
+        stderr: rerr
+          .recv_timeout(Duration::from_secs(3))
+          .unwrap_or_default(),
       }
     }
   }
