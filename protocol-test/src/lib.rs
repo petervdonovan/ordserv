@@ -199,19 +199,12 @@ pub mod env {
   use crate::{DelayVectorRegistry, ThreadId};
 
   const LF_FED_PORT: &str = "LF_FED_PORT";
+  const LF_FED_DELAYS: &str = "LF_FED_DELAYS";
 
   #[derive(Debug)]
   pub struct EnvironmentUpdate<'a> {
     evars: HashMap<OsString, OsString>,
     _scratch: Option<&'a TempDir>, // enforce that the scratch directory is not dropped before the environment update
-  }
-
-  fn stringify_dvec(dvec: &[u64]) -> String {
-    dvec.iter().fold(String::from(""), |mut acc, x| {
-      acc.push_str(&x.to_string());
-      acc.push('\n');
-      acc
-    })
   }
 
   use once_cell::sync::Lazy;
@@ -258,6 +251,16 @@ pub mod env {
     OsString::from(port.to_string())
   }
 
+  pub fn stringify_dvec(dvec: &[(u32, i16)], offset: u32) -> String {
+    let mut ret = String::new();
+    ret.push_str(&format!("{}\n", dvec.len()));
+    for (idx, delay) in dvec {
+      let adjusted = ((*idx as i32) - (offset as i32)) as u32;
+      ret.push_str(&format!("{} {}\n", adjusted, delay));
+    }
+    ret
+  }
+
   impl<'a> EnvironmentUpdate<'a> {
     pub fn new(tid: ThreadId, tups: &[(&str, &str)]) -> Self {
       let mut evars = HashMap::new();
@@ -287,21 +290,30 @@ pub mod env {
       dvr: &DelayVectorRegistry,
     ) -> Self {
       let mut ret = Self::new(tid, &[]);
-      let mut cumsum: usize = 0;
+      let mut current: usize = 0;
+      let mut cumsum: u32 = 0;
+      let delay = tmp.rand_file("delay");
+      let mut delay_f = std::fs::File::create(&delay).expect("could not create delay file");
+      let pairs_sorted = dvec.to_pairs_sorted(dvr);
+      writeln!(delay_f, "{}", ic.0.len()).expect("could not write delay file");
       for (hid, k) in ic.to_vec() {
-        let delay = tmp.rand_file("delay");
-        let mut delay_f = std::fs::File::create(&delay).expect("could not create delay file");
+        let start = current;
+        while current < pairs_sorted.len() && pairs_sorted[current].0 < cumsum + *k {
+          current += 1;
+        }
         write!(
           delay_f,
-          "{}",
-          stringify_dvec(&dvec.unpack(dvr)[cumsum..cumsum + (*k as usize)]),
+          "{}\n{}",
+          hid.0,
+          stringify_dvec(&pairs_sorted[start..current], cumsum),
         )
         .expect("could not write delay file");
-        ret
-          .evars
-          .insert(OsString::from(hid.0.clone()), delay.into_os_string());
-        cumsum += *k as usize;
+        cumsum += *k;
       }
+      ret.evars.insert(
+        OsString::from(LF_FED_DELAYS.clone()),
+        delay.into_os_string(),
+      );
       ret
     }
   }
@@ -324,16 +336,26 @@ pub struct DelayVector {
 }
 
 impl DelayVector {
-  pub fn unpack(&self, dvr: &DelayVectorRegistry) -> Vec<u64> {
-    let mut ret: Vec<i64> = vec![0; self.length as usize];
+  pub fn num_of_pairs(&self, dvr: &DelayVectorRegistry) -> usize {
     let mut current = Some(self);
+    let mut ret = 0;
+    while let Some(node) = current {
+      ret += DELAY_VECTOR_CHUNK_SIZE;
+      current = node.parent.as_ref().map(|idx| &dvr[idx.0 as usize]);
+    }
+    ret
+  }
+  pub fn to_pairs_sorted(&self, dvr: &DelayVectorRegistry) -> Vec<(u32, i16)> {
+    let mut current = Some(self);
+    let mut ret = Vec::new();
     while let Some(node) = current {
       for i in 0..DELAY_VECTOR_CHUNK_SIZE {
-        ret[node.idxs[i] as usize] += node.delta_delays[i] as i64 * 1_000_000;
+        ret.push((node.idxs[i], node.delta_delays[i]));
       }
       current = node.parent.as_ref().map(|idx| &dvr[idx.0 as usize]);
     }
-    ret.iter().map(|x| *x as u64).collect()
+    ret.sort_by_key(|(idx, _)| *idx);
+    ret
   }
 }
 
