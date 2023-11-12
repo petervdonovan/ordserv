@@ -7,9 +7,10 @@ pub mod testing;
 use std::{collections::HashMap, fs::File};
 
 use csv::Reader;
+use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 
-pub const CONCURRENCY_LIMIT: usize = 350;
+pub static CONCURRENCY_LIMIT: OnceCell<usize> = OnceCell::new();
 
 const TEST_TIMEOUT_SECS: u64 = 45;
 
@@ -223,7 +224,7 @@ pub mod env {
   static OPEN_PORTS_IDX: Mutex<usize> = Mutex::new(0);
   static PORTS_BY_TID: Lazy<Vec<OsString>> = Lazy::new(|| {
     let mut ret = Vec::new();
-    for _ in 0..CONCURRENCY_LIMIT {
+    for _ in 0..(*CONCURRENCY_LIMIT.wait()) {
       ret.push(get_valid_port());
     }
     ret

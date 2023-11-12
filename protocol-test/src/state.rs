@@ -302,7 +302,10 @@ impl CompiledState {
   }
   fn known_counts(self) -> KnownCountsState {
     let pool = rayon::ThreadPoolBuilder::new()
-      .num_threads(std::cmp::min(CONCURRENCY_LIMIT, self.executables.len()))
+      .num_threads(std::cmp::min(
+        *CONCURRENCY_LIMIT.wait(),
+        self.executables.len(),
+      ))
       .build()
       .expect("failed to build thread pool");
     let metadata = pool.install(|| self.get_metadata());

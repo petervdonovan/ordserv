@@ -157,7 +157,7 @@ impl AccumulatingTracesState {
     let executables = &executables;
     std::thread::scope(|scope| {
       let self_immut = &self;
-      for tidx in 0..CONCURRENCY_LIMIT {
+      for tidx in 0..(*CONCURRENCY_LIMIT.wait()) {
         scope.spawn(move || {
           while std::time::Instant::now() - t0 < std::time::Duration::from_secs(time_seconds as u64)
           {

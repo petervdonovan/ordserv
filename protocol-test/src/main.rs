@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-use protocol_test::state::State;
+use protocol_test::{state::State, CONCURRENCY_LIMIT};
+
+const DEFAULT_CONCURRENCY_LIMIT: usize = 400;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -14,6 +16,9 @@ struct Cli {
 
   #[arg(short, long)]
   max_wallclock_overhead: Option<i16>,
+
+  #[arg(short, long)]
+  concurrency: Option<usize>,
 }
 
 const DEFAULT_SCRATCH_DIR: &str = "scratch";
@@ -26,6 +31,9 @@ fn main() {
   let scratch_dir = args
     .scratch_dir
     .unwrap_or(PathBuf::from(DEFAULT_SCRATCH_DIR));
+  CONCURRENCY_LIMIT
+    .set(args.concurrency.unwrap_or(DEFAULT_CONCURRENCY_LIMIT))
+    .expect("impossible for the limit to already be set");
   std::fs::create_dir_all(&scratch_dir).expect("failed to create scratch dir");
   let delay_params = protocol_test::DelayParams {
     max_expected_wallclock_overhead: args
