@@ -268,6 +268,7 @@ pub mod env {
         evars.insert(OsString::from(*k), OsString::from(*v));
       }
       evars.insert(OsString::from(LF_FED_PORT), PORTS_BY_TID[tid.0].clone());
+      evars.insert(OsString::from(LF_FED_DELAYS), OsString::new());
       Self {
         evars,
         _scratch: None,

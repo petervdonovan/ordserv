@@ -220,6 +220,7 @@ impl InitialState {
         let output = std::process::Command::new(lfc_name)
           .arg(src)
           .arg("--trace")
+          .arg("--tracing")
           .arg("--logging")
           .arg("debug")
           .arg("--build-type")
