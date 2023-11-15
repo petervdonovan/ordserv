@@ -1,5 +1,8 @@
-ulimit -n 8192
+ulimit -n 200000 || 0
+ulimit -u 200000 || 0
+ulimit -s 4096
+echo 200000 > /proc/sys/kernel/threads-max
 cd protocol-test/
 time cargo build --release
 cd ..
-time ./protocol-test/target/release/protocol-test lf-264/test/C/src/federated/
+time ./protocol-test/target/release/protocol-test -c 1500 lf-264/test/C/src/federated/

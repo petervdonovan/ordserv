@@ -19,11 +19,14 @@ struct Cli {
 
   #[arg(short, long)]
   concurrency: Option<usize>,
+
+  #[arg(short, long)]
+  once: bool,
 }
 
 const DEFAULT_SCRATCH_DIR: &str = "scratch";
-const MIN_SAVE_INTERVAL_SECONDS: u32 = 20;
-const MAX_SAVE_INTERVAL_SECONDS: u32 = 20;
+const MIN_SAVE_INTERVAL_SECONDS: u32 = 90;
+const MAX_SAVE_INTERVAL_SECONDS: u32 = 360;
 const SAVE_INTERVAL_INCREASE_PER_ITERATION: u32 = 60;
 
 fn main() {
@@ -45,6 +48,9 @@ fn main() {
   loop {
     state = state.run(save_interval);
     state.save_to_scratch_dir();
+    if args.once {
+      break;
+    }
     save_interval =
       (save_interval + SAVE_INTERVAL_INCREASE_PER_ITERATION).min(MAX_SAVE_INTERVAL_SECONDS);
   }
