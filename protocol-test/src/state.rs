@@ -29,15 +29,15 @@ pub enum State {
   AccumulatingTraces(AccumulatingTracesState),
 }
 #[derive(Debug, Serialize, Deserialize)]
-pub struct CommitHash(u128);
+pub struct CommitHash(String);
 impl CommitHash {
-  pub fn new(hash: u128) -> Self {
+  pub fn new(hash: String) -> Self {
     Self(hash)
   }
 }
 impl Display for CommitHash {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "{:x?}", self.0)
+    write!(f, "{}", self.0)
   }
 }
 #[derive(Debug, Serialize, Deserialize)]
@@ -225,6 +225,7 @@ impl InitialState {
           .arg("debug")
           .arg("--build-type")
           .arg("release")
+          .arg("--fast")
           .output()
           .expect("failed to run lfcpartest");
         if !output.status.success() {

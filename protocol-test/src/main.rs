@@ -15,7 +15,7 @@ struct Cli {
   scratch_dir: Option<PathBuf>,
 
   #[arg(short, long)]
-  max_wallclock_overhead: Option<i16>,
+  max_wallclock_overhead_ms: Option<i16>,
 
   #[arg(short, long)]
   concurrency: Option<usize>,
@@ -39,9 +39,7 @@ fn main() {
     .expect("impossible for the limit to already be set");
   std::fs::create_dir_all(&scratch_dir).expect("failed to create scratch dir");
   let delay_params = protocol_test::DelayParams {
-    max_expected_wallclock_overhead: args
-      .max_wallclock_overhead
-      .map_or(5000, |max_wallclock_overhead| max_wallclock_overhead * 1000),
+    max_expected_wallclock_overhead_ms: args.max_wallclock_overhead_ms.unwrap_or(10),
   };
   let mut state = State::load(args.src_dir, scratch_dir, delay_params);
   let mut save_interval = MIN_SAVE_INTERVAL_SECONDS;

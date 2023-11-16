@@ -26,7 +26,7 @@ pub struct HookInvocationCounts(HashMap<HookId, u32>);
 pub mod exec {
   use std::{
     fmt::{Display, Formatter},
-    io::{BufRead, BufReader, Read},
+    io::{BufRead, BufReader, Read, Write},
     path::PathBuf,
     process::{Command, Stdio},
     sync::mpsc,
@@ -35,6 +35,7 @@ pub mod exec {
   };
 
   use serde::{Deserialize, Serialize};
+  use wait_timeout::ChildExt;
 
   use crate::{env::EnvironmentUpdate, io::TempDir, TEST_TIMEOUT_SECS};
 
@@ -145,18 +146,29 @@ pub mod exec {
           .map(|l| l.expect("failed to read line of output"))
           .filter(|s| output_filter(s))
           .collect();
-        tselected_output.send(selected_output).unwrap();
+        if let Err(e) = tselected_output.send(selected_output) {
+          eprintln!("failed to send output of child process {pid}: {:?}", e);
+        }
       });
       let (terr, rerr) = mpsc::channel();
       thread::spawn(move || {
-        let mut collected = String::new();
-        stderr
-          .unwrap()
-          .read_to_string(&mut collected)
-          .expect("output of run executable is not utf-8");
-        terr.send(collected).unwrap();
+        let err: Vec<String> = BufReader::new(stderr.unwrap())
+          .lines()
+          .map(|l| l.expect("failed to read line of output"))
+          .collect();
+        if let Err(e) = terr.send(err.join("\n")) {
+          eprintln!("failed to send stderr of child process {pid}: {:?}", e);
+        }
       });
       let mut result = None;
+      // let result = child
+      //   .wait_timeout(std::time::Duration::from_secs(TEST_TIMEOUT_SECS))
+      //   .expect("failed to wait for child process");
+      // if result.is_none() {
+      //   println!("killing child process {:?} due to timeout", pid);
+      //   child.kill().expect("failed to kill child process");
+      //   child.wait().expect("failed to wait for child process");
+      // }
       for _ in 0..(TEST_TIMEOUT_SECS * 100) {
         if let Some(status) = child
           .try_wait()
@@ -168,8 +180,16 @@ pub mod exec {
         thread::sleep(std::time::Duration::from_millis(10));
       }
       if result.is_none() {
-        println!("killing child process {:?} due to timeout", pid);
-        child.kill().expect("failed to kill child process");
+        println!(
+          "killing child process {:?} in {:?} due to timeout",
+          pid, cwd.0
+        );
+        let mut kill = Command::new("kill")
+          // TODO: replace `TERM` to signal you want.
+          .args(["-s", "TERM", &child.id().to_string()])
+          .spawn()
+          .unwrap();
+        kill.wait().unwrap();
         child.wait().expect("failed to wait for child process");
       }
       ExecResult {
@@ -223,8 +243,8 @@ pub mod env {
     ret
   });
 
-  const REQUIRED_CONTIGUOUS_PORTS: u16 = 3;
-  const MAX_REQUIRED_PORTS: u16 = 4;
+  const REQUIRED_CONTIGUOUS_PORTS: u16 = 24;
+  const MAX_REQUIRED_PORTS: u16 = 72;
 
   fn get_valid_port() -> OsString {
     // 1024 is the first valid port, and one test may use a few ports (by trying them in sequence)
@@ -362,7 +382,7 @@ impl DelayVector {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DelayParams {
-  pub max_expected_wallclock_overhead: i16,
+  pub max_expected_wallclock_overhead_ms: i16,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

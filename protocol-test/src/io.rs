@@ -44,9 +44,10 @@ impl DelayVector {
     idxs[0] = rand::distributions::Uniform::try_from(0..ic.len() as u32)
       .unwrap()
       .sample(rng);
-    delta_delays[0] = rand::distributions::Uniform::try_from(0..dp.max_expected_wallclock_overhead)
-      .unwrap()
-      .sample(rng);
+    delta_delays[0] =
+      rand::distributions::Uniform::try_from(0..dp.max_expected_wallclock_overhead_ms)
+        .unwrap()
+        .sample(rng);
     Self {
       idxs,
       delta_delays,
@@ -141,7 +142,7 @@ pub fn get_commit_hash(src_dir: &Path) -> CommitHash {
     panic!("failed to get commit hash");
   }
   let s = std::str::from_utf8(&output.stdout).expect("expected output to be UTF-8");
-  CommitHash::new(u128::from_str_radix(&s.trim()[..32], 16).expect("failed to parse commit hash"))
+  CommitHash::new(s.trim()[..32].to_string())
 }
 
 pub fn get_counts(executable: &Executable, scratch: &Path, tid: ThreadId) -> HookInvocationCounts {
@@ -198,11 +199,28 @@ impl Drop for TempDir {
   }
 }
 
+fn print_repro_instructions(
+  executable: &Executable,
+  evars: &HashMap<std::ffi::OsString, std::ffi::OsString>,
+) {
+  println!("To reproduce, run:");
+  println!(
+    "  {evars} {executable} ",
+    executable = executable,
+    evars = evars
+      .iter()
+      .map(|(k, v)| format!("{}={}; ", k.to_str().unwrap(), v.to_str().unwrap()))
+      .collect::<Vec<_>>()
+      .join(" ")
+  );
+}
+
 pub fn get_traces(
   executable: &Executable,
   tmp: &TempDir,
   evars: EnvironmentUpdate,
 ) -> Result<Traces, ExecResult> {
+  let evarsc = evars.get_evars().clone();
   let run = executable.run(
     evars,
     tmp,
@@ -211,6 +229,7 @@ pub fn get_traces(
   if !run.status.is_success() {
     println!("Failed to get correct traces for {executable}.");
     println!("summary of failed run:\n{run}");
+    print_repro_instructions(&executable, &evarsc);
     return Err(run);
   }
   for entry in tmp
