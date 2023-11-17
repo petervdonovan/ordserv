@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 
 pub static CONCURRENCY_LIMIT: OnceCell<usize> = OnceCell::new();
 
-const TEST_TIMEOUT_SECS: u64 = 45;
+const TEST_TIMEOUT_SECS: u64 = 2;
+const MAX_ERROR_LINES: usize = 20;
 
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct HookId(String);
@@ -95,7 +96,7 @@ pub mod exec {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
       write!(f, "status: {:?}", self.status)?;
       write!(f, "\nselected output:\n{:?}", self.selected_output)?;
-      write!(f, "\nstderr:\n{:?}", self.stderr)?;
+      write!(f, "\nstderr:\n{}\n\n", self.stderr)?;
       Ok(())
     }
   }
@@ -155,6 +156,7 @@ pub mod exec {
         let err: Vec<String> = BufReader::new(stderr.unwrap())
           .lines()
           .map(|l| l.expect("failed to read line of output"))
+          .take(crate::MAX_ERROR_LINES)
           .collect();
         if let Err(e) = terr.send(err.join("\n")) {
           eprintln!("failed to send stderr of child process {pid}: {:?}", e);

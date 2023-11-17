@@ -229,7 +229,7 @@ pub fn get_traces(
   if !run.status.is_success() {
     println!("Failed to get correct traces for {executable}.");
     println!("summary of failed run:\n{run}");
-    print_repro_instructions(&executable, &evarsc);
+    print_repro_instructions(executable, &evarsc);
     return Err(run);
   }
   for entry in tmp

@@ -222,7 +222,7 @@ impl InitialState {
           .arg("--trace")
           .arg("--tracing")
           .arg("--logging")
-          .arg("debug")
+          .arg("warn")
           .arg("--build-type")
           .arg("release")
           .arg("--fast")

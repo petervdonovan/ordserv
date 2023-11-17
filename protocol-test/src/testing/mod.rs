@@ -183,10 +183,11 @@ impl AccumulatingTracesState {
     let dt = std::time::Instant::now() - t0;
     self.dt += dt;
     let msg = format!(
-      "Accumulated {} traces in {} seconds = {:.2} hours.",
+      "Accumulated {} traces in {} seconds = {:.2} hours ({}/second).",
       self.total_runs() - initial_total_runs,
       dt.as_secs(),
-      dt.as_secs_f64() / 3600.0
+      dt.as_secs_f64() / 3600.0,
+      (self.total_runs() - initial_total_runs) as u64 / dt.as_secs()
     )
     .bold()
     .on_green();
