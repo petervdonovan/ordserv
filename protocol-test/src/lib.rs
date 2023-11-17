@@ -27,7 +27,7 @@ pub struct HookInvocationCounts(HashMap<HookId, u32>);
 pub mod exec {
   use std::{
     fmt::{Display, Formatter},
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader},
     path::PathBuf,
     process::{Command, Stdio},
     sync::mpsc,
@@ -36,7 +36,6 @@ pub mod exec {
   };
 
   use serde::{Deserialize, Serialize};
-  use wait_timeout::ChildExt;
 
   use crate::{env::EnvironmentUpdate, io::TempDir, TEST_TIMEOUT_SECS};
 
@@ -163,14 +162,6 @@ pub mod exec {
         }
       });
       let mut result = None;
-      // let result = child
-      //   .wait_timeout(std::time::Duration::from_secs(TEST_TIMEOUT_SECS))
-      //   .expect("failed to wait for child process");
-      // if result.is_none() {
-      //   println!("killing child process {:?} due to timeout", pid);
-      //   child.kill().expect("failed to kill child process");
-      //   child.wait().expect("failed to wait for child process");
-      // }
       for _ in 0..(TEST_TIMEOUT_SECS * 100) {
         if let Some(status) = child
           .try_wait()
@@ -187,7 +178,6 @@ pub mod exec {
           pid, cwd.0
         );
         let mut kill = Command::new("kill")
-          // TODO: replace `TERM` to signal you want.
           .args(["-s", "TERM", &child.id().to_string()])
           .spawn()
           .unwrap();

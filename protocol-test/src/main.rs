@@ -22,6 +22,9 @@ struct Cli {
 
   #[arg(short, long)]
   once: bool,
+
+  #[arg(short, long)]
+  initial_save_interval_seconds: Option<u32>,
 }
 
 const DEFAULT_SCRATCH_DIR: &str = "scratch";
@@ -42,7 +45,9 @@ fn main() {
     max_expected_wallclock_overhead_ms: args.max_wallclock_overhead_ms.unwrap_or(10),
   };
   let mut state = State::load(args.src_dir, scratch_dir, delay_params);
-  let mut save_interval = MIN_SAVE_INTERVAL_SECONDS;
+  let mut save_interval = args
+    .initial_save_interval_seconds
+    .unwrap_or(MIN_SAVE_INTERVAL_SECONDS);
   loop {
     state = state.run(save_interval);
     state.save_to_scratch_dir();
