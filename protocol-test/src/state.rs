@@ -92,11 +92,41 @@ impl TestId {
   }
 }
 
+impl Display for TestId {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{:032x}", self.0)
+  }
+}
+
+pub fn file_name(scratch: &Path, prefix: &str, src_commit: &CommitHash) -> PathBuf {
+  scratch.join(format!("{}-{}.mpk", prefix, src_commit))
+}
+
+pub fn file_name_with_total_runs(
+  scratch: &Path,
+  prefix: &str,
+  src_commit: &CommitHash,
+  total_runs: usize,
+) -> PathBuf {
+  scratch.join(format!("{}-{}-{}.mpk", prefix, src_commit, total_runs))
+}
+
 impl State {
   const INITIAL_NAME: &'static str = "initial";
   const COMPILED_NAME: &'static str = "compiled";
-  const KNOWN_COUNTS_NAME: &'static str = "known-counts";
-  const ACCUMULATING_TRACES_NAME: &'static str = "accumulating-traces";
+  pub const KNOWN_COUNTS_NAME: &'static str = "known-counts";
+  pub const ACCUMULATING_TRACES_NAME: &'static str = "accumulating-traces";
+
+  fn deserialize_one<T: for<'de> Deserialize<'de>>(de: Vec<&(DirEntry, String)>) -> T {
+    if de.len() != 1 {
+      panic!("expected exactly one file");
+    }
+    let ret = rmp_serde::from_read(
+      File::open(de.get(0).expect("impossible").0.path()).expect("could not open file"),
+    )
+    .expect("failed to deserialize");
+    ret
+  }
 
   pub fn load(src_dir: PathBuf, scratch_dir: PathBuf, delay_params: DelayParams) -> Self {
     clean(&scratch_dir);
@@ -121,30 +151,25 @@ impl State {
         .filter(|(_, f)| f.contains(kind))
         .collect()
     };
-    let deserialize_one = |de: Vec<&(DirEntry, _)>| {
-      if de.len() != 1 {
-        panic!("expected exactly one file");
-      }
-      let ret: Self = rmp_serde::from_read(
-        File::open(de.get(0).expect("impossible").0.path()).expect("could not open file"),
-      )
-      .expect("failed to deserialize");
-      ret
-    };
     let ats_files: Vec<_> = get_files(Self::ACCUMULATING_TRACES_NAME);
     if !ats_files.is_empty() {
-      let path = ats_files[0].0.path();
-      let ret: Self = rmp_serde::from_read(File::open(path).expect("could not open file"))
+      let path = ats_files
+        .iter()
+        .max_by_key(|(entry, _)| entry.metadata().unwrap().modified().unwrap())
+        .unwrap()
+        .0
+        .path();
+      let ret = rmp_serde::from_read(File::open(path).expect("could not open file"))
         .expect("failed to deserialize");
-      return ret;
+      return Self::AccumulatingTraces(ret);
     }
     let kc_files = get_files(Self::KNOWN_COUNTS_NAME);
     if !kc_files.is_empty() {
-      return deserialize_one(kc_files);
+      return Self::KnownCounts(State::deserialize_one(kc_files));
     }
     let c_files = get_files(Self::COMPILED_NAME);
     if !c_files.is_empty() {
-      return deserialize_one(c_files);
+      return Self::Compiled(State::deserialize_one(c_files));
     }
     let src_files = get_lf_files_non_recursive(&src_dir)
       .into_iter()
@@ -166,21 +191,36 @@ impl State {
       Self::AccumulatingTraces(s) => s.get_initial_state(),
     }
   }
-  fn file_name(&self) -> String {
+  fn file_name(&self) -> PathBuf {
+    let scratch_dir = &self.get_initial_state().scratch_dir;
+    let src_commit = &self.get_initial_state().src_commit;
     let phase = match self {
       Self::Initial(_) => Self::INITIAL_NAME.to_string(),
       Self::Compiled(_) => Self::COMPILED_NAME.to_string(),
       Self::KnownCounts(_) => Self::KNOWN_COUNTS_NAME.to_string(),
       Self::AccumulatingTraces(ref ats) => {
-        format!("{}-{}", Self::ACCUMULATING_TRACES_NAME, ats.total_runs())
+        return file_name_with_total_runs(
+          scratch_dir,
+          Self::ACCUMULATING_TRACES_NAME,
+          src_commit,
+          ats.total_runs(),
+        )
       }
     };
-    format!("{}-{}.mpk", phase, self.get_initial_state().src_commit)
+    file_name(scratch_dir, &phase, src_commit)
   }
   pub fn save_to_scratch_dir(&self) {
-    File::create(self.get_initial_state().scratch_dir.join(self.file_name()))
+    File::create(self.file_name())
       .expect("could not create file")
-      .write_all(&rmp_serde::to_vec(self).expect("could not serialize state"))
+      .write_all(
+        &(match self {
+          Self::Initial(x) => rmp_serde::to_vec(x),
+          Self::Compiled(x) => rmp_serde::to_vec(x),
+          Self::KnownCounts(x) => rmp_serde::to_vec(x),
+          Self::AccumulatingTraces(x) => rmp_serde::to_vec(x),
+        })
+        .expect("could not serialize state"),
+      )
       .expect("could not write to file");
   }
   pub fn run(self, time_seconds: u32) -> Self {
@@ -331,6 +371,9 @@ impl KnownCountsState {
   }
   pub fn scratch_dir(&self) -> &Path {
     &self.cs.initial.scratch_dir
+  }
+  pub fn src_commit(&self) -> &CommitHash {
+    &self.cs.initial.src_commit
   }
   pub fn metadata(&self, id: &TestId) -> &TestMetadata {
     self.metadata.get(id).expect("unknown test id")

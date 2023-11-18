@@ -8,32 +8,160 @@ use std::{
 
 use colored::Colorize;
 use rand::seq::SliceRandom;
-use serde::{Deserialize, Serialize};
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use serde::{ser::SerializeStruct, Deserialize, Serialize};
 
 use crate::{
   exec::{ExecResult, Executable},
   io::run_with_parameters,
   outputvector::{OutputVector, VectorfyStatus},
-  state::{InitialState, KnownCountsState, TestId},
+  state::{InitialState, KnownCountsState, State, TestId},
   DelayVector, DelayVectorIndex, DelayVectorRegistry, ThreadId, TraceRecord, CONCURRENCY_LIMIT,
 };
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug)]
 pub struct AccumulatingTracesState {
   pub kcs: KnownCountsState,
-  pub parent: Option<PathBuf>,
+  pub parent: PathBuf,
   pub runs: HashMap<TestId, Arc<RwLock<TestRuns>>>, // TODO: consider using a rwlock
   pub dt: std::time::Duration,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct AtsDelta {
+  pub parent: PathBuf,
+  pub runs: HashMap<TestId, PathBuf>,
+  pub dt: Duration,
+  pub total_runs: usize,
+}
+
+impl Serialize for AccumulatingTracesState {
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: serde::Serializer,
+  {
+    let runs_dir = self.kcs.scratch_dir().join(format!(
+      "runs-{}-{}",
+      self.total_runs(),
+      self.kcs.src_commit()
+    ));
+    let runs = self
+      .runs
+      .iter()
+      .map(|(id, runs)| {
+        let runs = runs.read().unwrap();
+        let path = runs_dir.join(format!("{}.mpk", id));
+        std::fs::create_dir_all(&runs_dir).unwrap();
+        let mut file = std::fs::File::create(&path).unwrap();
+        rmp_serde::encode::write(&mut file, &*runs).unwrap();
+        (*id, path)
+      })
+      .collect();
+    let delta = AtsDelta {
+      parent: self.parent.clone(),
+      runs,
+      dt: self.dt,
+      total_runs: self.total_runs(),
+    };
+    delta.serialize(serializer)
+  }
+}
+
+impl<'de> Deserialize<'de> for AccumulatingTracesState {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: serde::Deserializer<'de>,
+  {
+    let mut ancestors = vec![AtsDelta::deserialize(deserializer)?];
+    while ancestors.last().unwrap().total_runs > 0 {
+      let parent = ancestors.last().unwrap().parent.clone();
+      let parent_delta = rmp_serde::from_read(std::fs::File::open(parent).unwrap()).unwrap();
+      ancestors.push(parent_delta);
+    }
+    println!("kcs: {:?}", &ancestors.last().unwrap().parent.clone());
+    let kcs: KnownCountsState =
+      rmp_serde::from_read(std::fs::File::open(&ancestors.last().unwrap().parent.clone()).unwrap())
+        .unwrap();
+    let trdelta: Vec<(TestId, TestRunsDelta)> = ancestors
+      .par_iter()
+      .flat_map(|atsd| {
+        atsd.runs.par_iter().map(|(id, path)| {
+          let runs_deserialized: TestRunsDelta =
+            rmp_serde::from_read(std::fs::File::open(path).unwrap()).unwrap();
+          (*id, runs_deserialized)
+        })
+      })
+      .collect();
+    let mut trdelta_by_id = HashMap::new();
+    for (id, trd) in trdelta {
+      trdelta_by_id.entry(id).or_insert(vec![]).push(trd);
+    }
+    let runs = trdelta_by_id
+      .into_par_iter()
+      .map(|(tid, trdeltas)| {
+        let mut dvr = vec![];
+        let mut raw_traces = vec![];
+        let mut iomats = HashMap::new();
+        for trdelta in trdeltas {
+          for dvrd in trdelta.dvr_delta {
+            dvr.push(dvrd);
+          }
+          for rtd in trdelta.raws_delta {
+            add_to_iomats(&mut iomats, &rtd);
+            raw_traces.push(rtd);
+          }
+        }
+        let dvr_saved_up_to = DelayVectorIndex(dvr.len() as u32);
+        let raws_saved_up_to = raw_traces.len();
+        (
+          tid,
+          Arc::new(RwLock::new(TestRuns {
+            dvr,
+            raw_traces,
+            dvr_saved_up_to,
+            raws_saved_up_to,
+            iomats,
+          })),
+        )
+      })
+      .collect();
+    Ok(Self {
+      kcs,
+      parent: ancestors[0].parent.clone(),
+      runs,
+      dt: ancestors[0].dt,
+    })
+  }
+}
+type RawElement = (DelayVectorIndex, Result<SuccessfulRun, ExecResult>);
+type IoMats = HashMap<CoarseTraceHash, HashMap<FineTraceHash, Vec<OutputVector>>>;
+#[derive(Debug)]
 pub struct TestRuns {
   dvr: DelayVectorRegistry,
-  raw_traces: Vec<(DelayVectorIndex, Result<SuccessfulRun, ExecResult>)>,
-  // #[serde(skip)] // derived from raw_traces (successes only)
-  // in_mat_global: Array2<i64>,
-  // #[serde(skip)]
-  // out_vectors_global: Vec<Array1<i64>>,
-  pub iomats: HashMap<CoarseTraceHash, HashMap<FineTraceHash, Vec<usize>>>,
+  raw_traces: Vec<RawElement>,
+  dvr_saved_up_to: DelayVectorIndex,
+  raws_saved_up_to: usize,
+  pub iomats: IoMats,
+}
+impl Serialize for TestRuns {
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: serde::Serializer,
+  {
+    let mut ret = serializer.serialize_struct("TestRunsDelta", 2)?;
+    ret
+      .serialize_field("dvr_delta", &self.dvr[self.dvr_saved_up_to.0 as usize..])
+      .unwrap();
+    ret
+      .serialize_field("raws_delta", &self.raw_traces[self.raws_saved_up_to..])
+      .unwrap();
+    ret.end()
+  }
+}
+#[derive(Deserialize)]
+/// This exists solely for deserialization and must be in sync with TestRuns::serialize.
+struct TestRunsDelta {
+  dvr_delta: DelayVectorRegistry,
+  raws_delta: Vec<RawElement>,
 }
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct CoarseTraceHash(pub u64);
@@ -81,6 +209,17 @@ impl TraceHasher {
   }
 }
 
+fn add_to_iomats(iomats: &mut IoMats, raw: &RawElement) {
+  if let Ok((ov, trhash, _status)) = &raw.1 {
+    iomats
+      .entry(trhash.0)
+      .or_insert(HashMap::new())
+      .entry(trhash.1)
+      .or_insert(vec![])
+      .push(*ov);
+  }
+}
+
 impl AccumulatingTracesState {
   pub fn new(kcs: KnownCountsState) -> Self {
     let runs = kcs
@@ -91,16 +230,21 @@ impl AccumulatingTracesState {
           Arc::new(RwLock::new(TestRuns {
             dvr: vec![],
             raw_traces: vec![],
-            // in_mat_global: Array2::zeros((0, kcs.metadata(id).hic.len())),
-            // out_vectors_global: vec![],
+            raws_saved_up_to: 0,
+            dvr_saved_up_to: DelayVectorIndex(0),
             iomats: HashMap::new(),
           })),
         )
       })
       .collect();
+    let parent = crate::state::file_name(
+      kcs.scratch_dir(),
+      State::KNOWN_COUNTS_NAME,
+      kcs.src_commit(),
+    );
     Self {
       kcs,
-      parent: None,
+      parent,
       runs,
       dt: std::time::Duration::from_secs(0),
     }
@@ -151,10 +295,20 @@ impl AccumulatingTracesState {
   }
 
   pub fn accumulate_traces(&mut self, time_seconds: u32) {
+    self.parent = crate::state::file_name_with_total_runs(
+      self.kcs.scratch_dir(),
+      State::ACCUMULATING_TRACES_NAME,
+      self.kcs.src_commit(),
+      self.total_runs(),
+    );
     let t0 = std::time::Instant::now();
     let initial_total_runs = self.total_runs();
     let executables = self.kcs.executables().iter().collect::<Vec<_>>();
     let executables = &executables;
+    println!(
+      "Spawning {} threads to gather execution traces.",
+      *CONCURRENCY_LIMIT.wait()
+    );
     std::thread::scope(|scope| {
       let self_immut = &self;
       for tidx in 0..(*CONCURRENCY_LIMIT.wait()) {
@@ -171,7 +325,6 @@ impl AccumulatingTracesState {
               ThreadId(tidx),
               &self_immut.runs[id].read().unwrap().dvr,
             );
-            // self_immut.add_run(**id, dvec, run);
             let mut entry = self_immut.runs.get(id).unwrap().write().unwrap();
             entry.dvr.push(dvec);
             let idx = DelayVectorIndex(entry.dvr.len() as u32 - 1);

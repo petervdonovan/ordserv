@@ -14,7 +14,7 @@ use crate::{
   TraceRecord,
 };
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub struct OutputVector {
   data: OutputVectorNodeId,
   len: usize,
