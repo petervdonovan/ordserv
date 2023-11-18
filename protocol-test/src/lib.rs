@@ -117,6 +117,20 @@ pub mod exec {
       Self(path)
     }
 
+    pub fn name(&self) -> String {
+      self
+        .0
+        .file_stem()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string()
+        .split('-')
+        .next()
+        .unwrap()
+        .to_string()
+    }
+
     pub fn run(
       &self,
       env: EnvironmentUpdate,

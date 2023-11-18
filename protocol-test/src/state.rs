@@ -43,7 +43,7 @@ impl Display for CommitHash {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct InitialState {
   src_commit: CommitHash,
-  src_files: HashMap<TestId, PathBuf>,
+  pub src_files: HashMap<TestId, PathBuf>,
   scratch_dir: PathBuf,
   delay_params: DelayParams,
 }

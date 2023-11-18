@@ -77,7 +77,6 @@ impl<'de> Deserialize<'de> for AccumulatingTracesState {
       let parent_delta = rmp_serde::from_read(std::fs::File::open(parent).unwrap()).unwrap();
       ancestors.push(parent_delta);
     }
-    println!("kcs: {:?}", &ancestors.last().unwrap().parent.clone());
     let kcs: KnownCountsState =
       rmp_serde::from_read(std::fs::File::open(&ancestors.last().unwrap().parent.clone()).unwrap())
         .unwrap();
@@ -137,7 +136,7 @@ type IoMats = HashMap<CoarseTraceHash, HashMap<FineTraceHash, Vec<OutputVector>>
 #[derive(Debug)]
 pub struct TestRuns {
   dvr: DelayVectorRegistry,
-  raw_traces: Vec<RawElement>,
+  pub raw_traces: Vec<RawElement>,
   dvr_saved_up_to: DelayVectorIndex,
   raws_saved_up_to: usize,
   pub iomats: IoMats,

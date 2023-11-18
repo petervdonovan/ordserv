@@ -1,8 +1,13 @@
-use std::{fs::File, path::PathBuf};
+use std::{collections::HashMap, fs::File, path::PathBuf};
 
-use protocol_test::{state::State, testing::AccumulatingTracesState};
+use plotters::coord::ranged1d::{AsRangedCoord, SegmentValue, ValueFormatter};
+use protocol_test::{
+    exec::Executable,
+    state::{TestId, TestMetadata},
+    testing::{AccumulatingTracesState, AtsDelta},
+};
 
-pub fn get_atses(scratch: &PathBuf) -> Vec<AccumulatingTracesState> {
+pub fn get_atses(scratch: &PathBuf) -> Vec<AtsDelta> {
     let mut atses = Vec::new();
     for entry in std::fs::read_dir(scratch)
         .expect("failed to read scratch dir")
@@ -19,20 +24,73 @@ pub fn get_atses(scratch: &PathBuf) -> Vec<AccumulatingTracesState> {
         })
     {
         println!("reading {:?}...", entry.path());
-        let ats: State = rmp_serde::from_read(File::open(entry.path()).unwrap()).unwrap();
-        match ats {
-            State::AccumulatingTraces(ats) => atses.push(ats),
-            _ => panic!("expected State::AccumulatingTraces"),
-        }
+        let ats: AtsDelta = rmp_serde::from_read(File::open(entry.path()).unwrap()).unwrap();
+        atses.push(ats);
     }
     atses
 }
 
-pub fn get_n_runs_over_time(atses: &Vec<AccumulatingTracesState>) -> Vec<(f64, usize)> {
+fn get_latest_ats_file(scratch: &PathBuf) -> PathBuf {
+    std::fs::read_dir(scratch)
+        .expect("failed to read scratch dir")
+        .map(|entry| entry.unwrap())
+        .filter(|entry| entry.path().is_file())
+        .filter(|entry| {
+            entry
+                .path()
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .contains("accumulating-traces")
+        })
+        .max_by_key(|entry| entry.path().metadata().unwrap().modified().unwrap())
+        .unwrap()
+        .path()
+}
+
+pub fn get_latest_ats(scratch: &PathBuf) -> AccumulatingTracesState {
+    let path = get_latest_ats_file(scratch);
+    println!("reading {:?}...", path);
+    rmp_serde::from_read(File::open(path).unwrap()).unwrap()
+}
+
+pub fn get_n_runs_over_time(atses: &[AtsDelta]) -> Vec<(f64, usize)> {
     let mut ret = Vec::new();
     for ats in atses {
-        ret.push((ats.get_dt().as_secs_f64(), ats.total_runs()));
+        ret.push((ats.dt.as_secs_f64(), ats.total_runs));
     }
     ret.sort_by_key(|(_, b)| *b);
     ret
+}
+
+pub struct TestFormatter(Vec<String>);
+
+impl TestFormatter {
+    pub fn make(
+        executables: &HashMap<TestId, Executable>,
+    ) -> (plotters::coord::types::RangedCoordu32, Vec<TestId>, Self) {
+        let mut int2id = Vec::new();
+        let mut int2exec = Vec::new();
+        for (id, exec) in executables.iter() {
+            int2id.push(*id);
+            int2exec.push(exec.name());
+        }
+        ((0..executables.len() as u32).into(), int2id, Self(int2exec))
+    }
+    fn stringify(&self, value: &u32) -> String {
+        self.0
+            .get(*value as usize)
+            .unwrap_or(&"".to_string())
+            .clone()
+    }
+}
+
+impl ValueFormatter<SegmentValue<u32>> for TestFormatter {
+    fn format_ext(&self, value: &SegmentValue<u32>) -> String {
+        match value {
+            SegmentValue::CenterOf(ref value) => self.stringify(value),
+            _ => "".to_string(),
+        }
+    }
 }
