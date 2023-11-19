@@ -65,18 +65,24 @@ pub fn get_n_runs_over_time(atses: &[AtsDelta]) -> Vec<(f64, usize)> {
 }
 
 pub struct TestFormatter(Vec<String>);
+pub type TestsRepresentation = (plotters::coord::types::RangedCoordu32, TestFormatter);
 
 impl TestFormatter {
     pub fn make(
         executables: &HashMap<TestId, Executable>,
-    ) -> (plotters::coord::types::RangedCoordu32, Vec<TestId>, Self) {
+    ) -> (Vec<TestId>, (plotters::coord::types::RangedCoordu32, Self)) {
         let mut int2id = Vec::new();
         let mut int2exec = Vec::new();
-        for (id, exec) in executables.iter() {
+        let mut sorted = executables.iter().collect::<Vec<_>>();
+        sorted.sort_by_key(|(_, exec)| exec.name());
+        for (id, exec) in sorted.into_iter().rev() {
             int2id.push(*id);
             int2exec.push(exec.name());
         }
-        ((0..executables.len() as u32).into(), int2id, Self(int2exec))
+        (
+            int2id,
+            ((0..executables.len() as u32).into(), Self(int2exec)),
+        )
     }
     fn stringify(&self, value: &u32) -> String {
         self.0

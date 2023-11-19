@@ -1,6 +1,6 @@
 #[allow(dead_code)]
 mod io;
-mod outputvector;
+pub mod outputvector;
 pub mod state;
 pub mod testing;
 
@@ -8,6 +8,7 @@ use std::{collections::HashMap, fs::File};
 
 use csv::Reader;
 use once_cell::sync::OnceCell;
+use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 
 pub static CONCURRENCY_LIMIT: OnceCell<usize> = OnceCell::new();
@@ -391,7 +392,7 @@ pub struct DelayParams {
   pub max_expected_wallclock_overhead_ms: i16,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TraceRecord {
   #[serde(rename = "Event")]
   event: String,
@@ -411,4 +412,21 @@ pub struct TraceRecord {
   trigger: String,
   #[serde(rename = "Extra Delay")]
   extra_delay: u64,
+}
+#[cfg(test)]
+impl TraceRecord {
+  pub fn mock() -> Self {
+    let rng = &mut rand::thread_rng();
+    Self {
+      event: vec!["A", "B", "C", "D"].choose(rng).unwrap().to_string(),
+      reactor: vec!["R", "S", "T", "U"].choose(rng).unwrap().to_string(),
+      source: rand::random(),
+      destination: rand::random(),
+      elapsed_logical_time: rand::random(),
+      microstep: rand::random(),
+      elapsed_physical_time: rand::random(),
+      trigger: vec!["W", "X", "Y", "Z"].choose(rng).unwrap().to_string(),
+      extra_delay: rand::random(),
+    }
+  }
 }

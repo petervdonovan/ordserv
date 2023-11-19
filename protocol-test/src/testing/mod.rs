@@ -2,7 +2,7 @@ use std::{
   collections::{hash_map::DefaultHasher, HashMap},
   hash::{Hash, Hasher},
   path::PathBuf,
-  sync::{Arc, RwLock},
+  sync::{Arc, Mutex, RwLock},
   time::Duration,
 };
 
@@ -14,7 +14,7 @@ use serde::{ser::SerializeStruct, Deserialize, Serialize};
 use crate::{
   exec::{ExecResult, Executable},
   io::run_with_parameters,
-  outputvector::{OutputVector, VectorfyStatus},
+  outputvector::{OutputVector, OutputVectorRegistry, OvrDelta, OvrReg, VectorfyStatus},
   state::{InitialState, KnownCountsState, State, TestId},
   DelayVector, DelayVectorIndex, DelayVectorRegistry, ThreadId, TraceRecord, CONCURRENCY_LIMIT,
 };
@@ -23,12 +23,14 @@ pub struct AccumulatingTracesState {
   pub kcs: KnownCountsState,
   pub parent: PathBuf,
   pub runs: HashMap<TestId, Arc<RwLock<TestRuns>>>, // TODO: consider using a rwlock
+  pub ovr: OutputVectorRegistry,
   pub dt: std::time::Duration,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AtsDelta {
   pub parent: PathBuf,
+  pub ovrdelta_path: PathBuf,
   pub runs: HashMap<TestId, PathBuf>,
   pub dt: Duration,
   pub total_runs: usize,
@@ -56,9 +58,13 @@ impl Serialize for AccumulatingTracesState {
         (*id, path)
       })
       .collect();
+    let ovrdelta_path = runs_dir.join("ovrdelta.mpk");
+    let mut file = std::fs::File::create(&ovrdelta_path).unwrap();
+    rmp_serde::encode::write(&mut file, &*self.ovr.lock().unwrap()).unwrap();
     let delta = AtsDelta {
       parent: self.parent.clone(),
       runs,
+      ovrdelta_path,
       dt: self.dt,
       total_runs: self.total_runs(),
     };
@@ -80,6 +86,10 @@ impl<'de> Deserialize<'de> for AccumulatingTracesState {
     let kcs: KnownCountsState =
       rmp_serde::from_read(std::fs::File::open(&ancestors.last().unwrap().parent.clone()).unwrap())
         .unwrap();
+    let ovrd: Vec<OvrDelta> = ancestors
+      .par_iter()
+      .map(|atsd| rmp_serde::from_read(std::fs::File::open(&atsd.ovrdelta_path).unwrap()).unwrap())
+      .collect();
     let trdelta: Vec<(TestId, TestRunsDelta)> = ancestors
       .par_iter()
       .flat_map(|atsd| {
@@ -126,6 +136,7 @@ impl<'de> Deserialize<'de> for AccumulatingTracesState {
     Ok(Self {
       kcs,
       parent: ancestors[0].parent.clone(),
+      ovr: Arc::new(Mutex::new(OvrReg::rebuild(ovrd.into_iter()))),
       runs,
       dt: ancestors[0].dt,
     })
@@ -245,6 +256,7 @@ impl AccumulatingTracesState {
       kcs,
       parent,
       runs,
+      ovr: Arc::new(Mutex::new(Default::default())),
       dt: std::time::Duration::from_secs(0),
     }
   }
@@ -289,7 +301,11 @@ impl AccumulatingTracesState {
       .expect("no trace file named rti.csv")
       .deserialize()
       .map(|r| r.expect("could not read record"));
-    let (ov, th, status) = self.kcs.metadata(id).ovkey.vectorfy(raw_traces);
+    let (ov, th, status) = self
+      .kcs
+      .metadata(id)
+      .ovkey
+      .vectorfy(raw_traces, Arc::clone(&self.ovr));
     Ok((ov, th, status))
   }
 
