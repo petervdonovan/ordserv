@@ -79,6 +79,10 @@ impl<'de> Deserialize<'de> for AccumulatingTracesState {
   {
     let mut ancestors = vec![AtsDelta::deserialize(deserializer)?];
     while ancestors.last().unwrap().total_runs > 0 {
+      println!(
+        "Loading ancestor delta with {} runs.",
+        ancestors.last().unwrap().total_runs
+      );
       let parent = ancestors.last().unwrap().parent.clone();
       let parent_delta = rmp_serde::from_read(std::fs::File::open(parent).unwrap()).unwrap();
       ancestors.push(parent_delta);
@@ -165,6 +169,12 @@ impl Serialize for TestRuns {
       .serialize_field("raws_delta", &self.raw_traces[self.raws_saved_up_to..])
       .unwrap();
     ret.end()
+  }
+}
+impl TestRuns {
+  pub fn update_saved_up_to_for_saving_deltas(&mut self) {
+    self.dvr_saved_up_to = DelayVectorIndex(self.dvr.len() as u32);
+    self.raws_saved_up_to = self.raw_traces.len();
   }
 }
 #[derive(Deserialize)]
@@ -307,6 +317,17 @@ impl AccumulatingTracesState {
       .ovkey
       .vectorfy(raw_traces, Arc::clone(&self.ovr));
     Ok((ov, th, status))
+  }
+
+  pub fn update_saved_up_to_for_saving_deltas(&mut self) {
+    for runs in self.runs.values() {
+      runs.write().unwrap().update_saved_up_to_for_saving_deltas();
+    }
+    self
+      .ovr
+      .lock()
+      .unwrap()
+      .update_saved_up_to_for_saving_deltas();
   }
 
   pub fn accumulate_traces(&mut self, time_seconds: u32) {

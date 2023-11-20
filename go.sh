@@ -5,4 +5,4 @@ ulimit -n 200000 || 0
 cd protocol-test/
 time cargo build --release
 cd ..
-time ./protocol-test/target/release/protocol-test -c 240 lf-264/test/C/src/federated/
+time ./protocol-test/target/release/protocol-test -c 240 -f 10 lf-264/test/C/src/federated/

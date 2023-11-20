@@ -209,7 +209,12 @@ impl State {
     };
     file_name(scratch_dir, &phase, src_commit)
   }
-  pub fn save_to_scratch_dir(&self) {
+  fn update_saved_up_to_for_saving_deltas(&mut self) {
+    if let Self::AccumulatingTraces(ref mut ats) = self {
+      ats.update_saved_up_to_for_saving_deltas();
+    }
+  }
+  pub fn save_to_scratch_dir(&mut self) {
     File::create(self.file_name())
       .expect("could not create file")
       .write_all(
@@ -222,6 +227,7 @@ impl State {
         .expect("could not serialize state"),
       )
       .expect("could not write to file");
+    self.update_saved_up_to_for_saving_deltas();
   }
   pub fn run(self, time_seconds: u32) -> Self {
     match self {

@@ -6,7 +6,7 @@ use std::{
 
 use serde::{ser::SerializeStruct, Deserialize, Serialize};
 
-const OUTPUT_VECTOR_CHUNK_SIZE: usize = 4;
+const OUTPUT_VECTOR_CHUNK_SIZE: usize = 32;
 
 use crate::{
   state::{TestMetadata, TracePointId},
@@ -65,40 +65,54 @@ pub struct OutputVectorKey {
 pub struct OvrReg {
   idx2node: Vec<OutputVectorNode>,
   idx2node_saved_up_to: OutputVectorNodeIdx,
-  node2idx: HashMap<u64, OutputVectorNodeIdx>, // FIXME: 128-bit hash
+  node2idx: HashMap<OutputVectorNode, OutputVectorNodeIdx>, // FIXME: 128-bit hash
 }
 impl Serialize for OvrReg {
   fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
   where
     S: serde::Serializer,
   {
-    let mut ret = serializer.serialize_struct("OvrDelta", 1)?;
-    ret
-      .serialize_field(
-        "idx2node",
-        &self.idx2node[self.idx2node_saved_up_to.0 as usize..],
-      )
-      .unwrap();
-    ret.end()
+    // let mut ret = serializer.serialize_struct("OvrDelta", 1)?;
+    // ret
+    //   .serialize_field(
+    //     "idx2node",
+    //     &self.idx2node[self.idx2node_saved_up_to.0 as usize..],
+    //   )
+    //   .unwrap();
+    // ret.end()
+    (OvrDelta {
+      idx2node: self.idx2node[self.idx2node_saved_up_to.0 as usize..]
+        .iter()
+        .enumerate()
+        .map(|(idx, node)| (idx + (self.idx2node_saved_up_to.0 as usize), *node))
+        .collect(),
+    })
+    .serialize(serializer)
   }
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct OvrDelta {
-  idx2node: Vec<OutputVectorNode>,
+  idx2node: Vec<(usize, OutputVectorNode)>,
 }
 impl OvrReg {
+  pub fn update_saved_up_to_for_saving_deltas(&mut self) {
+    self.idx2node_saved_up_to = OutputVectorNodeIdx(self.idx2node.len() as u64);
+  }
   pub fn rebuild(deltas: impl Iterator<Item = OvrDelta>) -> Self {
     let mut ret = Self::default();
-    for delta in deltas {
-      for ov in delta.idx2node {
+    for (deltaidx, delta) in deltas.enumerate() {
+      for (deltasubidx, (ogidx, ov)) in delta.idx2node.iter().enumerate() {
+        if *ogidx != ret.idx2node.len() {
+          panic!("indexing mismatch; check if deltas were provided in the right order. Got index {} but expected {} after loading {} deltas and {} subthings.", ogidx, ret.idx2node.len(), deltaidx, deltasubidx);
+        }
         ret.node2idx.insert(
-          compute_hash(ov),
+          compute_hash(*ov),
           OutputVectorNodeIdx(ret.idx2node.len() as u64),
         );
-        ret.idx2node.push(ov);
+        ret.idx2node.push(*ov);
       }
     }
-    ret.idx2node_saved_up_to = OutputVectorNodeIdx(ret.idx2node.len() as u64);
+    ret.update_saved_up_to_for_saving_deltas();
     ret
   }
 }
@@ -151,10 +165,8 @@ pub enum VectorfyStatus {
   ExtraTracePointId,
 }
 
-fn compute_hash(ovn: OutputVectorNode) -> u64 {
-  let mut hasher = DefaultHasher::default();
-  ovn.hash(&mut hasher);
-  hasher.finish()
+fn compute_hash(ovn: OutputVectorNode) -> OutputVectorNode {
+  ovn
 }
 
 impl OutputVector {
@@ -206,6 +218,7 @@ impl OutputVector {
       + OUTPUT_VECTOR_CHUNK_SIZE;
     let default = self.len as u32;
     let mut ret = vec![default; rounded_up_len];
+    // FIXME: Everybody holds the same mutex! This is a bottleneck. Maybe use a readwrite lock?
     Self::unpack_rec(self.data, &ovr.lock().unwrap(), &mut ret, 0, default);
     ret
   }
@@ -225,7 +238,7 @@ impl OutputVector {
     match ovrdata.idx2node[ovnid.0 as usize] {
       OutputVectorNode::Leaf(chunk) => {
         if seqnum2hookinvoc.len() != OUTPUT_VECTOR_CHUNK_SIZE {
-          panic!("seqnum2hookinvoc.len() must be OUTPUT_VECTOR_CHUNK_SIZE when unpacking a leaf");
+          panic!("seqnum2hookinvoc.len() must be OUTPUT_VECTOR_CHUNK_SIZE when unpacking a leaf, but it is {}", seqnum2hookinvoc.len());
         }
         for (i, rank) in chunk.rel_ranks.iter().enumerate() {
           if *rank == default as i32 {
@@ -265,13 +278,17 @@ mod tests {
 
   #[test]
   fn test_output_vector() {
-    let length = 900123;
+    let length = 723;
     let rounded_up =
       (length - 1) / OUTPUT_VECTOR_CHUNK_SIZE * OUTPUT_VECTOR_CHUNK_SIZE + OUTPUT_VECTOR_CHUNK_SIZE;
     let ovr = Arc::new(Mutex::new(OvrReg::default()));
     let og_trace = (0..length).map(|_| TraceRecord::mock()).collect::<Vec<_>>();
     let mut new_trace = og_trace.clone();
-    new_trace.shuffle(&mut rand::thread_rng());
+    for _ in 0..23 {
+      let start = rand::random::<usize>() % length;
+      let end = rand::random::<usize>() % 14;
+      new_trace[start..end.max(length)].shuffle(&mut rand::thread_rng());
+    }
     let ovk = OutputVectorKey::new(og_trace.into_iter().map(|it| TracePointId::new(&it)));
     let (ov, _, _) = ovk.vectorfy(new_trace.clone().into_iter(), Arc::clone(&ovr));
     let ov = ov.unpack(&ovr);
