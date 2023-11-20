@@ -15,6 +15,7 @@ use protocol_test::{
     state::TestMetadata,
     testing::{AccumulatingTracesState, AtsDelta, TestRuns},
 };
+use rayon::iter::{self, IntoParallelRefIterator, ParallelIterator};
 use statrs::statistics::Statistics;
 use viz264::{get_atses, get_latest_ats, get_n_runs_over_time, TestFormatter, TestsRepresentation};
 
@@ -123,7 +124,18 @@ impl Orderings {
         ]
     }
 }
-const SEARCH_RADIUS: i32 = 2;
+const SEARCH_RADIUS: i32 = 128;
+type SliceWithStart<'a, T> = (usize, &'a mut [T]);
+fn split_slice_with_start<T>(
+    sws: SliceWithStart<'_, T>,
+) -> (SliceWithStart<'_, T>, Option<SliceWithStart<'_, T>>) {
+    if sws.1.len() < 2 {
+        return ((sws.0, sws.1), None);
+    }
+    let mid = sws.1.len() / 2;
+    let (left, right) = sws.1.split_at_mut(mid);
+    ((sws.0, left), Some((sws.0 + mid, right)))
+}
 fn compute_permutable_sets(
     runs: impl std::ops::Deref<Target = TestRuns>,
     metadata: &TestMetadata,
@@ -134,26 +146,28 @@ fn compute_permutable_sets(
     let mut before_and_after = vec![HashSet::new(); metadata.og_ov_length_rounded_up()];
     for (_, result) in &runs.raw_traces {
         if let Ok((trace, _, _)) = result {
-            let mut ogrank_currank_pairs = trace
-                .unpack(ovr)
-                .into_iter()
-                .enumerate()
-                .collect::<Vec<_>>();
+            let ogrank2currank = trace.unpack(ovr);
+            let mut ogrank_currank_pairs = ogrank2currank.iter().enumerate().collect::<Vec<_>>();
             ogrank_currank_pairs.sort_by_key(|it| it.1);
+            for idx in 0..metadata.og_ov_length_rounded_up() {
+                for before_ogrank in imm_before[idx].iter() {
+                    if ogrank2currank[*before_ogrank as usize] > ogrank2currank[idx] {
+                        before_and_after[idx].insert(*before_ogrank);
+                    }
+                }
+                for after_ogrank in imm_after[idx].iter() {
+                    if ogrank2currank[*after_ogrank as usize] < ogrank2currank[idx] {
+                        before_and_after[idx].insert(*after_ogrank);
+                    }
+                }
+            }
             for idx in 0..metadata.og_ov_length_rounded_up() {
                 let left_bound = (idx as i32 - SEARCH_RADIUS).max(0) as usize;
                 let right_bound = (idx + 1 + (SEARCH_RADIUS as usize))
                     .min(metadata.og_ov_length_rounded_up() - 1);
                 for (other_idx, _currank) in ogrank_currank_pairs[left_bound..idx].iter() {
-                    if *other_idx >= metadata.og_ov_length_rounded_up() {
-                        println!(
-                            "other_idx = {}, ogrank_currank_pairs[idx].0 = {}, currank = {}",
-                            other_idx, ogrank_currank_pairs[idx].0, _currank
-                        );
-                        panic!("other_idx > metadata.og_ov_length_rounded_up()");
-                    }
                     imm_before[ogrank_currank_pairs[idx].0].insert(*other_idx as u32);
-                    if imm_after[*other_idx].contains(&(idx as u32)) {
+                    if imm_after[ogrank_currank_pairs[idx].0].contains(&(*other_idx as u32)) {
                         before_and_after[ogrank_currank_pairs[idx].0].insert(*other_idx as u32);
                     }
                 }
@@ -162,14 +176,7 @@ fn compute_permutable_sets(
                 }
                 for (other_idx, _currank) in ogrank_currank_pairs[idx + 1..right_bound].iter() {
                     imm_after[ogrank_currank_pairs[idx].0].insert(*other_idx as u32);
-                    if *other_idx >= metadata.og_ov_length_rounded_up() {
-                        println!(
-                            "other_idx = {}, ogrank_currank_pairs[idx].0 = {}, currank = {}, oolru = {}",
-                            other_idx, ogrank_currank_pairs[idx].0, _currank, metadata.og_ov_length_rounded_up()
-                        );
-                        panic!("other_idx > metadata.og_ov_length_rounded_up()");
-                    }
-                    if imm_before[*other_idx].contains(&(idx as u32)) {
+                    if imm_before[ogrank_currank_pairs[idx].0].contains(&(*other_idx as u32)) {
                         before_and_after[ogrank_currank_pairs[idx].0].insert(*other_idx as u32);
                     }
                 }
@@ -234,7 +241,7 @@ fn describe_permutable_sets(ats: &AccumulatingTracesState) {
     let (int2id, trep) = TestFormatter::make(ats.kcs.executables());
     let permutable_sets_by_testid: HashMap<_, _> = ats
         .runs
-        .iter()
+        .par_iter()
         .map(|(testid, runs)| {
             let metadata = ats.kcs.metadata(testid);
             let orderings = compute_permutable_sets(runs.read().unwrap(), metadata, &ats.ovr);
@@ -248,7 +255,9 @@ fn describe_permutable_sets(ats: &AccumulatingTracesState) {
                 BasicStats::new(
                     ordering_projection(permutable_sets_by_testid.get(tid).unwrap())
                         .iter()
-                        .map(|it| it.len() as f64),
+                        .map(|it| {
+                            it.len() as f64 / ats.kcs.metadata(tid).ovkey.n_tracepoints as f64
+                        }),
                 )
             })
             .collect();
@@ -273,23 +282,24 @@ fn main() {
     std::env::set_current_dir("..").unwrap();
     let scratch = &PathBuf::from("scratch");
     let latest = get_latest_ats(scratch);
+    println!("Data loaded.");
     describe_permutable_sets(&latest);
-    println!("total runs: {}", latest.total_runs());
-    println!("total time: {}", latest.get_dt().as_secs_f64());
-    println!(
-        "throughput: {}",
-        latest.total_runs() as f64 / latest.get_dt().as_secs_f64()
-    );
-    latest.runs.iter().for_each(|(testid, runs)| {
-        println!("testid: {:?}", testid);
-        let iomats = &runs.read().unwrap().iomats;
-        println!(
-            "runs: {} and {}",
-            iomats.len(),
-            iomats.values().map(|iomat| iomat.len()).sum::<usize>()
-        );
-    });
-    let atses = get_atses(scratch);
-    runs_over_time_chart(&atses);
-    error_rate(&latest);
+    // println!("total runs: {}", latest.total_runs());
+    // println!("total time: {}", latest.get_dt().as_secs_f64());
+    // println!(
+    //     "throughput: {}",
+    //     latest.total_runs() as f64 / latest.get_dt().as_secs_f64()
+    // );
+    // latest.runs.iter().for_each(|(testid, runs)| {
+    //     println!("testid: {:?}", testid);
+    //     let iomats = &runs.read().unwrap().iomats;
+    //     println!(
+    //         "runs: {} and {}",
+    //         iomats.len(),
+    //         iomats.values().map(|iomat| iomat.len()).sum::<usize>()
+    //     );
+    // });
+    // let atses = get_atses(scratch);
+    // runs_over_time_chart(&atses);
+    // error_rate(&latest);
 }

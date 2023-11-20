@@ -1279,6 +1279,7 @@ version = "0.1.0"
 dependencies = [
  "plotters",
  "protocol-test",
+ "rayon",
  "rmp-serde",
  "statrs",
 ]
