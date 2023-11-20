@@ -136,7 +136,7 @@ impl<'de> Deserialize<'de> for AccumulatingTracesState {
     Ok(Self {
       kcs,
       parent: ancestors[0].parent.clone(),
-      ovr: Arc::new(Mutex::new(OvrReg::rebuild(ovrd.into_iter()))),
+      ovr: Arc::new(Mutex::new(OvrReg::rebuild(ovrd.into_iter().rev()))),
       runs,
       dt: ancestors[0].dt,
     })

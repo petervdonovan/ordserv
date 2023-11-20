@@ -6,13 +6,19 @@ use std::{
 
 use serde::{ser::SerializeStruct, Deserialize, Serialize};
 
-const OUTPUT_VECTOR_CHUNK_SIZE: usize = 32;
+const OUTPUT_VECTOR_CHUNK_SIZE: usize = 4;
 
 use crate::{
-  state::TracePointId,
+  state::{TestMetadata, TracePointId},
   testing::{SuccessfulRun, TraceHasher},
   TraceRecord,
 };
+impl TestMetadata {
+  pub fn og_ov_length_rounded_up(&self) -> usize {
+    ((self.ovkey.n_tracepoints + OUTPUT_VECTOR_CHUNK_SIZE - 1) / OUTPUT_VECTOR_CHUNK_SIZE)
+      * OUTPUT_VECTOR_CHUNK_SIZE
+  }
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub struct OutputVector {
@@ -180,7 +186,7 @@ impl OutputVector {
     } else {
       let mid = ov.len().next_power_of_two() / 2;
       let left = Self::new_rec(&ov[..mid], ovr, start, default);
-      let right = Self::new_rec(&ov[mid..], ovr, mid, default);
+      let right = Self::new_rec(&ov[mid..], ovr, start + mid, default);
       let pair = OutputVectorNode::Node(OutputVectorNodePair {
         left,
         right: Some(right),
@@ -234,7 +240,7 @@ impl OutputVector {
           pair.left,
           ovrdata,
           &mut seqnum2hookinvoc[0..mid],
-          0,
+          start,
           default,
         );
         if let Some(right) = pair.right {
@@ -242,7 +248,7 @@ impl OutputVector {
             right,
             ovrdata,
             &mut seqnum2hookinvoc[mid..],
-            mid as u32,
+            start + mid as u32,
             default,
           );
         }
@@ -259,7 +265,7 @@ mod tests {
 
   #[test]
   fn test_output_vector() {
-    let length = OUTPUT_VECTOR_CHUNK_SIZE + 1;
+    let length = 900123;
     let rounded_up =
       (length - 1) / OUTPUT_VECTOR_CHUNK_SIZE * OUTPUT_VECTOR_CHUNK_SIZE + OUTPUT_VECTOR_CHUNK_SIZE;
     let ovr = Arc::new(Mutex::new(OvrReg::default()));

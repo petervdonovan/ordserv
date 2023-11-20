@@ -11,8 +11,8 @@ use plotters::{
     prelude::*,
 };
 use protocol_test::{
-    outputvector::{OutputVectorKey, OutputVectorRegistry},
-    state::{TestMetadata, TracePointId},
+    outputvector::OutputVectorRegistry,
+    state::TestMetadata,
     testing::{AccumulatingTracesState, AtsDelta, TestRuns},
 };
 use statrs::statistics::Statistics;
@@ -59,12 +59,13 @@ fn histogram_by_test<X, XValue>(
     <X as plotters::coord::ranged1d::AsRangedCoord>::CoordDescType: ValueFormatter<XValue>,
     <X as plotters::coord::ranged1d::AsRangedCoord>::Value: std::fmt::Debug,
 {
+    std::fs::create_dir_all(PathBuf::from(file_name).parent().unwrap()).unwrap();
     let root = BitMapBackend::new(file_name, (1024, 1024)).into_drawing_area();
     root.fill(&WHITE).unwrap();
     // let (range, int2id, formatter) = TestFormatter::make(ats.kcs.executables());
     let mut chart = ChartBuilder::on(&root)
         .set_label_area_size(LabelAreaPosition::Left, 300)
-        .set_label_area_size(LabelAreaPosition::Bottom, 20)
+        .set_label_area_size(LabelAreaPosition::Bottom, 40)
         .caption(title, ("serif", 40))
         .build_cartesian_2d(x_spec, trep.0.clone().into_segmented())
         .unwrap();
@@ -112,15 +113,25 @@ struct Orderings {
     imm_after: Vec<HashSet<u32>>,
     before_and_after: Vec<HashSet<u32>>,
 }
-const SEARCH_RADIUS: i32 = 64;
+type RelatedOgranksGiver<'a> = dyn Fn(&'a Orderings) -> &'a Vec<HashSet<u32>>;
+impl Orderings {
+    fn projections<'a>() -> Vec<(&'static str, Box<RelatedOgranksGiver<'a>>)> {
+        vec![
+            ("Before", Box::new(|it: &Self| &it.imm_before)),
+            ("After", Box::new(|it| &it.imm_after)),
+            ("Before and After", Box::new(|it| &it.before_and_after)),
+        ]
+    }
+}
+const SEARCH_RADIUS: i32 = 2;
 fn compute_permutable_sets(
     runs: impl std::ops::Deref<Target = TestRuns>,
     metadata: &TestMetadata,
     ovr: &OutputVectorRegistry,
 ) -> Orderings {
-    let mut imm_before = vec![HashSet::new(); metadata.hic.len()];
-    let mut imm_after = vec![HashSet::new(); metadata.hic.len()];
-    let mut before_and_after = vec![HashSet::new(); metadata.hic.len()];
+    let mut imm_before = vec![HashSet::new(); metadata.og_ov_length_rounded_up()];
+    let mut imm_after = vec![HashSet::new(); metadata.og_ov_length_rounded_up()];
+    let mut before_and_after = vec![HashSet::new(); metadata.og_ov_length_rounded_up()];
     for (_, result) in &runs.raw_traces {
         if let Ok((trace, _, _)) = result {
             let mut ogrank_currank_pairs = trace
@@ -129,17 +140,35 @@ fn compute_permutable_sets(
                 .enumerate()
                 .collect::<Vec<_>>();
             ogrank_currank_pairs.sort_by_key(|it| it.1);
-            for idx in 0..ogrank_currank_pairs.len() {
+            for idx in 0..metadata.og_ov_length_rounded_up() {
                 let left_bound = (idx as i32 - SEARCH_RADIUS).max(0) as usize;
-                let right_bound = (idx + (SEARCH_RADIUS as usize)).min(ogrank_currank_pairs.len());
-                for (other_idx, _) in ogrank_currank_pairs[left_bound..idx].iter() {
+                let right_bound = (idx + 1 + (SEARCH_RADIUS as usize))
+                    .min(metadata.og_ov_length_rounded_up() - 1);
+                for (other_idx, _currank) in ogrank_currank_pairs[left_bound..idx].iter() {
+                    if *other_idx >= metadata.og_ov_length_rounded_up() {
+                        println!(
+                            "other_idx = {}, ogrank_currank_pairs[idx].0 = {}, currank = {}",
+                            other_idx, ogrank_currank_pairs[idx].0, _currank
+                        );
+                        panic!("other_idx > metadata.og_ov_length_rounded_up()");
+                    }
                     imm_before[ogrank_currank_pairs[idx].0].insert(*other_idx as u32);
                     if imm_after[*other_idx].contains(&(idx as u32)) {
                         before_and_after[ogrank_currank_pairs[idx].0].insert(*other_idx as u32);
                     }
                 }
-                for (other_idx, _) in ogrank_currank_pairs[idx + 1..right_bound].iter() {
+                if idx == metadata.og_ov_length_rounded_up() - 1 {
+                    continue;
+                }
+                for (other_idx, _currank) in ogrank_currank_pairs[idx + 1..right_bound].iter() {
                     imm_after[ogrank_currank_pairs[idx].0].insert(*other_idx as u32);
+                    if *other_idx >= metadata.og_ov_length_rounded_up() {
+                        println!(
+                            "other_idx = {}, ogrank_currank_pairs[idx].0 = {}, currank = {}, oolru = {}",
+                            other_idx, ogrank_currank_pairs[idx].0, _currank, metadata.og_ov_length_rounded_up()
+                        );
+                        panic!("other_idx > metadata.og_ov_length_rounded_up()");
+                    }
                     if imm_before[*other_idx].contains(&(idx as u32)) {
                         before_and_after[ogrank_currank_pairs[idx].0].insert(*other_idx as u32);
                     }
@@ -153,7 +182,7 @@ fn compute_permutable_sets(
         before_and_after,
     }
 }
-
+#[derive(Debug)]
 pub struct BasicStats {
     pub mean: f64,
     pub median: f64,
@@ -212,36 +241,31 @@ fn describe_permutable_sets(ats: &AccumulatingTracesState) {
             (testid, orderings)
         })
         .collect();
-    let before_and_after_len_stats: Vec<_> = int2id
-        .iter()
-        .map(|tid| {
-            BasicStats::new(
-                permutable_sets_by_testid
-                    .get(tid)
-                    .unwrap()
-                    .before_and_after
+    for (ordering_name, ordering_projection) in Orderings::projections() {
+        let projected_stats: Vec<_> = int2id
+            .iter()
+            .map(|tid| {
+                BasicStats::new(
+                    ordering_projection(permutable_sets_by_testid.get(tid).unwrap())
+                        .iter()
+                        .map(|it| it.len() as f64),
+                )
+            })
+            .collect();
+        for projection in BasicStats::projections() {
+            histogram_by_test(
+                ats,
+                projected_stats
                     .iter()
-                    .map(|it| it.len() as f64),
-            )
-        })
-        .collect();
-    for projection in BasicStats::projections() {
-        histogram_by_test(
-            ats,
-            before_and_after_len_stats
-                .iter()
-                .map(|it| (0, projection.1(&it))),
-            &format!("plots/before_and_after_{}.png", projection.0),
-            &format!("Before and After {}", projection.0),
-            &projection.0,
-            0.0..Statistics::max(
-                before_and_after_len_stats
-                    .iter()
-                    .take(10)
-                    .map(|it| projection.1(it)),
-            ),
-            &trep,
-        );
+                    .enumerate()
+                    .map(|(idx, stats)| (idx as u32, projection.1(stats))),
+                &format!("plots/{}_{}.png", ordering_name, projection.0),
+                &format!("{} {}", ordering_name, projection.0),
+                &projection.0,
+                0.0..Statistics::max(projected_stats.iter().take(10).map(|it| projection.1(it))),
+                &trep,
+            );
+        }
     }
 }
 
