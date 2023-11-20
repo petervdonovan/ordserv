@@ -124,7 +124,7 @@ impl Orderings {
         ]
     }
 }
-const SEARCH_RADIUS: i32 = 128;
+const SEARCH_RADIUS: i32 = 32;
 type SliceWithStart<'a, T> = (usize, &'a mut [T]);
 fn split_slice_with_start<T>(
     sws: SliceWithStart<'_, T>,
@@ -167,18 +167,12 @@ fn compute_permutable_sets(
                     .min(metadata.og_ov_length_rounded_up() - 1);
                 for (other_idx, _currank) in ogrank_currank_pairs[left_bound..idx].iter() {
                     imm_before[ogrank_currank_pairs[idx].0].insert(*other_idx as u32);
-                    if imm_after[ogrank_currank_pairs[idx].0].contains(&(*other_idx as u32)) {
-                        before_and_after[ogrank_currank_pairs[idx].0].insert(*other_idx as u32);
-                    }
                 }
                 if idx == metadata.og_ov_length_rounded_up() - 1 {
                     continue;
                 }
                 for (other_idx, _currank) in ogrank_currank_pairs[idx + 1..right_bound].iter() {
                     imm_after[ogrank_currank_pairs[idx].0].insert(*other_idx as u32);
-                    if imm_before[ogrank_currank_pairs[idx].0].contains(&(*other_idx as u32)) {
-                        before_and_after[ogrank_currank_pairs[idx].0].insert(*other_idx as u32);
-                    }
                 }
             }
         }
