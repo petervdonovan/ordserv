@@ -339,10 +339,9 @@ pub mod env {
         .expect("could not write delay file");
         cumsum += *k;
       }
-      ret.evars.insert(
-        OsString::from(LF_FED_DELAYS.clone()),
-        delay.into_os_string(),
-      );
+      ret
+        .evars
+        .insert(OsString::from(LF_FED_DELAYS), delay.into_os_string());
       ret
     }
   }
