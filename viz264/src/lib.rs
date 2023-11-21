@@ -1,5 +1,7 @@
 use std::{collections::HashMap, fs::File, path::PathBuf};
 
+pub mod stats;
+
 use plotters::{
     backend::BitMapBackend,
     chart::{ChartBuilder, LabelAreaPosition},
@@ -10,9 +12,14 @@ use plotters::{
 };
 use protocol_test::{
     exec::Executable,
-    state::TestId,
-    testing::{AccumulatingTracesState, AtsDelta},
+    outputvector::OutputVectorRegistry,
+    state::{TestId, TestMetadata},
+    testing::{AccumulatingTracesState, AtsDelta, TestRuns},
 };
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use statrs::statistics::Statistics;
+use stats::BasicStats;
+use streaming_transpositions::{OgRank2CurRank, Orderings, StreamingTranspositions};
 
 pub fn get_atses(scratch: &PathBuf) -> Vec<AtsDelta> {
     let mut atses = Vec::new();
@@ -197,4 +204,64 @@ pub fn error_rate(ats: &AccumulatingTracesState, errors_file_name: &str) {
         0.0..0.026,
         &trep,
     );
+}
+
+fn compute_permutable_sets(
+    runs: impl std::ops::Deref<Target = TestRuns>,
+    metadata: &TestMetadata,
+    ovr: &OutputVectorRegistry,
+) -> StreamingTranspositions {
+    let mut st = StreamingTranspositions::new(metadata.og_ov_length_rounded_up(), 32, 0.01);
+    for trace in runs.raw_traces.iter().filter_map(|(_, result)| {
+        if let Ok((trace, _, _)) = result {
+            Some(trace)
+        } else {
+            None
+        }
+    }) {
+        let unpacked = trace.unpack(ovr);
+        st.record(OgRank2CurRank(&unpacked));
+    }
+    st
+}
+
+pub fn describe_permutable_sets(ats: &AccumulatingTracesState) {
+    let (int2id, trep) = TestFormatter::make(ats.kcs.executables());
+    let permutable_sets_by_testid: HashMap<_, _> = ats
+        .runs
+        .par_iter()
+        .map(|(testid, runs)| {
+            let metadata = ats.kcs.metadata(testid);
+            let orderings = compute_permutable_sets(runs.read().unwrap(), metadata, &ats.ovr);
+            (testid, orderings)
+        })
+        .collect();
+    for (ordering_name, ordering_projection) in Orderings::projections() {
+        let projected_stats: Vec<_> = int2id
+            .iter()
+            .map(|tid| {
+                BasicStats::new(
+                    ordering_projection(permutable_sets_by_testid.get(tid).unwrap().orderings())
+                        .iter()
+                        .map(|it| {
+                            it.len() as f64 / ats.kcs.metadata(tid).ovkey.n_tracepoints as f64
+                        }),
+                )
+            })
+            .collect();
+        for projection in BasicStats::projections() {
+            histogram_by_test(
+                ats,
+                projected_stats
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, stats)| (idx as u32, projection.1(stats))),
+                &format!("plots/{}_{}.png", ordering_name, projection.0),
+                &format!("{} {}", ordering_name, projection.0),
+                &projection.0,
+                0.0..Statistics::max(projected_stats.iter().take(10).map(|it| projection.1(it))),
+                &trep,
+            );
+        }
+    }
 }
