@@ -513,6 +513,7 @@ dependencies = [
  "criterion",
  "expect-test",
  "rand",
+ "serde",
 ]
 
 [[package]]

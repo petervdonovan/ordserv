@@ -9,6 +9,7 @@ edition = "2021"
 criterion = "0.4"
 expect-test = "1.4.1"
 rand = "0.8.5"
+serde = "1.0.193"
 
 [dev-dependencies]
 criterion = { version = "0.4", features = ["html_reports"] }

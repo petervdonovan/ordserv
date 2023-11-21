@@ -1,8 +1,9 @@
 use std::{collections::HashSet, fmt::Display};
 
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct OgRank(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CurRank(pub u32);
@@ -59,11 +60,11 @@ impl<'a> Display for Orderings<'a> {
         Ok(())
     }
 }
-type RelatedOgranksGiver<'a> = dyn Fn(&'a Orderings) -> &'a [HashSet<OgRank>];
+type RelatedOgranksGiver<'a> = dyn Fn(Orderings<'a>) -> &'a [HashSet<OgRank>];
 impl<'a> Orderings<'a> {
     pub fn projections<'b>() -> Vec<(&'static str, Box<RelatedOgranksGiver<'b>>)> {
         vec![
-            ("Before", Box::new(|it: &'_ Orderings<'_>| it.befores)),
+            ("Before", Box::new(|it: Orderings<'_>| it.befores)),
             ("Before and After", Box::new(|it| it.before_and_afters)),
         ]
     }

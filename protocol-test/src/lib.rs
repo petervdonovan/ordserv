@@ -8,6 +8,7 @@ use std::{collections::HashMap, fs::File};
 
 use csv::Reader;
 use once_cell::sync::OnceCell;
+#[cfg(test)]
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 

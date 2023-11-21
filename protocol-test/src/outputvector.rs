@@ -1,10 +1,11 @@
 use std::{
-  collections::{hash_map::DefaultHasher, HashMap},
+  collections::HashMap,
   hash::{Hash, Hasher},
   sync::{Arc, Mutex, MutexGuard},
 };
 
-use serde::{ser::SerializeStruct, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
+use streaming_transpositions::{CurRank, OgRank};
 
 const OUTPUT_VECTOR_CHUNK_SIZE: usize = 32;
 
@@ -54,8 +55,6 @@ struct OutputVectorNodePair {
   left: OutputVectorNodeIdx,
   right: Option<OutputVectorNodeIdx>,
 }
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct OgRank(u32);
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OutputVectorKey {
   pub map: HashMap<TracePointId, Vec<OgRank>>,
@@ -213,10 +212,10 @@ impl OutputVector {
       }
     }
   }
-  pub fn unpack(&self, ovr: &OutputVectorRegistry) -> Vec<u32> {
+  pub fn unpack(&self, ovr: &OutputVectorRegistry) -> Vec<CurRank> {
     let rounded_up_len = (self.len - 1) / OUTPUT_VECTOR_CHUNK_SIZE * OUTPUT_VECTOR_CHUNK_SIZE
       + OUTPUT_VECTOR_CHUNK_SIZE;
-    let default = self.len as u32;
+    let default = CurRank(self.len as u32);
     let mut ret = vec![default; rounded_up_len];
     // FIXME: Everybody holds the same mutex! This is a bottleneck. Maybe use a readwrite lock?
     Self::unpack_rec(self.data, &ovr.lock().unwrap(), &mut ret, 0, default);
@@ -225,9 +224,9 @@ impl OutputVector {
   fn unpack_rec(
     ovnid: OutputVectorNodeIdx,
     ovrdata: &MutexGuard<'_, OvrReg>,
-    seqnum2hookinvoc: &mut [u32],
+    seqnum2hookinvoc: &mut [CurRank],
     start: u32,
-    default: u32,
+    default: CurRank,
   ) {
     if seqnum2hookinvoc.len() / OUTPUT_VECTOR_CHUNK_SIZE * OUTPUT_VECTOR_CHUNK_SIZE
       != seqnum2hookinvoc.len()
@@ -241,10 +240,10 @@ impl OutputVector {
           panic!("seqnum2hookinvoc.len() must be OUTPUT_VECTOR_CHUNK_SIZE when unpacking a leaf, but it is {}", seqnum2hookinvoc.len());
         }
         for (i, rank) in chunk.rel_ranks.iter().enumerate() {
-          if *rank == default as i32 {
+          if *rank == default.0 as i32 {
             continue;
           }
-          seqnum2hookinvoc[i] = (*rank + start as i32) as u32;
+          seqnum2hookinvoc[i] = CurRank((*rank + start as i32) as u32);
         }
       }
       OutputVectorNode::Node(pair) => {
@@ -304,6 +303,7 @@ mod tests {
         .map(|it| *new_trace_og_ranks
           .get(&(it as u32))
           .unwrap_or(&(length as u32)))
+        .map(CurRank)
         .collect::<Vec<_>>()
     );
   }

@@ -20,4 +20,5 @@ serde = { version = "1.0.189", features = [
   "rc",     # "rc" is OK because it is only needed for duplication of references across threads, not duplication internal to the data structure
 ] }
 sha2 = "0.10.8"
+streaming-transpositions = { version = "0.1.0", path = "../streaming-transpositions" }
 wait-timeout = "0.2.0"

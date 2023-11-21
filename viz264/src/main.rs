@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-};
+use std::{collections::HashMap, path::PathBuf};
 
 use protocol_test::{
     outputvector::OutputVectorRegistry,
@@ -10,70 +7,25 @@ use protocol_test::{
 };
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use statrs::statistics::Statistics;
+use streaming_transpositions::{OgRank2CurRank, Orderings, StreamingTranspositions};
 use viz264::{get_latest_ats, histogram_by_test, TestFormatter};
-
-struct Orderings {
-    imm_before: Vec<HashSet<u32>>,
-    imm_after: Vec<HashSet<u32>>,
-    before_and_after: Vec<HashSet<u32>>,
-}
-type RelatedOgranksGiver<'a> = dyn Fn(&'a Orderings) -> &'a Vec<HashSet<u32>>;
-impl Orderings {
-    fn projections<'a>() -> Vec<(&'static str, Box<RelatedOgranksGiver<'a>>)> {
-        vec![
-            ("Before", Box::new(|it: &Self| &it.imm_before)),
-            ("After", Box::new(|it| &it.imm_after)),
-            ("Before and After", Box::new(|it| &it.before_and_after)),
-        ]
-    }
-}
-const SEARCH_RADIUS: i32 = 32;
 fn compute_permutable_sets(
     runs: impl std::ops::Deref<Target = TestRuns>,
     metadata: &TestMetadata,
     ovr: &OutputVectorRegistry,
-) -> Orderings {
-    let mut imm_before = vec![HashSet::new(); metadata.og_ov_length_rounded_up()];
-    let mut imm_after = vec![HashSet::new(); metadata.og_ov_length_rounded_up()];
-    let mut before_and_after = vec![HashSet::new(); metadata.og_ov_length_rounded_up()];
-    for (_, result) in &runs.raw_traces {
+) -> StreamingTranspositions {
+    let mut st = StreamingTranspositions::new(metadata.og_ov_length_rounded_up(), 32, 0.01);
+    for trace in runs.raw_traces.iter().filter_map(|(_, result)| {
         if let Ok((trace, _, _)) = result {
-            let ogrank2currank = trace.unpack(ovr);
-            let mut ogrank_currank_pairs = ogrank2currank.iter().enumerate().collect::<Vec<_>>();
-            ogrank_currank_pairs.sort_by_key(|it| it.1);
-            for idx in 0..metadata.og_ov_length_rounded_up() {
-                for before_ogrank in imm_before[idx].iter() {
-                    if ogrank2currank[*before_ogrank as usize] > ogrank2currank[idx] {
-                        before_and_after[idx].insert(*before_ogrank);
-                    }
-                }
-                for after_ogrank in imm_after[idx].iter() {
-                    if ogrank2currank[*after_ogrank as usize] < ogrank2currank[idx] {
-                        before_and_after[idx].insert(*after_ogrank);
-                    }
-                }
-            }
-            for idx in 0..metadata.og_ov_length_rounded_up() {
-                let left_bound = (idx as i32 - SEARCH_RADIUS).max(0) as usize;
-                let right_bound = (idx + 1 + (SEARCH_RADIUS as usize))
-                    .min(metadata.og_ov_length_rounded_up() - 1);
-                for (other_idx, _currank) in ogrank_currank_pairs[left_bound..idx].iter() {
-                    imm_before[ogrank_currank_pairs[idx].0].insert(*other_idx as u32);
-                }
-                if idx == metadata.og_ov_length_rounded_up() - 1 {
-                    continue;
-                }
-                for (other_idx, _currank) in ogrank_currank_pairs[idx + 1..right_bound].iter() {
-                    imm_after[ogrank_currank_pairs[idx].0].insert(*other_idx as u32);
-                }
-            }
+            Some(trace)
+        } else {
+            None
         }
+    }) {
+        let unpacked = trace.unpack(ovr);
+        st.record(OgRank2CurRank(&unpacked));
     }
-    Orderings {
-        imm_before,
-        imm_after,
-        before_and_after,
-    }
+    st
 }
 #[derive(Debug)]
 pub struct BasicStats {
@@ -139,7 +91,7 @@ fn describe_permutable_sets(ats: &AccumulatingTracesState) {
             .iter()
             .map(|tid| {
                 BasicStats::new(
-                    ordering_projection(permutable_sets_by_testid.get(tid).unwrap())
+                    ordering_projection(permutable_sets_by_testid.get(tid).unwrap().orderings())
                         .iter()
                         .map(|it| {
                             it.len() as f64 / ats.kcs.metadata(tid).ovkey.n_tracepoints as f64
