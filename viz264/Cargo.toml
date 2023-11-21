@@ -12,3 +12,4 @@ protocol-test = { version = "0.1.0", path = "../protocol-test" }
 rayon = "1.8.0"
 rmp-serde = "1.1.2"
 statrs = "0.16.0"
+streaming-transpositions = { version = "0.1.0", path = "../streaming-transpositions" }

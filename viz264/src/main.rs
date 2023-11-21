@@ -3,112 +3,15 @@ use std::{
     path::PathBuf,
 };
 
-const THROUGHPUT_FILE_NAME: &str = "plots/throughput.png";
-const ERRORS_FILE_NAME: &str = "plots/errors.png";
-
-use plotters::{
-    coord::ranged1d::{AsRangedCoord, ValueFormatter},
-    prelude::*,
-};
 use protocol_test::{
     outputvector::OutputVectorRegistry,
     state::TestMetadata,
-    testing::{AccumulatingTracesState, AtsDelta, TestRuns},
+    testing::{AccumulatingTracesState, TestRuns},
 };
-use rayon::iter::{self, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use statrs::statistics::Statistics;
-use viz264::{get_atses, get_latest_ats, get_n_runs_over_time, TestFormatter, TestsRepresentation};
+use viz264::{get_latest_ats, histogram_by_test, TestFormatter};
 
-fn runs_over_time_chart(atses: &[AtsDelta]) {
-    let data = get_n_runs_over_time(atses);
-    println!("{:?}", data);
-    let root = BitMapBackend::new(THROUGHPUT_FILE_NAME, (1024, 768)).into_drawing_area();
-    root.fill(&WHITE).unwrap();
-    let (max_x, max_y) = data.iter().max_by_key(|it| it.0 as i64).unwrap();
-    let mut chart = ChartBuilder::on(&root)
-        .set_label_area_size(LabelAreaPosition::Left, 60)
-        .set_label_area_size(LabelAreaPosition::Bottom, 60)
-        .caption("Runs over time", ("sans-serif", 40))
-        .build_cartesian_2d(0.0..*max_x, 0..*max_y)
-        .unwrap();
-
-    chart
-        .configure_mesh()
-        .x_desc("Time (s)")
-        .y_desc("Number of runs")
-        .draw()
-        .unwrap();
-
-    chart
-        .draw_series(plotters::series::LineSeries::new(data, RED.mix(0.2)).point_size(20))
-        .unwrap();
-    root.present().unwrap();
-}
-
-fn histogram_by_test<X, XValue>(
-    ats: &AccumulatingTracesState,
-    data: impl Iterator<Item = (u32, XValue)>,
-    file_name: &str,
-    title: &str,
-    x_desc: &str,
-    x_spec: X,
-    trep: &TestsRepresentation,
-) where
-    X: AsRangedCoord<Value = XValue>,
-    <X as plotters::coord::ranged1d::AsRangedCoord>::Value: std::ops::AddAssign,
-    <X as plotters::coord::ranged1d::AsRangedCoord>::Value: std::default::Default,
-    <X as plotters::coord::ranged1d::AsRangedCoord>::CoordDescType: ValueFormatter<XValue>,
-    <X as plotters::coord::ranged1d::AsRangedCoord>::Value: std::fmt::Debug,
-{
-    std::fs::create_dir_all(PathBuf::from(file_name).parent().unwrap()).unwrap();
-    let root = BitMapBackend::new(file_name, (1024, 1024)).into_drawing_area();
-    root.fill(&WHITE).unwrap();
-    // let (range, int2id, formatter) = TestFormatter::make(ats.kcs.executables());
-    let mut chart = ChartBuilder::on(&root)
-        .set_label_area_size(LabelAreaPosition::Left, 300)
-        .set_label_area_size(LabelAreaPosition::Bottom, 40)
-        .caption(title, ("serif", 40))
-        .build_cartesian_2d(x_spec, trep.0.clone().into_segmented())
-        .unwrap();
-    chart
-        .configure_mesh()
-        .disable_x_mesh()
-        .bold_line_style(WHITE.mix(0.3))
-        .label_style(TextStyle::from(("serif", 14)).color(&BLACK))
-        .x_desc(x_desc)
-        .y_desc("Test")
-        .y_label_formatter(&|i| trep.1.format_ext(i))
-        .y_labels(ats.kcs.executables().len())
-        .draw()
-        .unwrap();
-    chart
-        .draw_series(
-            Histogram::horizontal(&chart)
-                .style(RED.mix(0.5).filled())
-                .data(data),
-        )
-        .unwrap();
-    root.present().unwrap()
-}
-
-fn error_rate(ats: &AccumulatingTracesState) {
-    let (int2id, trep) = TestFormatter::make(ats.kcs.executables());
-    let data = int2id.iter().enumerate().map(|(n, tid)| {
-        let runs = ats.runs.get(tid).unwrap();
-        let raw_traces = &runs.read().unwrap().raw_traces;
-        let n_errors = raw_traces.iter().filter(|it| it.1.is_err()).count();
-        (n as u32, n_errors as f64 / raw_traces.len() as f64)
-    });
-    histogram_by_test(
-        ats,
-        data,
-        ERRORS_FILE_NAME,
-        "Error Rate by Test",
-        "Error rate",
-        0.0..0.026,
-        &trep,
-    );
-}
 struct Orderings {
     imm_before: Vec<HashSet<u32>>,
     imm_after: Vec<HashSet<u32>>,
@@ -125,17 +28,6 @@ impl Orderings {
     }
 }
 const SEARCH_RADIUS: i32 = 32;
-type SliceWithStart<'a, T> = (usize, &'a mut [T]);
-fn split_slice_with_start<T>(
-    sws: SliceWithStart<'_, T>,
-) -> (SliceWithStart<'_, T>, Option<SliceWithStart<'_, T>>) {
-    if sws.1.len() < 2 {
-        return ((sws.0, sws.1), None);
-    }
-    let mid = sws.1.len() / 2;
-    let (left, right) = sws.1.split_at_mut(mid);
-    ((sws.0, left), Some((sws.0 + mid, right)))
-}
 fn compute_permutable_sets(
     runs: impl std::ops::Deref<Target = TestRuns>,
     metadata: &TestMetadata,
