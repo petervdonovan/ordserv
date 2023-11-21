@@ -2,7 +2,7 @@ use std::{
   collections::{hash_map::DefaultHasher, HashMap},
   hash::{Hash, Hasher},
   path::PathBuf,
-  sync::{Arc, Mutex, RwLock},
+  sync::{Arc, RwLock},
   time::Duration,
 };
 
@@ -60,7 +60,7 @@ impl Serialize for AccumulatingTracesState {
       .collect();
     let ovrdelta_path = runs_dir.join("ovrdelta.mpk");
     let mut file = std::fs::File::create(&ovrdelta_path).unwrap();
-    rmp_serde::encode::write(&mut file, &*self.ovr.lock().unwrap()).unwrap();
+    rmp_serde::encode::write(&mut file, &*self.ovr.read().unwrap()).unwrap();
     let delta = AtsDelta {
       parent: self.parent.clone(),
       runs,
@@ -140,7 +140,7 @@ impl<'de> Deserialize<'de> for AccumulatingTracesState {
     Ok(Self {
       kcs,
       parent: ancestors[0].parent.clone(),
-      ovr: Arc::new(Mutex::new(OvrReg::rebuild(ovrd.into_iter().rev()))),
+      ovr: Arc::new(RwLock::new(OvrReg::rebuild(ovrd.into_iter().rev()))),
       runs,
       dt: ancestors[0].dt,
     })
@@ -266,7 +266,7 @@ impl AccumulatingTracesState {
       kcs,
       parent,
       runs,
-      ovr: Arc::new(Mutex::new(Default::default())),
+      ovr: Arc::new(RwLock::new(Default::default())),
       dt: std::time::Duration::from_secs(0),
     }
   }
@@ -325,7 +325,7 @@ impl AccumulatingTracesState {
     }
     self
       .ovr
-      .lock()
+      .write()
       .unwrap()
       .update_saved_up_to_for_saving_deltas();
   }

@@ -1,7 +1,7 @@
 use std::{
   collections::HashMap,
   hash::{Hash, Hasher},
-  sync::{Arc, Mutex, MutexGuard},
+  sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard},
 };
 
 use serde::{Deserialize, Serialize};
@@ -115,7 +115,7 @@ impl OvrReg {
     ret
   }
 }
-pub type OutputVectorRegistry = Arc<Mutex<OvrReg>>;
+pub type OutputVectorRegistry = Arc<RwLock<OvrReg>>;
 
 impl OutputVectorKey {
   pub fn new(tpis: impl Iterator<Item = TracePointId>) -> Self {
@@ -170,7 +170,7 @@ fn compute_hash(ovn: OutputVectorNode) -> OutputVectorNode {
 
 impl OutputVector {
   fn new(ov: Vec<u32>, ovr: OutputVectorRegistry) -> Self {
-    let mut ovrmut = ovr.lock().unwrap();
+    let mut ovrmut = ovr.write().unwrap();
     let data = Self::new_rec(&ov, &mut ovrmut, 0, ov.len() as i32);
     Self {
       data,
@@ -217,13 +217,12 @@ impl OutputVector {
       + OUTPUT_VECTOR_CHUNK_SIZE;
     let default = CurRank(self.len as u32);
     let mut ret = vec![default; rounded_up_len];
-    // FIXME: Everybody holds the same mutex! This is a bottleneck. Maybe use a readwrite lock?
-    Self::unpack_rec(self.data, &ovr.lock().unwrap(), &mut ret, 0, default);
+    Self::unpack_rec(self.data, &ovr.read().unwrap(), &mut ret, 0, default);
     ret
   }
   fn unpack_rec(
     ovnid: OutputVectorNodeIdx,
-    ovrdata: &MutexGuard<'_, OvrReg>,
+    ovrdata: &RwLockReadGuard<'_, OvrReg>,
     seqnum2hookinvoc: &mut [CurRank],
     start: u32,
     default: CurRank,
@@ -280,7 +279,7 @@ mod tests {
     let length = 723;
     let rounded_up =
       (length - 1) / OUTPUT_VECTOR_CHUNK_SIZE * OUTPUT_VECTOR_CHUNK_SIZE + OUTPUT_VECTOR_CHUNK_SIZE;
-    let ovr = Arc::new(Mutex::new(OvrReg::default()));
+    let ovr = Arc::new(RwLock::new(OvrReg::default()));
     let og_trace = (0..length).map(|_| TraceRecord::mock()).collect::<Vec<_>>();
     let mut new_trace = og_trace.clone();
     for _ in 0..23 {

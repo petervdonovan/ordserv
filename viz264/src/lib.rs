@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::File, path::PathBuf};
+use std::{cmp::Ordering, collections::HashMap, fs::File, path::PathBuf};
 
 pub mod stats;
 
@@ -17,7 +17,7 @@ use protocol_test::{
     state::{TestId, TestMetadata},
     testing::{AccumulatingTracesState, AtsDelta, TestRuns},
 };
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use statrs::statistics::Statistics;
 use stats::BasicStats;
 use streaming_transpositions::{OgRank2CurRank, Orderings, StreamingTranspositions};
@@ -93,12 +93,16 @@ impl TestFormatter {
         sort_by: impl Fn(&(&TestId, &Executable)) -> T,
     ) -> (Vec<TestId>, (plotters::coord::types::RangedCoordu32, Self))
     where
-        T: Ord,
+        T: PartialOrd,
     {
         let mut int2id = Vec::new();
         let mut int2exec = Vec::new();
         let mut sorted = executables.iter().collect::<Vec<_>>();
-        sorted.sort_by_key(sort_by);
+        sorted.sort_by(|a, b| {
+            sort_by(a)
+                .partial_cmp(&sort_by(b))
+                .unwrap_or(Ordering::Equal)
+        });
         for (id, exec) in sorted.into_iter().rev() {
             int2id.push(*id);
             int2exec.push(exec.name());
@@ -276,21 +280,37 @@ pub fn error_rate(ats: &AccumulatingTracesState, errors_file_name: &str) {
 }
 
 fn compute_permutable_sets(
-    runs: impl std::ops::Deref<Target = TestRuns>,
+    runs: impl std::ops::Deref<Target = TestRuns> + Sync,
     metadata: &TestMetadata,
     ovr: &OutputVectorRegistry,
 ) -> StreamingTranspositions {
-    let mut st = StreamingTranspositions::new(metadata.og_ov_length_rounded_up(), 32, 0.01);
-    for trace in runs.raw_traces.iter().filter_map(|(_, result)| {
-        if let Ok((trace, _, _)) = result {
-            Some(trace)
-        } else {
-            None
-        }
-    }) {
-        let unpacked = trace.unpack(ovr);
-        st.record(OgRank2CurRank(&unpacked));
-    }
+    let mut st = StreamingTranspositions::new(metadata.og_ov_length_rounded_up(), 128, 0.01);
+    // let packeds = runs.raw_traces.iter().filter_map(|(_, result)| {
+    //     if let Ok((trace, _, _)) = result {
+    //         Some(trace)
+    //     } else {
+    //         None
+    //     }
+    // });
+    // st.record_all(packeds.map(|trace| OgRank2CurRank(trace.unpack(ovr))));
+    let stride = 128; // Relevant to performance and maybe accuracy
+    st.par_record_all(
+        (0..(runs.raw_traces.len() / stride).max(1))
+            .into_par_iter()
+            .map(|start| {
+                runs.raw_traces
+                    [(start * stride)..(start * stride + stride).min(runs.raw_traces.len())]
+                    .iter()
+                    .filter_map(|(_, result)| {
+                        if let Ok((trace, _, _)) = result {
+                            Some(trace)
+                        } else {
+                            None
+                        }
+                    })
+                    .map(|trace| OgRank2CurRank(trace.unpack(ovr)))
+            }),
+    );
     st
 }
 
@@ -308,37 +328,47 @@ pub fn describe_permutable_sets(ats: &AccumulatingTracesState) {
         .iter()
         .map(|(testid, st)| (testid, st.cumsums().last().unwrap().1))
         .collect::<HashMap<_, _>>();
-    let (int2id, trep) = TestFormatter::make_with_sort(ats.kcs.executables(), |(tid, _)| {
-        *maxes_by_testid.get(tid).unwrap()
-    });
     for (ordering_name, ordering_projection) in Orderings::projections() {
-        let projected_stats: Vec<_> = int2id
-            .iter()
+        let projected_stats: HashMap<_, _> = ats
+            .runs
+            .keys()
             .map(|tid| {
-                BasicStats::new(
-                    ordering_projection(permutable_sets_by_testid.get(tid).unwrap().orderings())
+                (
+                    tid,
+                    BasicStats::new(
+                        ordering_projection(
+                            permutable_sets_by_testid.get(tid).unwrap().orderings(),
+                        )
                         .iter()
                         .map(|it| {
                             it.len() as f64 / ats.kcs.metadata(tid).ovkey.n_tracepoints as f64
                         }),
+                    ),
                 )
             })
             .collect();
+        let (int2id, trep) = TestFormatter::make_with_sort(ats.kcs.executables(), |(tid, _)| {
+            -projected_stats.get(tid).unwrap().mean
+        });
         for projection in BasicStats::projections() {
             histogram_by_test(
                 ats,
-                projected_stats
+                int2id
                     .iter()
+                    .map(|tid| projected_stats[tid])
                     .enumerate()
-                    .map(|(idx, stats)| (idx as u32, projection.1(stats))),
+                    .map(|(idx, stats)| (idx as u32, projection.1(&stats))),
                 &format!("plots/{}_{}.png", ordering_name, projection.0),
                 &format!("{} {}", ordering_name, projection.0),
                 &projection.0,
-                0.0..Statistics::max(projected_stats.iter().take(10).map(|it| projection.1(it))),
+                0.0..Statistics::max(projected_stats.values().map(|it| projection.1(it))),
                 &trep,
             );
         }
     }
+    let (int2id, trep) = TestFormatter::make_with_sort(ats.kcs.executables(), |(tid, _)| {
+        *maxes_by_testid.get(tid).unwrap()
+    });
     let time_series = int2id.iter().map(|tid| {
         let st = permutable_sets_by_testid.get(tid).unwrap();
         let max = maxes_by_testid.get(&tid).unwrap().0 as f64;

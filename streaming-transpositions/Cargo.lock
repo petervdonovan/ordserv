@@ -513,6 +513,7 @@ dependencies = [
  "criterion",
  "expect-test",
  "rand",
+ "rayon",
  "serde",
 ]
 

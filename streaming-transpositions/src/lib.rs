@@ -1,6 +1,7 @@
 use std::{collections::HashSet, fmt::Display};
 
 use rand::Rng;
+use rayon::iter::ParallelIterator;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -11,8 +12,8 @@ pub struct CurRank(pub u32);
 pub struct NTraces(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CumSum(pub u32);
-pub struct OgRank2CurRank<'a>(pub &'a [CurRank]);
-impl<'a> OgRank2CurRank<'a> {
+pub struct OgRank2CurRank(pub Vec<CurRank>);
+impl OgRank2CurRank {
     fn unpack(&self) -> Vec<(OgRank, CurRank)> {
         self.0
             .iter()
@@ -106,7 +107,7 @@ impl StreamingTranspositions {
             before_and_afters,
         }
     }
-    fn grow_before_and_afters_set(&mut self, trace: &OgRank2CurRank<'_>) {
+    fn grow_before_and_afters_set(&mut self, trace: &OgRank2CurRank) {
         for idx in 0..self.og_trace_length {
             let mut remove_set = Vec::new();
             for before_ogrank in self.befores[idx].iter() {
@@ -123,7 +124,7 @@ impl StreamingTranspositions {
             }
         }
     }
-    pub fn record(&mut self, trace: OgRank2CurRank<'_>) {
+    pub fn record(&mut self, trace: OgRank2CurRank) {
         let mut ogrank_currank_pairs = trace.unpack();
         ogrank_currank_pairs.sort_by_key(|it| it.1);
         for idx in 0..self.og_trace_length {
@@ -148,9 +149,28 @@ impl StreamingTranspositions {
             self.cumsums.push((self.traces_recorded, self.cumsum));
         }
     }
-    pub fn record_all<'a>(&mut self, traces: impl Iterator<Item = OgRank2CurRank<'a>>) {
+    pub fn record_all(&mut self, traces: impl Iterator<Item = OgRank2CurRank>) {
         for trace in traces {
             self.record(trace);
+        }
+    }
+    pub fn par_record_all(
+        &mut self,
+        traces: impl ParallelIterator<Item = impl Iterator<Item = OgRank2CurRank>>,
+    ) {
+        let mapped: Vec<_> = traces
+            .map(|trace| {
+                let mut st = Self::new(
+                    self.og_trace_length,
+                    self.search_radius,
+                    self.save_cumsum_when_cumsum_increases_by,
+                );
+                st.record_all(trace);
+                st
+            })
+            .collect();
+        for st in mapped {
+            self.merge(st); // a parallel reduction that assumes associativity could give nondeterministic (but otherwise correct) results
         }
     }
     pub fn orderings(&self) -> Orderings {
@@ -188,6 +208,50 @@ impl StreamingTranspositions {
             }
         }
     }
+    pub fn merge(&mut self, other: Self) {
+        for (idx, (other_before_and_after, other_before)) in other
+            .before_and_afters
+            .iter()
+            .zip(other.befores.iter())
+            .enumerate()
+        {
+            let idx_as_ogrank = OgRank(idx as u32);
+            for other in other_before_and_after.iter() {
+                if !self.before_and_afters[idx].contains(other) {
+                    self.before_and_afters[idx].insert(*other);
+                    self.befores[idx].remove(other);
+                    self.before_and_afters[other.idx()].insert(idx_as_ogrank);
+                    self.befores[other.idx()].remove(&idx_as_ogrank);
+                    self.cumsum.0 += 1;
+                }
+            }
+            for other in other_before.iter() {
+                if !self.befores[idx].contains(other)
+                    && !self.before_and_afters[idx].contains(other)
+                {
+                    if self.befores[other.idx()].contains(&idx_as_ogrank) {
+                        self.before_and_afters[idx].insert(*other);
+                        self.befores[idx].remove(other);
+                        self.before_and_afters[other.idx()].insert(idx_as_ogrank);
+                        self.befores[other.idx()].remove(&idx_as_ogrank);
+                        self.cumsum.0 += 1;
+                    } else {
+                        self.befores[idx].insert(*other);
+                    }
+                }
+            }
+        }
+        self.traces_recorded.0 += other.traces_recorded.0;
+        self.update_cumsums_if_needed();
+    }
+    fn update_cumsums_if_needed(&mut self) {
+        let last_n_cumsums = self.cumsums.last().map(|it| it.1 .0).unwrap_or(0);
+        if self.cumsum.0 - last_n_cumsums
+            >= (self.save_cumsum_when_cumsum_increases_by * (last_n_cumsums as f32)) as u32
+        {
+            self.cumsums.push((self.traces_recorded, self.cumsum));
+        }
+    }
 }
 
 pub fn random_traces(
@@ -214,6 +278,7 @@ pub fn random_traces(
 #[cfg(test)]
 pub mod tests {
     use expect_test::expect;
+    use rayon::iter::IntoParallelIterator;
 
     use super::*;
 
@@ -272,7 +337,7 @@ pub mod tests {
             ]
         "#]];
         let mut st = StreamingTranspositions::new(4, 1, 0.1);
-        st.record_all(traces.iter().map(|it| OgRank2CurRank(it)));
+        st.record_all(traces.into_iter().map(OgRank2CurRank));
         expected_before_and_after.assert_eq(&st.orderings().to_string());
         expected_cumsums.assert_debug_eq(&st.cumsums());
     }
@@ -291,7 +356,7 @@ pub mod tests {
                 save_cumsum_when_cumsum_increases_by,
             ))
         }
-        fn record(&mut self, trace: OgRank2CurRank<'_>) {
+        fn record(&mut self, trace: OgRank2CurRank) {
             let mut ogrank_currank_pairs = trace.unpack();
             ogrank_currank_pairs.sort_by_key(|it| it.1);
             for idx in 0..self.0.og_trace_length {
@@ -305,7 +370,7 @@ pub mod tests {
                 }
             }
         }
-        fn record_all<'a>(&mut self, traces: impl Iterator<Item = OgRank2CurRank<'a>>) {
+        fn record_all(&mut self, traces: impl Iterator<Item = OgRank2CurRank>) {
             for trace in traces {
                 self.record(trace);
             }
@@ -322,17 +387,28 @@ pub mod tests {
     pub fn randomized_test() {
         let traces = random_traces(100, 100, 30, 10);
         let mut st = StreamingTranspositions::new(100, 1, 0.1);
+        let mut st_parallel = StreamingTranspositions::new(100, 1, 0.1);
         let mut st_naive = NaiveStreamingTranspositions::new(100, 1, 0.1);
-        st.record_all(traces.iter().map(|it| OgRank2CurRank(it)));
+        st.record_all(traces.iter().map(|it| OgRank2CurRank(it.clone())));
         st.check_invariants_expensive();
-        st_naive.record_all(traces.iter().map(|it| OgRank2CurRank(it)));
-        for (before_and_after, naive_before_and_after) in st
+        st_parallel.par_record_all((0..10).into_par_iter().map(|start| {
+            traces[start..(start + 10)]
+                .iter()
+                .map(|it| OgRank2CurRank(it.clone()))
+        }));
+        st_parallel.check_invariants_expensive();
+        st_naive.record_all(traces.into_iter().map(OgRank2CurRank));
+        for ((before_and_after, par_before_and_after), naive_before_and_after) in st
             .orderings()
             .before_and_afters
             .iter()
+            .zip(st_parallel.orderings().before_and_afters.iter())
             .zip(st_naive.orderings().before_and_afters.iter())
         {
             for other in before_and_after.iter() {
+                assert!(naive_before_and_after.contains(other));
+            }
+            for other in par_before_and_after.iter() {
                 assert!(naive_before_and_after.contains(other));
             }
         }

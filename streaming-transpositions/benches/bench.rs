@@ -8,7 +8,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(|| {
             let mut st =
                 streaming_transpositions::StreamingTranspositions::new(trace_len, 20, 0.01);
-            st.record_all(traces.iter().map(|it| OgRank2CurRank(it)));
+            st.record_all(traces.iter().map(|it| OgRank2CurRank(it.clone())));
         })
     });
 }

@@ -1,4 +1,4 @@
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct BasicStats {
     pub mean: f64,
     pub median: f64,
