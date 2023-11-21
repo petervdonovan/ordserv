@@ -162,6 +162,9 @@ impl StreamingTranspositions {
     pub fn cumsums(&self) -> &[(NTraces, CumSum)] {
         &self.cumsums
     }
+    pub fn traces_recorded(&self) -> NTraces {
+        self.traces_recorded
+    }
     pub fn check_invariants_expensive(&self) {
         for (idx, (before_and_after, before)) in self
             .before_and_afters

@@ -7,8 +7,9 @@ use plotters::{
     chart::{ChartBuilder, LabelAreaPosition},
     coord::ranged1d::{AsRangedCoord, IntoSegmentedCoord, SegmentValue, ValueFormatter},
     drawing::IntoDrawingArea,
-    series::Histogram,
-    style::{Color, TextStyle, BLACK, RED, WHITE},
+    element::Rectangle,
+    series::{Histogram, LineSeries},
+    style::{Color, Palette, Palette99, TextStyle, BLACK, RED, WHITE},
 };
 use protocol_test::{
     exec::Executable,
@@ -85,10 +86,19 @@ impl TestFormatter {
     pub fn make(
         executables: &HashMap<TestId, Executable>,
     ) -> (Vec<TestId>, (plotters::coord::types::RangedCoordu32, Self)) {
+        Self::make_with_sort(executables, |(_, exec)| exec.name())
+    }
+    pub fn make_with_sort<T>(
+        executables: &HashMap<TestId, Executable>,
+        sort_by: impl Fn(&(&TestId, &Executable)) -> T,
+    ) -> (Vec<TestId>, (plotters::coord::types::RangedCoordu32, Self))
+    where
+        T: Ord,
+    {
         let mut int2id = Vec::new();
         let mut int2exec = Vec::new();
         let mut sorted = executables.iter().collect::<Vec<_>>();
-        sorted.sort_by_key(|(_, exec)| exec.name());
+        sorted.sort_by_key(sort_by);
         for (id, exec) in sorted.into_iter().rev() {
             int2id.push(*id);
             int2exec.push(exec.name());
@@ -187,6 +197,65 @@ pub fn histogram_by_test<X, XValue>(
     root.present().unwrap()
 }
 
+pub struct AxesDescriptions<X, Y> {
+    pub x_desc: &'static str,
+    pub x_spec: X,
+    pub y_desc: &'static str,
+    pub y_spec: Y,
+}
+
+pub fn plot_by_test<X, XValue: Clone + 'static, Y, YValue: Clone + 'static>(
+    data: impl Iterator<Item = impl Iterator<Item = (XValue, YValue)> + Clone>,
+    file_name: &str,
+    title: &str,
+    ad: AxesDescriptions<X, Y>,
+    trep: &TestsRepresentation,
+) where
+    Y: AsRangedCoord<Value = YValue>,
+    <Y as plotters::coord::ranged1d::AsRangedCoord>::Value: std::ops::AddAssign,
+    <Y as plotters::coord::ranged1d::AsRangedCoord>::Value: std::default::Default,
+    <Y as plotters::coord::ranged1d::AsRangedCoord>::CoordDescType: ValueFormatter<YValue>,
+    <Y as plotters::coord::ranged1d::AsRangedCoord>::Value: std::fmt::Debug,
+    X: AsRangedCoord<Value = XValue>,
+    <X as plotters::coord::ranged1d::AsRangedCoord>::Value: std::ops::AddAssign,
+    <X as plotters::coord::ranged1d::AsRangedCoord>::Value: std::default::Default,
+    <X as plotters::coord::ranged1d::AsRangedCoord>::CoordDescType: ValueFormatter<XValue>,
+    <X as plotters::coord::ranged1d::AsRangedCoord>::Value: std::fmt::Debug,
+{
+    std::fs::create_dir_all(PathBuf::from(file_name).parent().unwrap()).unwrap();
+    let root = BitMapBackend::new(file_name, (1024, 1024)).into_drawing_area();
+    root.fill(&WHITE).unwrap();
+    let mut chart = ChartBuilder::on(&root)
+        .set_label_area_size(LabelAreaPosition::Left, 60)
+        .set_label_area_size(LabelAreaPosition::Bottom, 40)
+        .caption(title, ("serif", 40))
+        .build_cartesian_2d(ad.x_spec, ad.y_spec)
+        .unwrap();
+    chart
+        .configure_mesh()
+        .disable_x_mesh()
+        .bold_line_style(WHITE.mix(0.3))
+        .label_style(TextStyle::from(("serif", 14)).color(&BLACK))
+        .y_desc(ad.y_desc)
+        .x_desc(ad.x_desc)
+        .draw()
+        .unwrap();
+    for (idx, series) in data.enumerate() {
+        let color = Palette99::pick(idx).mix(0.9);
+        chart
+            .draw_series(LineSeries::new(series, color.stroke_width(3)))
+            .unwrap()
+            .label(trep.1.stringify(&(idx as u32)))
+            .legend(move |(x, y)| Rectangle::new([(x, y - 10), (x + 20, y + 10)], color.filled()));
+    }
+    chart
+        .configure_series_labels()
+        .border_style(BLACK)
+        .draw()
+        .unwrap();
+    root.present().unwrap()
+}
+
 pub fn error_rate(ats: &AccumulatingTracesState, errors_file_name: &str) {
     let (int2id, trep) = TestFormatter::make(ats.kcs.executables());
     let data = int2id.iter().enumerate().map(|(n, tid)| {
@@ -226,7 +295,6 @@ fn compute_permutable_sets(
 }
 
 pub fn describe_permutable_sets(ats: &AccumulatingTracesState) {
-    let (int2id, trep) = TestFormatter::make(ats.kcs.executables());
     let permutable_sets_by_testid: HashMap<_, _> = ats
         .runs
         .par_iter()
@@ -236,6 +304,13 @@ pub fn describe_permutable_sets(ats: &AccumulatingTracesState) {
             (testid, orderings)
         })
         .collect();
+    let maxes_by_testid = permutable_sets_by_testid
+        .iter()
+        .map(|(testid, st)| (testid, st.cumsums().last().unwrap().1))
+        .collect::<HashMap<_, _>>();
+    let (int2id, trep) = TestFormatter::make_with_sort(ats.kcs.executables(), |(tid, _)| {
+        *maxes_by_testid.get(tid).unwrap()
+    });
     for (ordering_name, ordering_projection) in Orderings::projections() {
         let projected_stats: Vec<_> = int2id
             .iter()
@@ -264,4 +339,33 @@ pub fn describe_permutable_sets(ats: &AccumulatingTracesState) {
             );
         }
     }
+    let time_series = int2id.iter().map(|tid| {
+        let st = permutable_sets_by_testid.get(tid).unwrap();
+        let max = maxes_by_testid.get(&tid).unwrap().0 as f64;
+        st.cumsums()
+            .iter()
+            .map(move |(ntraces, cumsum)| (ntraces.0, cumsum.0 as f64 / max))
+    });
+    let xmax = permutable_sets_by_testid
+        .values()
+        .map(|st| st.traces_recorded().0)
+        .max()
+        .unwrap();
+    // let ymax = permutable_sets_by_testid
+    //     .values()
+    //     .map(|st| st.cumsums().last().unwrap().1 .0)
+    //     .max()
+    //     .unwrap();
+    plot_by_test(
+        time_series,
+        "plots/cumsums.png",
+        "Cumulative Sum",
+        AxesDescriptions {
+            x_desc: "Number of traces",
+            x_spec: 0..xmax,
+            y_desc: "Cumulative sum",
+            y_spec: 0.0..1.05,
+        },
+        &trep,
+    );
 }
