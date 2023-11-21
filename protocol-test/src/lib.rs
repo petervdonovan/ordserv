@@ -252,7 +252,7 @@ pub mod env {
   });
 
   const REQUIRED_CONTIGUOUS_PORTS: u16 = 24;
-  const MAX_REQUIRED_PORTS: u16 = 72;
+  const MAX_REQUIRED_PORTS: u16 = 36;
 
   fn get_valid_port() -> OsString {
     // 1024 is the first valid port, and one test may use a few ports (by trying them in sequence)
