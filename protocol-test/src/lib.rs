@@ -412,6 +412,12 @@ pub struct TraceRecord {
   trigger: String,
   #[serde(rename = "Extra Delay")]
   extra_delay: u64,
+  #[serde(rename = "File Index")]
+  file_index: u32,
+  #[serde(rename = "Line Number")]
+  line_number: u32,
+  #[serde(rename = "Sequence Number for File and Line")]
+  sequence_number_for_file_and_line: u32,
 }
 #[cfg(test)]
 impl TraceRecord {
@@ -427,6 +433,9 @@ impl TraceRecord {
       elapsed_physical_time: rand::random(),
       trigger: vec!["W", "X", "Y", "Z"].choose(rng).unwrap().to_string(),
       extra_delay: rand::random(),
+      file_index: rand::random::<u32>() % 10,
+      line_number: rand::random::<u32>() % 10,
+      sequence_number_for_file_and_line: rand::random::<u32>() % 100,
     }
   }
 }

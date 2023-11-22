@@ -9,14 +9,13 @@ use rand::{
   distributions::{Alphanumeric, DistString},
   prelude::Distribution,
 };
-use regex::Regex;
 
 use crate::{
   env::EnvironmentUpdate,
   exec::{ExecResult, Executable},
   state::CommitHash,
-  DelayParams, DelayVector, DelayVectorRegistry, HookId, HookInvocationCounts, ThreadId, Traces,
-  DELAY_VECTOR_CHUNK_SIZE,
+  DelayParams, DelayVector, DelayVectorRegistry, HookId, HookInvocationCounts, ThreadId,
+  TraceRecord, Traces, DELAY_VECTOR_CHUNK_SIZE,
 };
 
 impl HookInvocationCounts {
@@ -145,13 +144,25 @@ pub fn get_commit_hash(src_dir: &Path) -> CommitHash {
   CommitHash::new(s.trim()[..32].to_string())
 }
 
+fn trace_by_physical_time(trace_path: &PathBuf) -> Vec<TraceRecord> {
+  let mut records: Vec<_> = ReaderBuilder::new()
+    .trim(csv::Trim::All)
+    .from_path(trace_path)
+    .expect("failed to open CSV reader")
+    .deserialize::<TraceRecord>()
+    .map(|r| r.expect("failed to read record"))
+    .collect();
+  records.sort_by_key(|it| it.elapsed_physical_time);
+  records
+}
+
 pub fn get_counts(executable: &Executable, scratch: &Path, tid: ThreadId) -> HookInvocationCounts {
   let rand_subdir = TempDir::new(scratch);
   println!("getting invocationcounts for {}...", executable);
   let mut output = executable.run(
-    EnvironmentUpdate::new(tid, &[("LF_LOGTRACE", "YES")]),
+    EnvironmentUpdate::new(tid, &[]),
     &rand_subdir,
-    Box::new(|s: &str| s.starts_with("<<<")), // Warning: must define superset of set defined by regex below
+    Box::new(|_: &str| false),
   );
   if !output.status.is_success() {
     output.retain_output(|s| s.to_lowercase().contains("fail"));
@@ -159,12 +170,37 @@ pub fn get_counts(executable: &Executable, scratch: &Path, tid: ThreadId) -> Hoo
     println!("summary of failed run:\n{output}");
     return get_counts(executable, scratch, tid);
   }
-  let regex = Regex::new(r"<<< (?<HookId>.*) >>>").unwrap();
   let mut ret = HashMap::new();
-  for line in output.selected_output.iter() {
-    if let Some(caps) = regex.captures(line) {
-      let hid = HookId(caps["HookId"].to_string());
+  for lft_file in rand_subdir
+    .0
+    .read_dir()
+    .expect("failed to read tracefiles from scratch")
+    .flatten()
+    .filter(|it| it.file_name().to_str().unwrap().ends_with(".lft"))
+  {
+    Command::new("trace_to_csv")
+      .current_dir(&rand_subdir.0)
+      .arg(lft_file.file_name())
+      .output()
+      .expect("failed to execute trace_to_csv");
+    for record in trace_by_physical_time(
+      &rand_subdir.0.join(
+        lft_file
+          .file_name()
+          .to_str()
+          .unwrap()
+          .replace(".lft", ".csv"),
+      ),
+    ) {
+      let hid = HookId(format!("{} {}", record.line_number, record.source)); // "source" is a misnomer. It actually means "local federate" regardless of whether it is the source or destination of the message.
       let next = ret.get(&hid).unwrap_or(&0) + 1;
+      if next != record.sequence_number_for_file_and_line + 1 {
+        panic!(
+          "sequence number mismatch: expected {}, got {}",
+          next,
+          record.sequence_number_for_file_and_line + 1
+        );
+      }
       ret.insert(hid, next);
     }
   }

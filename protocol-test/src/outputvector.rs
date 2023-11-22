@@ -1,7 +1,7 @@
 use std::{
   collections::HashMap,
   hash::{Hash, Hasher},
-  sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard},
+  sync::{Arc, RwLock, RwLockReadGuard},
 };
 
 use serde::{Deserialize, Serialize};

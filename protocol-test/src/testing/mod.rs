@@ -305,17 +305,19 @@ impl AccumulatingTracesState {
       dvr,
     );
     let mut traces_map = traces_map?;
-    let raw_traces = traces_map
+    let mut raw_traces: Vec<TraceRecord> = traces_map
       .0
       .get_mut("rti.csv")
       .expect("no trace file named rti.csv")
       .deserialize()
-      .map(|r| r.expect("could not read record"));
+      .map(|r| r.expect("could not read record"))
+      .collect();
+    raw_traces.sort_by_key(|tr| tr.elapsed_physical_time);
     let (ov, th, status) = self
       .kcs
       .metadata(id)
       .ovkey
-      .vectorfy(raw_traces, Arc::clone(&self.ovr));
+      .vectorfy(raw_traces.into_iter(), Arc::clone(&self.ovr));
     Ok((ov, th, status))
   }
 
