@@ -284,17 +284,8 @@ fn compute_permutable_sets(
     metadata: &TestMetadata,
     ovr: &OutputVectorRegistry,
 ) -> StreamingTranspositions {
-    let mut st = StreamingTranspositions::new(metadata.og_ov_length_rounded_up(), 128, 0.01);
-    // let packeds = runs.raw_traces.iter().filter_map(|(_, result)| {
-    //     if let Ok((trace, _, _)) = result {
-    //         Some(trace)
-    //     } else {
-    //         None
-    //     }
-    // });
-    // st.record_all(packeds.map(|trace| OgRank2CurRank(trace.unpack(ovr))));
-    let stride = 128; // Relevant to performance and maybe accuracy
-    st.par_record_all(
+    let stride = 128; // Relevant to performance
+    StreamingTranspositions::new(metadata.og_ov_length_rounded_up(), 128, 0.01).par_record_all(
         (0..(runs.raw_traces.len() / stride).max(1))
             .into_par_iter()
             .map(|start| {
@@ -310,8 +301,7 @@ fn compute_permutable_sets(
                     })
                     .map(|trace| OgRank2CurRank(trace.unpack(ovr)))
             }),
-    );
-    st
+    )
 }
 
 pub fn describe_permutable_sets(ats: &AccumulatingTracesState) {
@@ -351,6 +341,7 @@ pub fn describe_permutable_sets(ats: &AccumulatingTracesState) {
             -projected_stats.get(tid).unwrap().mean
         });
         for projection in BasicStats::projections() {
+            println!("plotting {} {}", ordering_name, projection.0);
             histogram_by_test(
                 ats,
                 int2id
@@ -364,6 +355,7 @@ pub fn describe_permutable_sets(ats: &AccumulatingTracesState) {
                 0.0..Statistics::max(projected_stats.values().map(|it| projection.1(it))),
                 &trep,
             );
+            println!("done");
         }
     }
     let (int2id, trep) = TestFormatter::make_with_sort(ats.kcs.executables(), |(tid, _)| {
@@ -386,6 +378,7 @@ pub fn describe_permutable_sets(ats: &AccumulatingTracesState) {
     //     .map(|st| st.cumsums().last().unwrap().1 .0)
     //     .max()
     //     .unwrap();
+    println!("plotting cumsums");
     plot_by_test(
         time_series,
         "plots/cumsums.png",

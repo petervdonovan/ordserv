@@ -111,12 +111,7 @@ impl StreamingTranspositions {
             }
         }
         self.traces_recorded.0 += 1;
-        let last_n_cumsums = self.cumsums.last().map(|it| it.1 .0).unwrap_or(0);
-        if self.cumsum.0 - last_n_cumsums
-            >= (self.save_cumsum_when_cumsum_increases_by * (last_n_cumsums as f32)) as u32
-        {
-            self.cumsums.push((self.traces_recorded, self.cumsum));
-        }
+        self.update_cumsums_if_needed();
     }
     pub fn record_all(&mut self, traces: impl Iterator<Item = OgRank2CurRank>) {
         for trace in traces {
@@ -182,7 +177,10 @@ impl StreamingTranspositions {
     pub fn merge(&mut self, other: Self) {
         for (idx, other_before_and_after) in other.before_and_afters.iter().enumerate() {
             for other in other_before_and_after.iter() {
-                self.before_and_afters[idx].insert(*other);
+                if !self.before_and_afters[idx].contains(other) {
+                    self.cumsum.0 += 1;
+                    self.before_and_afters[idx].insert(*other);
+                }
             }
         }
         self.traces_recorded.0 += other.traces_recorded.0;
