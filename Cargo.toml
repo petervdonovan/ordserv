@@ -2,6 +2,7 @@
 
 members = [
     "ordering-server",
+    "c-ordering-client",
     "protocol-test",
     "streaming-transpositions",
     "viz264",

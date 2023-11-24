@@ -1,9 +1,10 @@
 use bytes::BufMut;
+use log::debug;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufWriter};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
 
-use crate::Frame;
+use crate::{FederateId, Frame, HookId, HookInvocation};
 
 const FRAME_SIZE: usize = std::mem::size_of::<Frame>();
 struct FrameBuffer([u8; FRAME_SIZE], usize);
@@ -40,11 +41,11 @@ unsafe impl BufMut for FrameBuffer {
 
 impl ReadConnection {
     pub async fn read_frame(&mut self) -> Option<Frame> {
-        println!("Reading frame...");
+        debug!("Reading frame...");
         if self.stream.read_buf(&mut self.buffer).await.unwrap() == 0 {
             return None;
         }
-        println!("Got frame");
+        debug!("Got frame");
         if self.buffer.1 < std::mem::size_of::<Frame>() {
             panic!("Frame buffer is too small");
         }
@@ -94,5 +95,27 @@ impl Connection {
     }
     pub fn into_split(self) -> (ReadConnection, WriteConnection) {
         (self.read, self.write)
+    }
+}
+
+impl Frame {
+    pub fn hid(&self) -> HookId {
+        let nul_range_end = self
+            .hook_id
+            .iter()
+            .position(|&c| c == b'\0')
+            .unwrap_or(self.hook_id.len()); // default to length if no `\0` present
+        HookId(
+            std::str::from_utf8(&self.hook_id[0..nul_range_end])
+                .unwrap()
+                .to_string(),
+            FederateId(self.federate_id),
+        )
+    }
+    pub fn hook_invocation(&self) -> HookInvocation {
+        HookInvocation {
+            hid: self.hid(),
+            seqnum: crate::SequenceNumberByFileAndLine(self.sequence_number),
+        }
     }
 }
