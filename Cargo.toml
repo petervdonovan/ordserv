@@ -1,0 +1,8 @@
+[workspace]
+
+members = [
+    "ordering-server",
+    "protocol-test",
+    "streaming-transpositions",
+    "viz264",
+]

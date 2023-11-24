@@ -2,7 +2,6 @@
 todo.md
 **/scratch
 libbytehound.so
-Untitled.ipynb
 .ipynb_checkpoints/
 *.zst
 *.dat
@@ -10,3 +9,4 @@ plots/
 perf.data
 perf.data.old
 xdgremote.sh
+target/

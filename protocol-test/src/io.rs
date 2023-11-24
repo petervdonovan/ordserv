@@ -192,7 +192,7 @@ pub fn get_counts(executable: &Executable, scratch: &Path, tid: ThreadId) -> Hoo
           .replace(".lft", ".csv"),
       ),
     ) {
-      let hid = HookId(format!("{} {}", record.line_number, record.source)); // "source" is a misnomer. It actually means "local federate" regardless of whether it is the source or destination of the message.
+      let hid = HookId::new(format!("{} {}", record.line_number, record.source)); // "source" is a misnomer. It actually means "local federate" regardless of whether it is the source or destination of the message.
       let next = ret.get(&hid).unwrap_or(&0) + 1;
       if next != record.sequence_number_for_file_and_line + 1 {
         panic!(

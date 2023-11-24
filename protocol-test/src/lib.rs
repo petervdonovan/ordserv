@@ -6,6 +6,8 @@ pub mod testing;
 
 use std::{collections::HashMap, fs::File};
 
+use ordering_server::HookId;
+
 use csv::Reader;
 use once_cell::sync::OnceCell;
 #[cfg(test)]
@@ -16,9 +18,6 @@ pub static CONCURRENCY_LIMIT: OnceCell<usize> = OnceCell::new();
 
 const TEST_TIMEOUT_SECS: u64 = 2;
 const MAX_ERROR_LINES: usize = 20;
-
-#[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct HookId(String);
 
 #[derive(Debug, Clone, Copy)]
 pub struct ThreadId(usize);
@@ -333,7 +332,7 @@ pub mod env {
         write!(
           delay_f,
           "{}\n{}",
-          hid.0,
+          hid,
           stringify_dvec(&pairs_sorted[start..current], cumsum),
         )
         .expect("could not write delay file");
