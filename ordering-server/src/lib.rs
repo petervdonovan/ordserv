@@ -6,6 +6,8 @@ pub mod client;
 mod connection;
 pub mod server;
 
+pub const ORDSERV_PORT_ENV_VAR: &str = "ORDSERV_PORT";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrecedenceId(pub u32);
 
@@ -23,7 +25,7 @@ pub struct Precedence {
     pub n_connections: usize,
     pub scratch_dir: PathBuf,
 }
-pub type HookInvocationShort<'a> = (&'a str, u32, u32);
+pub type HookInvocationShort<'a> = (&'a str, i32, u32);
 pub type PrecedenceElement<'a> = (HookInvocationShort<'a>, &'a [HookInvocationShort<'a>]);
 impl Precedence {
     pub fn from_list(
@@ -74,13 +76,13 @@ impl HookInvocation {
 pub struct EnvironmentVariables(pub Vec<(OsString, OsString)>);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct FederateId(pub u32);
+pub struct FederateId(pub i32);
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct Frame {
     pub precedence_id: u32,
-    pub federate_id: u32,
+    pub federate_id: i32,
     pub hook_id: [u8; 32], // Assume hook id is no more than 31 ascii characters
     pub sequence_number: u32,
 }

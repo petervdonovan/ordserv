@@ -5,6 +5,7 @@ use std::{
 };
 
 use csv::ReaderBuilder;
+use ordering_server::FederateId;
 use rand::{
   distributions::{Alphanumeric, DistString},
   prelude::Distribution,
@@ -27,7 +28,7 @@ impl HookInvocationCounts {
   }
   pub fn to_vec(&self) -> Vec<(&HookId, &u32)> {
     let mut keys: Vec<_> = self.0.iter().collect();
-    keys.sort();
+    // keys.sort();
     keys
   }
 }
@@ -192,7 +193,10 @@ pub fn get_counts(executable: &Executable, scratch: &Path, tid: ThreadId) -> Hoo
           .replace(".lft", ".csv"),
       ),
     ) {
-      let hid = HookId::new(format!("{} {}", record.line_number, record.source)); // "source" is a misnomer. It actually means "local federate" regardless of whether it is the source or destination of the message.
+      let hid = HookId::new(
+        format!("{} {}", record.line_number, record.source),
+        FederateId(record.source),
+      ); // "source" is a misnomer. It actually means "local federate" regardless of whether it is the source or destination of the message.
       let next = ret.get(&hid).unwrap_or(&0) + 1;
       if next != record.sequence_number_for_file_and_line + 1 {
         panic!(

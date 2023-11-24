@@ -94,7 +94,7 @@ impl ChannelClient {
 impl BlockingClient {
     pub fn start<T: ToSocketAddrs>(
         addr: T,
-        federate_id: u32,
+        federate_id: i32,
     ) -> (BlockingClient, std::thread::JoinHandle<()>) {
         let ok_to_proceed = Arc::new(Mutex::new(HashSet::new()));
         let ok_cvar = Arc::new(Condvar::new());
@@ -132,6 +132,7 @@ impl BlockingClient {
         (client, join_handle)
     }
     pub fn tracepoint_maybe_wait(&self, hook_invocation: HookInvocation) {
+        assert!(hook_invocation.hid.1 == self.fedid);
         if self.requires_ok_to_proceed.contains(&hook_invocation) {
             let mut ok_to_proceed = self.ok_to_proceed.lock().unwrap();
             while !ok_to_proceed.contains(&hook_invocation) {
