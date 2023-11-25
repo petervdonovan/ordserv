@@ -18,9 +18,9 @@ use sha2::{Digest, Sha256};
 use crate::{
   exec::Executable,
   io::{clean, get_commit_hash, get_counts, get_lf_files_non_recursive, get_traces, TempDir},
-  outputvector::OutputVectorKey,
+  outputvector::{OutputVectorKey, OUTPUT_VECTOR_CHUNK_SIZE},
   testing::AccumulatingTracesState,
-  HookInvocationCounts, ThreadId, TraceRecord, Traces, CONCURRENCY_LIMIT,
+  HookInvocationCounts, ThreadId, TraceRecord, Traces, CONCURRENCY_LIMIT, DELAY_VECTOR_CHUNK_SIZE,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -311,11 +311,15 @@ impl CompiledState {
   ) -> (TempDir, Traces) {
     for _ in 0..Self::ATTEMPTS {
       let tmp = TempDir::new(scratch_dir);
-      let ret = get_traces(
-        executable,
-        &tmp,
-        crate::env::EnvironmentUpdate::new::<OsString>(tid, &[]),
-      );
+      let ret = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(get_traces(
+          executable,
+          &tmp,
+          crate::env::EnvironmentUpdate::new::<OsString>(tid, &[]),
+        ));
       if let Ok(ret) = ret {
         return (tmp, ret);
       }
@@ -327,25 +331,31 @@ impl CompiledState {
       .executables
       .par_iter()
       .map(|(id, exe)| {
-        let ic = get_counts(
-          exe,
-          &self.initial.scratch_dir,
-          ThreadId(rayon::current_thread_index().unwrap()),
-        );
         let (_, mut traces_map) = CompiledState::get_traces_attempts(
           exe,
           &self.initial.scratch_dir,
           ThreadId(rayon::current_thread_index().unwrap()),
         );
         let (hook_trace, out_trace) = traces_map.hooks_and_outs();
+        let ic = get_counts(&hook_trace);
+        let hook_ovkey =
+          OutputVectorKey::new(hook_trace.into_iter().map(|tr| TracePointId::new(&tr)), 1);
+        if hook_ovkey.len() != ic.len() {
+          panic!(
+            "hook_ovkey.len() != ic.len(): {} != {}",
+            hook_ovkey.len(),
+            ic.len(),
+          );
+        }
         (
           *id,
           TestMetadata {
             hic: ic,
-            out_ovkey: OutputVectorKey::new(out_trace.into_iter().map(|tr| TracePointId::new(&tr))),
-            hook_ovkey: OutputVectorKey::new(
-              hook_trace.into_iter().map(|tr| TracePointId::new(&tr)),
+            out_ovkey: OutputVectorKey::new(
+              out_trace.into_iter().map(|tr| TracePointId::new(&tr)),
+              OUTPUT_VECTOR_CHUNK_SIZE,
             ),
+            hook_ovkey,
           },
         )
       })

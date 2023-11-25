@@ -7,6 +7,7 @@ mod connection;
 pub mod server;
 
 pub const ORDSERV_PORT_ENV_VAR: &str = "ORDSERV_PORT";
+pub const ORDSERV_WAIT_TIMEOUT_MILLISECONDS_ENV_VAR: &str = "ORDSERV_WAIT_TIMEOUT";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrecedenceId(pub u32);

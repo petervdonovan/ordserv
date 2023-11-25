@@ -1,10 +1,12 @@
 use std::{
     env,
     ffi::{c_char, c_int, c_void},
+    time::Duration,
 };
 
 use ordering_server::{
     FederateId, HookId, HookInvocation, SequenceNumberByFileAndLine, ORDSERV_PORT_ENV_VAR,
+    ORDSERV_WAIT_TIMEOUT_MILLISECONDS_ENV_VAR,
 };
 
 #[no_mangle]
@@ -61,6 +63,12 @@ pub unsafe extern "C" fn start_client(fedid: c_int) -> ClientAndJoinHandle {
             env::var(ORDSERV_PORT_ENV_VAR).unwrap().parse().unwrap(),
         ),
         fedid as i32,
+        Duration::from_millis(
+            env::var(ORDSERV_WAIT_TIMEOUT_MILLISECONDS_ENV_VAR)
+                .unwrap()
+                .parse()
+                .unwrap(),
+        ),
     );
     println!("Client started");
     ClientAndJoinHandle {

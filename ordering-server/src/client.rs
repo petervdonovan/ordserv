@@ -2,6 +2,7 @@ use std::{
     collections::HashSet,
     env,
     sync::{Arc, Condvar, Mutex},
+    time::Duration,
 };
 
 use log::{debug, info};
@@ -34,6 +35,7 @@ pub struct BlockingClient {
     rt: tokio::runtime::Runtime,
     precid: PrecedenceId,
     fedid: FederateId,
+    wait_timeout: Duration,
 }
 
 impl Client {
@@ -95,6 +97,7 @@ impl BlockingClient {
     pub fn start<T: ToSocketAddrs>(
         addr: T,
         federate_id: i32,
+        wait_timeout: Duration,
     ) -> (BlockingClient, std::thread::JoinHandle<()>) {
         let ok_to_proceed = Arc::new(Mutex::new(HashSet::new()));
         let ok_cvar = Arc::new(Condvar::new());
@@ -127,6 +130,7 @@ impl BlockingClient {
                 .unwrap(),
             precid: Self::load_precid(),
             fedid: FederateId(federate_id),
+            wait_timeout,
         };
         client.send_initial_frame();
         (client, join_handle)
@@ -136,7 +140,15 @@ impl BlockingClient {
         if self.requires_ok_to_proceed.contains(&hook_invocation) {
             let mut ok_to_proceed = self.ok_to_proceed.lock().unwrap();
             while !ok_to_proceed.contains(&hook_invocation) {
-                ok_to_proceed = self.ok_cvar.wait(ok_to_proceed).unwrap();
+                let result = self
+                    .ok_cvar
+                    .wait_timeout(ok_to_proceed, self.wait_timeout)
+                    .unwrap();
+                ok_to_proceed = result.0;
+                if result.1.timed_out() {
+                    eprintln!("Timed out waiting for {:?}", hook_invocation);
+                    break;
+                }
             }
         }
     }

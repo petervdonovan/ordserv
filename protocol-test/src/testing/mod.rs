@@ -213,7 +213,7 @@ impl Serialize for TestRuns {
   where
     S: serde::Serializer,
   {
-    let mut ret = serializer.serialize_struct("TestRunsDelta", 2)?;
+    let mut ret = serializer.serialize_struct("TestRunsDelta", 4)?;
     ret
       .serialize_field("clr_delta", &self.clr[self.clr_saved_up_to.0 as usize..])
       .unwrap();
@@ -222,6 +222,9 @@ impl Serialize for TestRuns {
       .unwrap();
     ret
       .serialize_field("interesting", &self.interesting.iter().collect::<Vec<_>>())
+      .unwrap();
+    ret
+      .serialize_field("strans_hook", &self.strans_hook)
       .unwrap();
     ret.end()
   }
@@ -436,55 +439,57 @@ impl AccumulatingTracesState {
       "Spawning {} threads to gather execution traces.",
       *CONCURRENCY_LIMIT.wait()
     );
-    let port = get_valid_port(); // TODO: get a free port
-    let mut ordserv = ordering_server::server::run(port, *CONCURRENCY_LIMIT.wait());
-    async_scoped::TokioScope::scope_and_block(|scope| {
-      let self_immut: &AccumulatingTracesState = self;
-      for (tidx, ordserv) in ordserv.updates_acks.iter_mut().enumerate() {
-        let my_ovr = Arc::clone(&self.ovr);
-        let proc = || async move {
-          while std::time::Instant::now() - t0 < std::time::Duration::from_secs(time_seconds as u64)
-          {
-            let mut rng = rand::rngs::StdRng::seed_from_u64(tidx as u64);
-            let (id, exe) = executables.choose(&mut rng).unwrap();
-            let conl = self_immut.get_constraint_vector(id);
-            let clr = Arc::clone(&self_immut.runs[id]);
-            let run = self_immut
-              .get_run(id, exe, &conl, ThreadId(tidx), clr, ordserv, port)
-              .await;
-            //         &self,
-            // id: &TestId,
-            // exe: &Executable,
-            // conl: &ConstraintList,
-            // tidx: ThreadId,
-            // clr: &ConstraintListRegistry,
-            // ordserv: &mut ServerSubHandle,
-            // ordserv_port: u16,
-            let mut entry = self_immut.runs.get(id).unwrap().write().unwrap();
-            entry.clr.push(conl);
-            let idx = ConstraintListIndex(entry.clr.len() as u32 - 1);
-            match run {
-              Ok((hook_orcr, out_orcr, trhash, status)) => {
-                entry.strans_hook.record(hook_orcr.0.clone());
-                entry.strans_out.record(out_orcr.0.clone());
-                let ov = OutputVector::new(out_orcr.0, Arc::clone(&my_ovr));
-                entry
-                  .iomats
-                  .entry(trhash.0)
-                  .or_insert(HashMap::new())
-                  .entry(trhash.1)
-                  .or_insert(vec![])
-                  .push(ov);
-                entry.raw_traces.push((idx, Ok((ov, trhash, status))));
-              }
-              Err(err) => {
-                entry.raw_traces.push((idx, Err(err)));
+    let rt = tokio::runtime::Builder::new_multi_thread()
+      .enable_all()
+      .build()
+      .unwrap();
+    rt.block_on(async {
+      let port = get_valid_port(); // TODO: get a free port
+      let mut ordserv = ordering_server::server::run(port, *CONCURRENCY_LIMIT.wait());
+      async_scoped::TokioScope::scope_and_block(|scope| {
+        let self_immut: &AccumulatingTracesState = self;
+        for (tidx, ordserv) in ordserv.updates_acks.iter_mut().enumerate() {
+          let my_ovr = Arc::clone(&self.ovr);
+          let proc = || async move {
+            while std::time::Instant::now() - t0
+              < std::time::Duration::from_secs(time_seconds as u64)
+            {
+              let mut rng = rand::rngs::StdRng::seed_from_u64(tidx as u64);
+              let (id, exe) = executables.choose(&mut rng).unwrap();
+              let conl = self_immut.get_constraint_vector(id);
+              let clr = Arc::clone(&self_immut.runs[id]);
+              println!("DEBUG: THREAD {} STARTING RUN", tidx);
+              let run = self_immut
+                .get_run(id, exe, &conl, ThreadId(tidx), clr, ordserv, port)
+                .await;
+              println!("DEBUG: THREAD {} FINISHED RUN", tidx);
+              let mut entry = self_immut.runs.get(id).unwrap().write().unwrap();
+              entry.clr.push(conl);
+              let idx = ConstraintListIndex(entry.clr.len() as u32 - 1);
+              match run {
+                Ok((hook_orcr, out_orcr, trhash, status)) => {
+                  entry.strans_hook.record(hook_orcr.0.clone());
+                  entry.strans_out.record(out_orcr.0.clone());
+                  println!("DEBUG: THREAD {} RECORDED RUN", tidx);
+                  let ov = OutputVector::new(out_orcr.0, Arc::clone(&my_ovr));
+                  entry
+                    .iomats
+                    .entry(trhash.0)
+                    .or_insert(HashMap::new())
+                    .entry(trhash.1)
+                    .or_insert(vec![])
+                    .push(ov);
+                  entry.raw_traces.push((idx, Ok((ov, trhash, status))));
+                }
+                Err(err) => {
+                  entry.raw_traces.push((idx, Err(err)));
+                }
               }
             }
-          }
-        };
-        scope.spawn(proc());
-      }
+          };
+          scope.spawn(proc());
+        }
+      });
     });
     // std::thread::scope(|scope| {
 

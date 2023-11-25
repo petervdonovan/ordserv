@@ -101,6 +101,13 @@ impl StreamingTranspositions {
         }
     }
     pub fn record(&mut self, trace: OgRank2CurRank) {
+        if trace.0.len() != self.og_trace_length {
+            panic!(
+                "trace length {} does not match og_trace_length {}",
+                trace.0.len(),
+                self.og_trace_length
+            );
+        }
         let mut ogrank_currank_pairs = trace.unpack();
         ogrank_currank_pairs.sort_by_key(|it| it.1);
         for idx in 0..self.og_trace_length {
@@ -109,6 +116,8 @@ impl StreamingTranspositions {
             for (other_idx, _currank) in ogrank_currank_pairs[left_bound..idx]
                 .iter()
                 .filter(|(other_idx, _currank)| other_idx > &ogrank)
+                .filter(|(_other_idx, currank)| currank.0 != self.og_trace_length as u32)
+            // the trace length is used as a placeholder when the hookinvocation of the ogrank is not observed
             {
                 self.before_and_afters[ogrank.idx()].insert(*other_idx);
                 self.before_and_afters[other_idx.idx()].insert(ogrank);

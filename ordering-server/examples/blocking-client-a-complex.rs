@@ -1,7 +1,13 @@
+use std::time::Duration;
+
 use ordering_server::HookInvocation;
 
 fn main() {
-    let (client, _jh) = ordering_server::client::BlockingClient::start(("127.0.0.1", 15045), 0);
+    let (client, _jh) = ordering_server::client::BlockingClient::start(
+        ("127.0.0.1", 15045),
+        0,
+        Duration::from_secs(5),
+    );
     client.tracepoint_maybe_do(HookInvocation::from_short(("A99", 0, 0)));
     println!("the");
     client.tracepoint_maybe_do(HookInvocation::from_short(("A0", 0, 0)));

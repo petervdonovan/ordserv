@@ -1369,7 +1369,9 @@ dependencies = [
  "rmp-serde",
  "serde",
  "sha2",
+ "simple_logger",
  "streaming-transpositions",
+ "tokio",
  "wait-timeout",
 ]
 

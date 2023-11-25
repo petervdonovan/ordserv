@@ -7,7 +7,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use streaming_transpositions::{CurRank, OgRank, OgRank2CurRank};
 
-const OUTPUT_VECTOR_CHUNK_SIZE: usize = 32;
+pub(crate) const OUTPUT_VECTOR_CHUNK_SIZE: usize = 32;
 
 use crate::{
   state::{TestMetadata, TracePointId},
@@ -118,16 +118,18 @@ impl OvrReg {
 pub type OutputVectorRegistry = Arc<RwLock<OvrReg>>;
 
 impl OutputVectorKey {
-  pub fn new(tpis: impl Iterator<Item = TracePointId>) -> Self {
+  pub fn new(tpis: impl Iterator<Item = TracePointId>, round_up_to_zero_mod: usize) -> Self {
     let mut ret = HashMap::new();
     let mut idx = 0;
     for tpi in tpis {
       ret.entry(tpi).or_insert(vec![]).push(OgRank(idx));
       idx += 1;
     }
+    println!("DEBUG: ROUNDING UP TO 0 MOD {}", round_up_to_zero_mod);
     Self {
       map: ret,
-      n_tracepoints: idx as usize,
+      n_tracepoints: (idx as usize - 1) / round_up_to_zero_mod * round_up_to_zero_mod
+        + round_up_to_zero_mod,
     }
   }
 
@@ -135,7 +137,7 @@ impl OutputVectorKey {
     &self,
     records: impl Iterator<Item = TraceRecord>,
   ) -> (OgRank2CurRank, TraceHash, VectorfyStatus) {
-    let mut ov = vec![CurRank(0); self.n_tracepoints];
+    let mut ov = vec![CurRank(self.n_tracepoints as u32); self.n_tracepoints];
     let mut th = TraceHasher::default();
     let mut status = VectorfyStatus::Ok;
     let mut subidxs = HashMap::new();
@@ -145,6 +147,7 @@ impl OutputVectorKey {
         subidxs.entry(tpi).or_insert(0);
         if let Some(idx) = idxs.get(subidxs[&tpi]) {
           ov[idx.0 as usize] = CurRank(rank as u32);
+          subidxs.entry(tpi).and_modify(|it| *it += 1);
         } else {
           status = VectorfyStatus::ExtraTracePointId;
         }
@@ -154,6 +157,10 @@ impl OutputVectorKey {
       th.update(&tr);
     }
     (OgRank2CurRank(ov), th.finish(), status)
+  }
+  #[allow(clippy::len_without_is_empty)]
+  pub fn len(&self) -> usize {
+    self.n_tracepoints
   }
 }
 #[derive(Debug, Serialize, Deserialize)]
@@ -286,7 +293,7 @@ mod tests {
       let end = rand::random::<usize>() % 14;
       new_trace[start..end.max(length)].shuffle(&mut rand::thread_rng());
     }
-    let ovk = OutputVectorKey::new(og_trace.into_iter().map(|it| TracePointId::new(&it)));
+    let ovk = OutputVectorKey::new(og_trace.into_iter().map(|it| TracePointId::new(&it)), 1);
     let (ov, _, _) = ovk.vectorfy(new_trace.clone().into_iter());
     let ov = OutputVector::new(ov, Arc::clone(&ovr));
     let ov = ov.unpack(&ovr);

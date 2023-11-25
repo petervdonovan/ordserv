@@ -102,6 +102,7 @@ async fn process_precedence_stream(
                 }
             }
         }));
+        debug!("Awaiting a new precedence");
     }
     debug!("Received None from precedence stream");
     drop(jhs);

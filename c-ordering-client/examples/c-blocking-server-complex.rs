@@ -1,13 +1,15 @@
 use std::process::{Child, Command};
 
-use ordering_server::{server, EnvironmentVariables, Precedence, ORDSERV_PORT_ENV_VAR};
+use ordering_server::{
+    server, EnvironmentVariables, Precedence, ORDSERV_PORT_ENV_VAR,
+    ORDSERV_WAIT_TIMEOUT_MILLISECONDS_ENV_VAR,
+};
 
 // use simple_logger::SimpleLogger;
 
 const PORT: u16 = 8080;
 
 fn compile_and_run(name: String, runtime_evars: &EnvironmentVariables) -> Child {
-    println!("DEBUG: cwd: {:?}", std::env::current_dir().unwrap());
     let mut child = Command::new("gcc")
         .args([
             "-g",
@@ -24,10 +26,10 @@ fn compile_and_run(name: String, runtime_evars: &EnvironmentVariables) -> Child 
     if !child.wait().unwrap().success() {
         panic!("failed to compile");
     }
-    println!("DEBUG: running with envs: {:?}", runtime_evars.0);
     Command::new(format!("./c-ordering-client/examples/{}.run", name))
         .envs(runtime_evars.0.clone())
         .env(ORDSERV_PORT_ENV_VAR, PORT.to_string())
+        .env(ORDSERV_WAIT_TIMEOUT_MILLISECONDS_ENV_VAR, "5000")
         .env(
             "C_ORDERING_CLIENT_LIBRARY_PATH",
             "./target/debug/libc_ordering_client.so",

@@ -9,7 +9,7 @@ use std::{
 use csv::ReaderBuilder;
 use ordering_server::{
   server::ServerSubHandle, FederateId, HookInvocation, Precedence, SequenceNumberByFileAndLine,
-  ORDSERV_PORT_ENV_VAR,
+  ORDSERV_PORT_ENV_VAR, ORDSERV_WAIT_TIMEOUT_MILLISECONDS_ENV_VAR,
 };
 use rand::distributions::{Alphanumeric, DistString};
 
@@ -24,6 +24,8 @@ use crate::{
 
 const C_ORDERING_CLIENT_LIBRARY_PATH: &str = "./target/debug/libc_ordering_client.so";
 const C_ORDERING_CLIENT_LIBRARY_PATH_ENV_VAR: &str = "C_ORDERING_CLIENT_LIBRARY_PATH";
+
+const ORDSERV_WAIT_TIMEOUT_MILLISECONDS: &str = "1500";
 
 impl HookInvocationCounts {
   pub fn len(&self) -> usize {
@@ -139,74 +141,41 @@ fn trace_by_physical_time(trace_path: &PathBuf) -> Vec<TraceRecord> {
   records
 }
 
-pub fn get_counts(executable: &Executable, scratch: &Path, tid: ThreadId) -> HookInvocationCounts {
-  let rand_subdir = TempDir::new(scratch);
-  println!("getting invocationcounts for {}...", executable);
-  let mut output = executable.run(
-    EnvironmentUpdate::new::<OsString>(tid, &[]),
-    &rand_subdir,
-    Box::new(|_: &str| false),
-  );
-  if !output.status.is_success() {
-    output.retain_output(|s| s.to_lowercase().contains("fail"));
-    println!("Failed to get correct initial counts for {executable:?}. Re-running.");
-    println!("summary of failed run:\n{output}");
-    return get_counts(executable, scratch, tid);
-  }
+pub fn get_counts(hook_trace: &[TraceRecord]) -> HookInvocationCounts {
   let mut hid2ic = HashMap::new();
   let mut ogrank2hinvoc = Vec::new();
   let mut process_ids = vec![];
-  for lft_file in rand_subdir
-    .0
-    .read_dir()
-    .expect("failed to read tracefiles from scratch")
-    .flatten()
-    .filter(|it| it.file_name().to_str().unwrap().ends_with(".lft"))
-  {
-    Command::new("trace_to_csv")
-      .current_dir(&rand_subdir.0)
-      .arg(lft_file.file_name())
-      .output()
-      .expect("failed to execute trace_to_csv");
-    for (ogrank, record) in trace_by_physical_time(
-      &rand_subdir.0.join(
-        lft_file
-          .file_name()
-          .to_str()
-          .unwrap()
-          .replace(".lft", ".csv"),
-      ),
-    )
-    .iter()
-    .enumerate()
-    {
-      let hid = HookId::new(
-        format!("{} {}", record.line_number, record.source),
-        FederateId(record.source),
-      ); // "source" is a misnomer. It actually means "local federate" regardless of whether it is the source or destination of the message.
-      let next = hid2ic.get(&hid).unwrap_or(&0) + 1;
-      if next != record.sequence_number_for_file_and_line + 1 {
-        panic!(
-          "sequence number mismatch: expected {}, got {}",
-          next,
-          record.sequence_number_for_file_and_line + 1
-        );
-      }
-      hid2ic.insert(hid.clone(), next);
-      ogrank2hinvoc.push(HookInvocation {
-        hid: hid.clone(),
-        seqnum: SequenceNumberByFileAndLine(record.sequence_number_for_file_and_line as u32),
-      });
-      if !process_ids.contains(&record.source) {
-        process_ids.push(record.source);
-      }
+  for (ogrank, record) in hook_trace.iter().enumerate() {
+    let hid = HookId::new(
+      format!("{} {}", record.line_number, record.source),
+      FederateId(record.source),
+    ); // "source" is a misnomer. It actually means "local federate" regardless of whether it is the source or destination of the message.
+    let next = hid2ic.get(&hid).unwrap_or(&0) + 1;
+    if next != record.sequence_number_for_file_and_line + 1 {
+      panic!(
+        "sequence number mismatch: expected {}, got {}",
+        next,
+        record.sequence_number_for_file_and_line + 1
+      );
+    }
+    hid2ic.insert(hid.clone(), next);
+    ogrank2hinvoc.push(HookInvocation {
+      hid: hid.clone(),
+      seqnum: SequenceNumberByFileAndLine(record.sequence_number_for_file_and_line as u32),
+    });
+    if !process_ids.contains(&record.source) {
+      process_ids.push(record.source);
     }
   }
-  HookInvocationCounts {
+  let ogrank2hinvoc_len = ogrank2hinvoc.len();
+  let ret = HookInvocationCounts {
     hid2ic,
     ogrank2hinvoc,
     n_processes: process_ids.len(),
-  }
+  };
+  println!("len is {}", ret.len());
+  assert!(ogrank2hinvoc_len == ret.len());
+  ret
 }
 
 #[derive(Debug)]
@@ -253,16 +222,24 @@ fn print_repro_instructions(
   );
 }
 
-pub fn get_traces(
+pub async fn get_traces(
   executable: &Executable,
   tmp: &TempDir,
-  evars: EnvironmentUpdate,
+  evars: EnvironmentUpdate<'_>,
 ) -> Result<Traces, ExecResult> {
   let evarsc = evars.get_evars().clone();
+  println!(
+    "Running {executable} with {evars:?}.",
+    executable = executable,
+    evars = evarsc
+  );
   let run = executable.run(
     evars,
     tmp,
-    Box::new(|s: &str| s.to_lowercase().contains("fail")),
+    Box::new(|s: &str| {
+      println!("DEBUG: {}", s);
+      s.to_lowercase().contains("fail")
+    }),
   );
   if !run.status.is_success() {
     println!("Failed to get correct traces for {executable}.");
@@ -327,6 +304,7 @@ pub async fn run_with_parameters(
   ordserv_port: u16,
   tid: ThreadId,
 ) -> (TempDir, Result<Traces, ExecResult>) {
+  println!("DEBUG: RUN_WITH_PARAMETERS, EXECUTABLE: {:?}", executable);
   assert_compatible(hic, conl);
   let tmp = TempDir::new(scratch);
   let unpacked = conl.to_pairs_sorted(&clr.read().unwrap().clr);
@@ -343,15 +321,21 @@ pub async fn run_with_parameters(
     scratch_dir: tmp.0.clone(),
   };
   ordserv.0.send(Some(precedence)).await.unwrap();
+  println!("DEBUG: RUN_WITH_PARAMETERS, AWAITING EVARS");
   let mut evars = ordserv.1.recv().await.unwrap();
+  println!("DEBUG: RUN_WITH_PARAMETERS, GOT EVARS");
   evars
     .0
     .push((ORDSERV_PORT_ENV_VAR.into(), ordserv_port.to_string().into()));
   evars.0.push((
+    ORDSERV_WAIT_TIMEOUT_MILLISECONDS_ENV_VAR.into(),
+    ORDSERV_WAIT_TIMEOUT_MILLISECONDS.into(),
+  ));
+  evars.0.push((
     C_ORDERING_CLIENT_LIBRARY_PATH_ENV_VAR.into(),
     C_ORDERING_CLIENT_LIBRARY_PATH.into(),
   ));
-  let traces = get_traces(executable, &tmp, EnvironmentUpdate::new(tid, &evars.0));
+  let traces = get_traces(executable, &tmp, EnvironmentUpdate::new(tid, &evars.0)).await;
   (tmp, traces)
 }
 
@@ -392,45 +376,47 @@ mod tests {
       .flatten()
   }
 
-  #[test]
-  fn test_get_counts() {
-    for entry in test_progs() {
-      let counts = get_counts(
-        &Executable::new(entry.path()),
-        &scratch_relpath(),
-        ThreadId(0),
-      );
-      println!("{counts:?}");
-    }
-  }
+  // #[test]
+  // fn test_get_counts() {
+  //   for entry in test_progs() {
+  //     let counts = get_counts(
+  //       &Executable::new(entry.path()),
+  //       &scratch_relpath(),
+  //       ThreadId(0),
+  //     );
+  //     println!("{counts:?}");
+  //   }
+  // }
 
   #[test]
   fn test_get_traces() {
     for entry in test_progs() {
       println!("{entry:?}");
-      let csvs: HashMap<String, Vec<String>> = get_traces(
-        &Executable::new(entry.path()),
-        &TempDir::new(&scratch_relpath()),
-        EnvironmentUpdate::new::<OsString>(ThreadId(0), &[]),
-      )
-      .unwrap()
-      .0
-      .iter_mut()
-      .map(|(name, reader)| {
-        println!("{name:?}");
-        (
-          name.clone(),
-          reader
-            .deserialize()
-            .map(|r| {
-              println!("{r:?}");
-              let r: TraceRecord = r.expect("could not read record");
-              r.event
-            })
-            .collect(),
-        )
-      })
-      .collect();
+      let csvs: HashMap<String, Vec<String>> = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(get_traces(
+          &Executable::new(entry.path()),
+          &TempDir::new(&scratch_relpath()),
+          EnvironmentUpdate::new::<OsString>(ThreadId(0), &[]),
+        ))
+        .unwrap()
+        .0
+        .iter_mut()
+        .map(|(name, reader)| {
+          println!("{name:?}");
+          (
+            name.clone(),
+            reader
+              .deserialize()
+              .map(|r| {
+                println!("{r:?}");
+                let r: TraceRecord = r.expect("could not read record");
+                r.event
+              })
+              .collect(),
+          )
+        })
+        .collect();
       println!("{csvs:?}");
     }
   }
