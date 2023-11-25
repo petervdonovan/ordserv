@@ -331,7 +331,7 @@ pub fn describe_permutable_sets(ats: &AccumulatingTracesState) {
                         )
                         .iter()
                         .map(|it| {
-                            it.len() as f64 / ats.kcs.metadata(tid).ovkey.n_tracepoints as f64
+                            it.len() as f64 / ats.kcs.metadata(tid).out_ovkey.n_tracepoints as f64
                         }),
                     ),
                 )

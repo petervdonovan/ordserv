@@ -1,7 +1,9 @@
 use rayon::prelude::*;
+use streaming_transpositions::StreamingTranspositions;
 
 use std::{
   collections::{hash_map::DefaultHasher, HashMap},
+  ffi::OsString,
   fmt::Display,
   fs::{DirEntry, File},
   hash::{Hash, Hasher},
@@ -18,7 +20,7 @@ use crate::{
   io::{clean, get_commit_hash, get_counts, get_lf_files_non_recursive, get_traces, TempDir},
   outputvector::OutputVectorKey,
   testing::AccumulatingTracesState,
-  DelayParams, HookInvocationCounts, ThreadId, TraceRecord, Traces, CONCURRENCY_LIMIT,
+  HookInvocationCounts, ThreadId, TraceRecord, Traces, CONCURRENCY_LIMIT,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -45,7 +47,6 @@ pub struct InitialState {
   src_commit: CommitHash,
   pub src_files: HashMap<TestId, PathBuf>,
   scratch_dir: PathBuf,
-  delay_params: DelayParams,
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CompiledState {
@@ -60,7 +61,8 @@ pub struct KnownCountsState {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TestMetadata {
   pub hic: HookInvocationCounts,
-  pub ovkey: OutputVectorKey,
+  pub out_ovkey: OutputVectorKey,
+  pub hook_ovkey: OutputVectorKey,
 }
 
 #[derive(Default, Debug, Hash, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
@@ -128,7 +130,7 @@ impl State {
     ret
   }
 
-  pub fn load(src_dir: PathBuf, scratch_dir: PathBuf, delay_params: DelayParams) -> Self {
+  pub fn load(src_dir: PathBuf, scratch_dir: PathBuf) -> Self {
     clean(&scratch_dir);
     let src_commit = get_commit_hash(&src_dir);
     let state_files: Vec<_> = scratch_dir
@@ -179,7 +181,6 @@ impl State {
       src_commit,
       src_files,
       scratch_dir,
-      delay_params,
     })
   }
 
@@ -313,7 +314,7 @@ impl CompiledState {
       let ret = get_traces(
         executable,
         &tmp,
-        crate::env::EnvironmentUpdate::new(tid, &[]),
+        crate::env::EnvironmentUpdate::new::<OsString>(tid, &[]),
       );
       if let Ok(ret) = ret {
         return (tmp, ret);
@@ -336,15 +337,17 @@ impl CompiledState {
           &self.initial.scratch_dir,
           ThreadId(rayon::current_thread_index().unwrap()),
         );
-        let traces = traces_map
-          .0
-          .get_mut("rti.csv")
-          .expect("no trace file named rti.csv")
-          .deserialize()
-          .map(|r| r.expect("could not read record"))
-          .map(|tr| TracePointId::new(&tr));
-        let ovkey = OutputVectorKey::new(traces);
-        (*id, TestMetadata { hic: ic, ovkey })
+        let (hook_trace, out_trace) = traces_map.hooks_and_outs();
+        (
+          *id,
+          TestMetadata {
+            hic: ic,
+            out_ovkey: OutputVectorKey::new(out_trace.into_iter().map(|tr| TracePointId::new(&tr))),
+            hook_ovkey: OutputVectorKey::new(
+              hook_trace.into_iter().map(|tr| TracePointId::new(&tr)),
+            ),
+          },
+        )
       })
       .collect::<HashMap<_, _>>()
   }
@@ -384,7 +387,14 @@ impl KnownCountsState {
   pub fn metadata(&self, id: &TestId) -> &TestMetadata {
     self.metadata.get(id).expect("unknown test id")
   }
-  pub fn delay_params(&self) -> &DelayParams {
-    &self.cs.initial.delay_params
+  pub fn empty_streaming_transpositions_out(&self, tid: &TestId) -> StreamingTranspositions {
+    StreamingTranspositions::new(
+      self.metadata.get(tid).unwrap().og_ov_length_rounded_up(),
+      64,
+      0.0025,
+    )
+  }
+  pub fn empty_streaming_transpositions_hook(&self, tid: &TestId) -> StreamingTranspositions {
+    StreamingTranspositions::new(self.metadata.get(tid).unwrap().hic.len(), 128, 0.01)
   }
 }

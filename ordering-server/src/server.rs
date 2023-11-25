@@ -11,12 +11,13 @@ pub(crate) const PRECEDENCE_FILE_NAME: &str = "ORDSERV_PRECEDENCE_FILE";
 pub(crate) const PRECEDENCE_ID_NAME: &str = "ORDSERV_PRECEDENCE_ID";
 
 pub struct ServerHandle {
-    pub updates_acks: Vec<(
-        mpsc::Sender<Option<Precedence>>,
-        mpsc::Receiver<EnvironmentVariables>,
-    )>,
+    pub updates_acks: Vec<ServerSubHandle>,
     pub join_handle: JoinHandle<()>,
 }
+pub type ServerSubHandle = (
+    mpsc::Sender<Option<Precedence>>,
+    mpsc::Receiver<EnvironmentVariables>,
+);
 
 /// This function spawns a process that assumes that each element of `updates_acks` is managed by a
 /// single sequential process that repeatedly:

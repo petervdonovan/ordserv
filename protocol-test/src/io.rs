@@ -1,59 +1,41 @@
 use std::{
   collections::HashMap,
+  ffi::OsString,
   path::{Path, PathBuf},
   process::Command,
+  sync::{Arc, RwLock},
 };
 
 use csv::ReaderBuilder;
-use ordering_server::FederateId;
-use rand::{
-  distributions::{Alphanumeric, DistString},
-  prelude::Distribution,
+use ordering_server::{
+  server::ServerSubHandle, FederateId, HookInvocation, Precedence, SequenceNumberByFileAndLine,
+  ORDSERV_PORT_ENV_VAR,
 };
+use rand::distributions::{Alphanumeric, DistString};
 
 use crate::{
   env::EnvironmentUpdate,
   exec::{ExecResult, Executable},
   state::CommitHash,
-  DelayParams, DelayVector, DelayVectorRegistry, HookId, HookInvocationCounts, ThreadId,
-  TraceRecord, Traces, DELAY_VECTOR_CHUNK_SIZE,
+  testing::TestRuns,
+  ConstraintList, ConstraintListRegistry, HookId, HookInvocationCounts, ThreadId, TraceRecord,
+  Traces,
 };
+
+const C_ORDERING_CLIENT_LIBRARY_PATH: &str = "./target/debug/libc_ordering_client.so";
+const C_ORDERING_CLIENT_LIBRARY_PATH_ENV_VAR: &str = "C_ORDERING_CLIENT_LIBRARY_PATH";
 
 impl HookInvocationCounts {
   pub fn len(&self) -> usize {
-    self.0.values().map(|it| *it as usize).sum::<usize>()
+    self.hid2ic.values().map(|it| *it as usize).sum::<usize>()
   }
   pub fn is_empty(&self) -> bool {
     self.len() == 0
   }
   pub fn to_vec(&self) -> Vec<(&HookId, &u32)> {
-    let mut keys: Vec<_> = self.0.iter().collect();
+    let mut keys: Vec<_> = self.hid2ic.iter().collect();
     // keys.sort();
     keys
-  }
-}
-
-impl DelayVector {
-  pub fn random(
-    ic: &HookInvocationCounts,
-    rng: &mut rand::rngs::ThreadRng,
-    dp: &DelayParams,
-  ) -> Self {
-    let mut idxs = [0u32; DELAY_VECTOR_CHUNK_SIZE];
-    let mut delta_delays = [0i16; DELAY_VECTOR_CHUNK_SIZE];
-    idxs[0] = rand::distributions::Uniform::try_from(0..ic.len() as u32)
-      .unwrap()
-      .sample(rng);
-    delta_delays[0] =
-      rand::distributions::Uniform::try_from(0..dp.max_expected_wallclock_overhead_ms)
-        .unwrap()
-        .sample(rng);
-    Self {
-      idxs,
-      delta_delays,
-      parent: None,
-      length: ic.len() as u32,
-    }
   }
 }
 
@@ -161,7 +143,7 @@ pub fn get_counts(executable: &Executable, scratch: &Path, tid: ThreadId) -> Hoo
   let rand_subdir = TempDir::new(scratch);
   println!("getting invocationcounts for {}...", executable);
   let mut output = executable.run(
-    EnvironmentUpdate::new(tid, &[]),
+    EnvironmentUpdate::new::<OsString>(tid, &[]),
     &rand_subdir,
     Box::new(|_: &str| false),
   );
@@ -171,7 +153,9 @@ pub fn get_counts(executable: &Executable, scratch: &Path, tid: ThreadId) -> Hoo
     println!("summary of failed run:\n{output}");
     return get_counts(executable, scratch, tid);
   }
-  let mut ret = HashMap::new();
+  let mut hid2ic = HashMap::new();
+  let mut ogrank2hinvoc = Vec::new();
+  let mut process_ids = vec![];
   for lft_file in rand_subdir
     .0
     .read_dir()
@@ -184,7 +168,7 @@ pub fn get_counts(executable: &Executable, scratch: &Path, tid: ThreadId) -> Hoo
       .arg(lft_file.file_name())
       .output()
       .expect("failed to execute trace_to_csv");
-    for record in trace_by_physical_time(
+    for (ogrank, record) in trace_by_physical_time(
       &rand_subdir.0.join(
         lft_file
           .file_name()
@@ -192,12 +176,15 @@ pub fn get_counts(executable: &Executable, scratch: &Path, tid: ThreadId) -> Hoo
           .unwrap()
           .replace(".lft", ".csv"),
       ),
-    ) {
+    )
+    .iter()
+    .enumerate()
+    {
       let hid = HookId::new(
         format!("{} {}", record.line_number, record.source),
         FederateId(record.source),
       ); // "source" is a misnomer. It actually means "local federate" regardless of whether it is the source or destination of the message.
-      let next = ret.get(&hid).unwrap_or(&0) + 1;
+      let next = hid2ic.get(&hid).unwrap_or(&0) + 1;
       if next != record.sequence_number_for_file_and_line + 1 {
         panic!(
           "sequence number mismatch: expected {}, got {}",
@@ -205,10 +192,21 @@ pub fn get_counts(executable: &Executable, scratch: &Path, tid: ThreadId) -> Hoo
           record.sequence_number_for_file_and_line + 1
         );
       }
-      ret.insert(hid, next);
+      hid2ic.insert(hid.clone(), next);
+      ogrank2hinvoc.push(HookInvocation {
+        hid: hid.clone(),
+        seqnum: SequenceNumberByFileAndLine(record.sequence_number_for_file_and_line as u32),
+      });
+      if !process_ids.contains(&record.source) {
+        process_ids.push(record.source);
+      }
     }
   }
-  HookInvocationCounts(ret)
+  HookInvocationCounts {
+    hid2ic,
+    ogrank2hinvoc,
+    n_processes: process_ids.len(),
+  }
 }
 
 #[derive(Debug)]
@@ -313,24 +311,47 @@ pub fn get_traces(
   Ok(Traces(ret))
 }
 
-fn assert_compatible(ic: &HookInvocationCounts, dvec: &DelayVector) {
-  if ic.len() != dvec.length as usize {
-    panic!("ic and dvec correspond to a different number of hook invocations");
+fn assert_compatible(ic: &HookInvocationCounts, conl: &ConstraintList) {
+  if ic.len() != conl.length as usize {
+    panic!("ic and conl correspond to a different number of hook invocations");
   }
 }
 
-pub fn run_with_parameters(
+pub async fn run_with_parameters(
   executable: &Executable,
   scratch: &Path,
-  ic: &HookInvocationCounts,
-  dvec: &DelayVector,
+  hic: &HookInvocationCounts,
+  conl: &ConstraintList,
+  clr: Arc<RwLock<TestRuns>>,
+  ordserv: &mut ServerSubHandle,
+  ordserv_port: u16,
   tid: ThreadId,
-  dvr: &DelayVectorRegistry,
 ) -> (TempDir, Result<Traces, ExecResult>) {
-  assert_compatible(ic, dvec);
+  assert_compatible(hic, conl);
   let tmp = TempDir::new(scratch);
-  let evars = EnvironmentUpdate::delayed(ic, dvec, &tmp, tid, dvr);
-  let traces = get_traces(executable, &tmp, evars);
+  let unpacked = conl.to_pairs_sorted(&clr.read().unwrap().clr);
+  let mut sender2waiters = HashMap::new();
+  for (waiter, sender) in unpacked {
+    sender2waiters
+      .entry(hic.ogrank2hinvoc[sender.idx()].clone())
+      .or_insert_with(Vec::new)
+      .push(hic.ogrank2hinvoc[waiter.idx()].clone());
+  }
+  let precedence = Precedence {
+    sender2waiters,
+    n_connections: hic.n_processes,
+    scratch_dir: tmp.0.clone(),
+  };
+  ordserv.0.send(Some(precedence)).await.unwrap();
+  let mut evars = ordserv.1.recv().await.unwrap();
+  evars
+    .0
+    .push((ORDSERV_PORT_ENV_VAR.into(), ordserv_port.to_string().into()));
+  evars.0.push((
+    C_ORDERING_CLIENT_LIBRARY_PATH_ENV_VAR.into(),
+    C_ORDERING_CLIENT_LIBRARY_PATH.into(),
+  ));
+  let traces = get_traces(executable, &tmp, EnvironmentUpdate::new(tid, &evars.0));
   (tmp, traces)
 }
 
@@ -352,7 +373,7 @@ mod tests {
   use crate::TraceRecord;
 
   use super::*;
-  use std::{fs::DirEntry, path::PathBuf};
+  use std::{ffi::OsString, fs::DirEntry, path::PathBuf};
 
   fn tests_relpath() -> PathBuf {
     PathBuf::from("../lf-264/test/C/bin")
@@ -390,7 +411,7 @@ mod tests {
       let csvs: HashMap<String, Vec<String>> = get_traces(
         &Executable::new(entry.path()),
         &TempDir::new(&scratch_relpath()),
-        EnvironmentUpdate::new(ThreadId(0), &[]),
+        EnvironmentUpdate::new::<OsString>(ThreadId(0), &[]),
       )
       .unwrap()
       .0

@@ -8,10 +8,11 @@ use serde::{Deserialize, Serialize};
 pub struct OgRank(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CurRank(pub u32);
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct NTraces(pub u32);
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct CumSum(pub u32);
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OgRank2CurRank(pub Vec<CurRank>);
 impl OgRank2CurRank {
     fn unpack(&self) -> Vec<(OgRank, CurRank)> {
@@ -27,6 +28,10 @@ impl OgRank {
         self.0 as usize
     }
 }
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct HookOgRank2CurRank(pub OgRank2CurRank);
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct OutOgRank2CurRank(pub OgRank2CurRank);
 
 pub struct Orderings<'a> {
     pub before_and_afters: &'a [HashSet<OgRank>],
@@ -62,7 +67,7 @@ impl<'a> Orderings<'a> {
         ]
     }
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamingTranspositions {
     og_trace_length: usize,
     search_radius: i32,
@@ -161,6 +166,18 @@ impl StreamingTranspositions {
     }
     pub fn traces_recorded(&self) -> NTraces {
         self.traces_recorded
+    }
+    /// Goes into an infinite loop if all pairs have been observed.
+    pub fn random_unobserved_ordering(&self) -> (OgRank, OgRank) {
+        let mut rng = rand::thread_rng();
+        loop {
+            let i = rng.gen_range(0..self.og_trace_length);
+            for j in i..self.og_trace_length {
+                if !self.before_and_afters[i].contains(&OgRank(j as u32)) {
+                    return (OgRank(j as u32), OgRank(i as u32));
+                }
+            }
+        }
     }
     pub fn check_invariants_expensive(&self) {
         for (idx, before_and_after) in self.before_and_afters.iter().enumerate() {

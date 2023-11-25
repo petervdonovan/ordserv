@@ -5,18 +5,18 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use streaming_transpositions::{CurRank, OgRank};
+use streaming_transpositions::{CurRank, OgRank, OgRank2CurRank};
 
 const OUTPUT_VECTOR_CHUNK_SIZE: usize = 32;
 
 use crate::{
   state::{TestMetadata, TracePointId},
-  testing::{SuccessfulRun, TraceHasher},
+  testing::{TraceHash, TraceHasher},
   TraceRecord,
 };
 impl TestMetadata {
   pub fn og_ov_length_rounded_up(&self) -> usize {
-    ((self.ovkey.n_tracepoints + OUTPUT_VECTOR_CHUNK_SIZE - 1) / OUTPUT_VECTOR_CHUNK_SIZE)
+    ((self.out_ovkey.n_tracepoints + OUTPUT_VECTOR_CHUNK_SIZE - 1) / OUTPUT_VECTOR_CHUNK_SIZE)
       * OUTPUT_VECTOR_CHUNK_SIZE
   }
 }
@@ -134,9 +134,8 @@ impl OutputVectorKey {
   pub fn vectorfy(
     &self,
     records: impl Iterator<Item = TraceRecord>,
-    ovr: OutputVectorRegistry,
-  ) -> SuccessfulRun {
-    let mut ov = vec![0; self.n_tracepoints];
+  ) -> (OgRank2CurRank, TraceHash, VectorfyStatus) {
+    let mut ov = vec![CurRank(0); self.n_tracepoints];
     let mut th = TraceHasher::default();
     let mut status = VectorfyStatus::Ok;
     let mut subidxs = HashMap::new();
@@ -145,7 +144,7 @@ impl OutputVectorKey {
       if let Some(idxs) = self.map.get(&tpi) {
         subidxs.entry(tpi).or_insert(0);
         if let Some(idx) = idxs.get(subidxs[&tpi]) {
-          ov[idx.0 as usize] = rank as u32;
+          ov[idx.0 as usize] = CurRank(rank as u32);
         } else {
           status = VectorfyStatus::ExtraTracePointId;
         }
@@ -154,7 +153,7 @@ impl OutputVectorKey {
       }
       th.update(&tr);
     }
-    (OutputVector::new(ov, ovr), th.finish(), status)
+    (OgRank2CurRank(ov), th.finish(), status)
   }
 }
 #[derive(Debug, Serialize, Deserialize)]
@@ -169,21 +168,21 @@ fn compute_hash(ovn: OutputVectorNode) -> OutputVectorNode {
 }
 
 impl OutputVector {
-  fn new(ov: Vec<u32>, ovr: OutputVectorRegistry) -> Self {
+  pub fn new(ov: OgRank2CurRank, ovr: OutputVectorRegistry) -> Self {
     let mut ovrmut = ovr.write().unwrap();
-    let data = Self::new_rec(&ov, &mut ovrmut, 0, ov.len() as i32);
+    let data = Self::new_rec(&ov.0, &mut ovrmut, 0, ov.0.len() as i32);
     Self {
       data,
-      len: ov.len(),
+      len: ov.0.len(),
     }
   }
-  fn new_rec(ov: &[u32], ovr: &mut OvrReg, start: usize, default: i32) -> OutputVectorNodeIdx {
+  fn new_rec(ov: &[CurRank], ovr: &mut OvrReg, start: usize, default: i32) -> OutputVectorNodeIdx {
     // Remark: it is impressive that after copilot generated this function, only small edits were
     // required.
     if ov.len() <= OUTPUT_VECTOR_CHUNK_SIZE {
       let mut ranks = [default; OUTPUT_VECTOR_CHUNK_SIZE];
       for (i, rank) in ov.iter().enumerate() {
-        ranks[i] = (*rank as i32) - (start as i32);
+        ranks[i] = (rank.0 as i32) - (start as i32);
       }
       let chunk = OutputVectorNode::Leaf(OutputVectorChunk { rel_ranks: ranks });
       if let Some(id) = ovr.node2idx.get(&compute_hash(chunk)) {
@@ -288,7 +287,8 @@ mod tests {
       new_trace[start..end.max(length)].shuffle(&mut rand::thread_rng());
     }
     let ovk = OutputVectorKey::new(og_trace.into_iter().map(|it| TracePointId::new(&it)));
-    let (ov, _, _) = ovk.vectorfy(new_trace.clone().into_iter(), Arc::clone(&ovr));
+    let (ov, _, _) = ovk.vectorfy(new_trace.clone().into_iter());
+    let ov = OutputVector::new(ov, Arc::clone(&ovr));
     let ov = ov.unpack(&ovr);
     let new_trace_og_ranks = new_trace
       .iter()

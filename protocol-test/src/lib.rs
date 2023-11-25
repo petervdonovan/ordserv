@@ -6,13 +6,14 @@ pub mod testing;
 
 use std::{collections::HashMap, fs::File};
 
-use ordering_server::HookId;
+use ordering_server::{HookId, HookInvocation};
 
 use csv::Reader;
 use once_cell::sync::OnceCell;
 #[cfg(test)]
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
+use streaming_transpositions::OgRank;
 
 pub static CONCURRENCY_LIMIT: OnceCell<usize> = OnceCell::new();
 
@@ -23,7 +24,11 @@ const MAX_ERROR_LINES: usize = 20;
 pub struct ThreadId(usize);
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct HookInvocationCounts(HashMap<HookId, u32>);
+pub struct HookInvocationCounts {
+  hid2ic: HashMap<HookId, u32>,
+  ogrank2hinvoc: Vec<HookInvocation>,
+  n_processes: usize,
+}
 
 pub mod exec {
   use std::{
@@ -40,7 +45,7 @@ pub mod exec {
 
   use crate::{env::EnvironmentUpdate, io::TempDir, TEST_TIMEOUT_SECS};
 
-  #[derive(Debug, Serialize, Deserialize)]
+  #[derive(Debug, Serialize, Deserialize, Clone)]
   pub struct Executable(PathBuf);
 
   #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
@@ -217,13 +222,12 @@ pub mod exec {
 }
 
 pub mod env {
-  use std::io::Write;
   use std::sync::Mutex;
   use std::{collections::HashMap, ffi::OsString};
 
+  use crate::io::TempDir;
+  use crate::ThreadId;
   use crate::CONCURRENCY_LIMIT;
-  use crate::{io::TempDir, DelayVector, HookInvocationCounts};
-  use crate::{DelayVectorRegistry, ThreadId};
 
   const LF_FED_PORT: &str = "LF_FED_PORT";
   const LF_FED_DELAYS: &str = "LF_FED_DELAYS";
@@ -245,7 +249,7 @@ pub mod env {
   static PORTS_BY_TID: Lazy<Vec<OsString>> = Lazy::new(|| {
     let mut ret = Vec::new();
     for _ in 0..(*CONCURRENCY_LIMIT.wait()) {
-      ret.push(get_valid_port());
+      ret.push(OsString::from(get_valid_port().to_string()));
     }
     ret
   });
@@ -253,9 +257,10 @@ pub mod env {
   const REQUIRED_CONTIGUOUS_PORTS: u16 = 24;
   const MAX_REQUIRED_PORTS: u16 = 36;
 
-  fn get_valid_port() -> OsString {
+  pub fn get_valid_port() -> u16 {
     // 1024 is the first valid port, and one test may use a few ports (by trying them in sequence)
-    // if they have physical connections. Assume the tests do not use more than 10 ports each.
+    // if they have physical connections. Assume the tests do not use more than MAX_REQUIRED_PORTS
+    // ports each.
     let mut open_ports_idx = match OPEN_PORTS_IDX.lock() {
       Ok(guard) => guard,
       Err(poisoned) => {
@@ -273,15 +278,13 @@ pub mod env {
       current += 1;
     }
     *open_ports_idx = current + (MAX_REQUIRED_PORTS as usize);
-    let port = OPEN_PORTS[current];
-    // An IndexOutOfBounds exception around here indicates that we are trying to open too many sockets
-    OsString::from(port.to_string())
+    OPEN_PORTS[current]
   }
 
-  pub fn stringify_dvec(dvec: &[(u32, i16)], offset: u32) -> String {
+  pub fn stringify_dvec(conl: &[(u32, i16)], offset: u32) -> String {
     let mut ret = String::new();
-    ret.push_str(&format!("{}\n", dvec.len()));
-    for (idx, delay) in dvec {
+    ret.push_str(&format!("{}\n", conl.len()));
+    for (idx, delay) in conl {
       let adjusted = ((*idx as i32) - (offset as i32)) as u32;
       ret.push_str(&format!("{} {}\n", adjusted, delay));
     }
@@ -289,10 +292,13 @@ pub mod env {
   }
 
   impl<'a> EnvironmentUpdate<'a> {
-    pub fn new(tid: ThreadId, tups: &[(&str, &str)]) -> Self {
-      let mut evars = HashMap::new();
+    pub fn new<T>(tid: ThreadId, tups: &[(T, T)]) -> Self
+    where
+      T: Into<OsString> + Clone,
+    {
+      let mut evars: HashMap<OsString, OsString> = HashMap::new();
       for (k, v) in tups {
-        evars.insert(OsString::from(*k), OsString::from(*v));
+        evars.insert(k.clone().into(), v.clone().into());
       }
       evars.insert(OsString::from(LF_FED_PORT), PORTS_BY_TID[tid.0].clone());
       evars.insert(OsString::from(LF_FED_DELAYS), OsString::new());
@@ -309,40 +315,6 @@ pub mod env {
     pub fn get_evars(&self) -> &HashMap<OsString, OsString> {
       &self.evars
     }
-
-    pub fn delayed(
-      ic: &HookInvocationCounts,
-      dvec: &DelayVector,
-      tmp: &TempDir,
-      tid: ThreadId,
-      dvr: &DelayVectorRegistry,
-    ) -> Self {
-      let mut ret = Self::new(tid, &[]);
-      let mut current: usize = 0;
-      let mut cumsum: u32 = 0;
-      let delay = tmp.rand_file("delay");
-      let mut delay_f = std::fs::File::create(&delay).expect("could not create delay file");
-      let pairs_sorted = dvec.to_pairs_sorted(dvr);
-      writeln!(delay_f, "{}", ic.0.len()).expect("could not write delay file");
-      for (hid, k) in ic.to_vec() {
-        let start = current;
-        while current < pairs_sorted.len() && pairs_sorted[current].0 < cumsum + *k {
-          current += 1;
-        }
-        write!(
-          delay_f,
-          "{}\n{}",
-          hid,
-          stringify_dvec(&pairs_sorted[start..current], cumsum),
-        )
-        .expect("could not write delay file");
-        cumsum += *k;
-      }
-      ret
-        .evars
-        .insert(OsString::from(LF_FED_DELAYS), delay.into_os_string());
-      ret
-    }
   }
 }
 
@@ -351,44 +323,72 @@ pub struct Traces(HashMap<String, Reader<File>>);
 
 const DELAY_VECTOR_CHUNK_SIZE: usize = 8;
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ConstraintListIndex(u32);
+pub type ConstraintListRegistry = Vec<ConstraintList>;
 #[derive(Debug, Serialize, Deserialize)]
-pub struct DelayVectorIndex(u32);
-pub type DelayVectorRegistry = Vec<DelayVector>;
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DelayVector {
-  idxs: [u32; DELAY_VECTOR_CHUNK_SIZE],
-  delta_delays: [i16; DELAY_VECTOR_CHUNK_SIZE],
-  parent: Option<DelayVectorIndex>,
+pub struct ConstraintList {
+  waiter_idxs: [u32; DELAY_VECTOR_CHUNK_SIZE],
+  notifier_delta_idxs: [i16; DELAY_VECTOR_CHUNK_SIZE],
+  parent: Option<ConstraintListIndex>,
   length: u32,
 }
 
-impl DelayVector {
-  pub fn num_of_pairs(&self, dvr: &DelayVectorRegistry) -> usize {
+impl ConstraintList {
+  pub fn singleton(waiter_idx: OgRank, notifier_idx: OgRank, length: u32) -> Self {
+    let mut waiter_idxs = [0; DELAY_VECTOR_CHUNK_SIZE];
+    let mut notifier_delta_idxs = [0; DELAY_VECTOR_CHUNK_SIZE];
+    waiter_idxs[0] = waiter_idx.0;
+    notifier_delta_idxs[0] = (notifier_idx.0 as i32 - waiter_idx.0 as i32) as i16;
+    Self {
+      waiter_idxs,
+      notifier_delta_idxs,
+      parent: None,
+      length,
+    }
+  }
+  pub fn num_of_pairs(&self, clr: &ConstraintListRegistry) -> usize {
     let mut current = Some(self);
     let mut ret = 0;
     while let Some(node) = current {
       ret += DELAY_VECTOR_CHUNK_SIZE;
-      current = node.parent.as_ref().map(|idx| &dvr[idx.0 as usize]);
+      current = node.parent.as_ref().map(|idx| &clr[idx.0 as usize]);
     }
     ret
   }
-  pub fn to_pairs_sorted(&self, dvr: &DelayVectorRegistry) -> Vec<(u32, i16)> {
+  pub fn to_pairs_sorted(&self, clr: &ConstraintListRegistry) -> Vec<(OgRank, OgRank)> {
     let mut current = Some(self);
     let mut ret = Vec::new();
     while let Some(node) = current {
       for i in 0..DELAY_VECTOR_CHUNK_SIZE {
-        ret.push((node.idxs[i], node.delta_delays[i]));
+        ret.push((
+          OgRank(node.waiter_idxs[i]),
+          OgRank((node.waiter_idxs[i] as i32 + node.notifier_delta_idxs[i] as i32) as u32),
+        ));
       }
-      current = node.parent.as_ref().map(|idx| &dvr[idx.0 as usize]);
+      current = node.parent.as_ref().map(|idx| &clr[idx.0 as usize]);
     }
     ret.sort_by_key(|(idx, _)| *idx);
     ret
   }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DelayParams {
-  pub max_expected_wallclock_overhead_ms: i16,
+impl Traces {
+  pub fn hooks_and_outs(&mut self) -> (Vec<TraceRecord>, Vec<TraceRecord>) {
+    let mut raw_traces: Vec<TraceRecord> = self
+      .0
+      .values_mut()
+      .flat_map(|reader| reader.deserialize())
+      .map(|r| r.expect("could not read record"))
+      .collect();
+    raw_traces.sort_by_key(|tr| tr.elapsed_physical_time);
+    let raw_traces_rti_only: Vec<_> = raw_traces
+      .iter()
+      .filter(|tr| tr.source == -1)
+      .cloned()
+      .collect();
+    (raw_traces, raw_traces_rti_only)
+  }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
