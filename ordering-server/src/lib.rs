@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub mod client;
 mod connection;
 pub mod server;
+mod tcpconnectionprovider;
 
 pub const ORDSERV_PORT_ENV_VAR: &str = "ORDSERV_PORT";
 pub const ORDSERV_WAIT_TIMEOUT_MILLISECONDS_ENV_VAR: &str = "ORDSERV_WAIT_TIMEOUT";

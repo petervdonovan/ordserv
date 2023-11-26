@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 
 use log::{debug, info, warn};
-use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use crate::{connection::Connection, EnvironmentVariables, FederateId, Precedence, PrecedenceId};
+use crate::{
+    connection::Connection, tcpconnectionprovider::forwarding, EnvironmentVariables, FederateId,
+    Precedence, PrecedenceId,
+};
 
 pub(crate) const PRECEDENCE_FILE_NAME: &str = "ORDSERV_PRECEDENCE_FILE";
 pub(crate) const PRECEDENCE_ID_NAME: &str = "ORDSERV_PRECEDENCE_ID";
@@ -156,44 +158,6 @@ fn environment_variables_for_clients(
     ])
 }
 
-async fn forward_tcp_connections(
-    listener: TcpListener,
-    connection_senders: Vec<mpsc::Sender<(Connection, FederateId, u32)>>,
-    port: u16,
-) {
-    loop {
-        debug!("Listening for connections on port {}", port);
-        let mut connection = Connection::new(listener.accept().await.unwrap().0);
-        info!("Accepted connection");
-        let frame = connection.read_frame().await;
-        match frame {
-            Some(frame) => {
-                debug!("Received initial frame: {:?}", frame);
-                if frame.hook_id[0] != b'S' {
-                    eprintln!(
-                        "Received frame with hook_id {:?} instead of 'S'",
-                        frame.hook_id
-                    );
-                    connection.close().await;
-                    eprintln!("Forcibly closed connection; client should crash.");
-                    continue;
-                }
-                if connection_senders[frame.precedence_id as usize]
-                    .send((connection, FederateId(frame.federate_id), frame.run_id))
-                    .await
-                    .is_err()
-                {
-                    debug!("Connection sender dropped; closing channel.");
-                    break;
-                }
-            }
-            None => {
-                eprintln!("A client disconnected without sending a frame");
-            }
-        }
-    }
-}
-
 async fn run_server(
     port: u16,
     updates_acks: Vec<(
@@ -201,11 +165,13 @@ async fn run_server(
         mpsc::Sender<EnvironmentVariables>,
     )>,
 ) -> JoinHandle<()> {
-    let mut connection_senders: Vec<mpsc::Sender<(Connection, FederateId, u32)>> = Vec::new();
     let mut handles = Vec::with_capacity(updates_acks.len() + 1);
-    for (precid, (update_receiver, ack_sender)) in updates_acks.into_iter().enumerate() {
-        let (connection_sender, connection_receiver) = mpsc::channel(1);
-        connection_senders.push(connection_sender);
+    let connection_receivers = forwarding(port, updates_acks.len()).await;
+    for (precid, ((update_receiver, ack_sender), connection_receiver)) in updates_acks
+        .into_iter()
+        .zip(connection_receivers.into_iter())
+        .enumerate()
+    {
         handles.push(tokio::spawn(process_precedence_stream(
             update_receiver,
             ack_sender,
@@ -213,8 +179,6 @@ async fn run_server(
             PrecedenceId(precid as u32),
         )));
     }
-    let listener = TcpListener::bind(("127.0.0.1", port)).await.unwrap();
-    let _drop_me = tokio::spawn(forward_tcp_connections(listener, connection_senders, port));
     tokio::spawn(async move {
         for handle in handles {
             handle.await.unwrap();
