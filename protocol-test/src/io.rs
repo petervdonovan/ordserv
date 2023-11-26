@@ -23,7 +23,7 @@ use crate::{
 const C_ORDERING_CLIENT_LIBRARY_PATH: &str = "../../target/release/libc_ordering_client.so";
 const C_ORDERING_CLIENT_LIBRARY_PATH_ENV_VAR: &str = "C_ORDERING_CLIENT_LIBRARY_PATH";
 
-const ORDSERV_WAIT_TIMEOUT_MILLISECONDS: &str = "1500";
+const ORDSERV_WAIT_TIMEOUT_MILLISECONDS: &str = "25";
 
 pub struct RunContext<'a> {
   pub scratch: &'a Path,
@@ -231,7 +231,9 @@ pub async fn get_traces(
   let run = executable.run(
     evars,
     tmp,
-    Box::new(|s: &str| s.to_lowercase().contains("fail")),
+    // Box::new(|_: &_| true),
+    // Box::new(|s: &str| s.to_lowercase().contains("fail")),
+    Box::new(|_: &_| false),
   );
   if !run.status.is_success() {
     println!("Failed to get correct traces for {executable}.");

@@ -43,9 +43,11 @@ impl Client {
         addr: T,
         mut callback: Box<dyn FnMut(Frame) + Send>,
     ) -> (Client, JoinHandle<()>) {
+        info!(target: "client", "Connecting to {:?}...", addr);
         let socket = TcpStream::connect(&addr)
             .await
             .unwrap_or_else(|e| panic!("Failed to connect to {:?}: {}", addr, e));
+        info!(target: "client", "Connected to {:?}", addr);
         let (mut read, write) = Connection::new(socket).into_split();
         (
             Client { connection: write },

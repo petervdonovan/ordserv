@@ -49,11 +49,13 @@ async fn process_precedence_stream(
     mut connection_receiver: mpsc::Receiver<(Connection, FederateId)>,
     precid: PrecedenceId,
 ) {
-    let mut jhs = Vec::new();
-    while let Some(precedence) = precedence_stream.recv().await.unwrap() {
+    let mut jhs: Vec<JoinHandle<()>> = Vec::new();
+    let mut outer_precedence = precedence_stream.recv().await.unwrap_or(None);
+    'outer: while let Some(precedence) = outer_precedence.take() {
         debug!("Received precedence");
-        // Cancel all green threads from the last iteration of the loop as soon as a new precedence object is received
-        jhs.clear();
+        for jh in jhs.drain(..) {
+            jh.abort();
+        }
         acks.send(environment_variables_for_clients(&precedence, precid))
             .await
             .unwrap();
@@ -61,11 +63,19 @@ async fn process_precedence_stream(
         let mut writers = HashMap::new();
         let mut readers = HashMap::new();
         for _ in 0..precedence.n_connections {
-            let (connection, fedid) = connection_receiver.recv().await.unwrap();
-            debug!("Received connection from {:?}", fedid);
-            let (reader, writer) = connection.into_split();
-            writers.insert(fedid, writer);
-            readers.insert(fedid, reader);
+            tokio::select! {
+                new_connection = connection_receiver.recv() => {
+                    let (connection, fedid) = new_connection.unwrap();
+                    debug!("Received connection from {:?}", fedid);
+                    let (reader, writer) = connection.into_split();
+                    writers.insert(fedid, writer);
+                    readers.insert(fedid, reader);
+                }
+                new_precedence = precedence_stream.recv() => {
+                    outer_precedence = new_precedence.unwrap_or(None);
+                    continue 'outer;
+                }
+            }
         }
         info!("All connections received");
         let (send_frames, mut recv_frames) = mpsc::channel(1);
@@ -105,9 +115,9 @@ async fn process_precedence_stream(
             }
         }));
         debug!("Awaiting a new precedence");
+        outer_precedence = precedence_stream.recv().await.unwrap_or(None);
     }
     debug!("Received None from precedence stream");
-    drop(jhs);
 }
 
 fn environment_variables_for_clients(

@@ -55,6 +55,7 @@ pub struct ClientAndJoinHandle {
 /// return value of this function; it is already protected by a mutex internally.
 #[no_mangle]
 pub unsafe extern "C" fn start_client(fedid: c_int) -> ClientAndJoinHandle {
+    // simple_logger::init().unwrap();
     println!("Starting client");
     #[allow(clippy::unnecessary_cast)]
     let (client, join_handle) = ordering_server::client::BlockingClient::start(
