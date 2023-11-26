@@ -246,10 +246,11 @@ pub async fn get_traces(
     .flatten()
     .filter(|it| it.file_name().to_str().unwrap().ends_with(".lft"))
   {
-    Command::new("trace_to_csv")
+    tokio::process::Command::new("trace_to_csv")
       .current_dir(&tmp.0)
       .arg(entry.file_name())
       .output()
+      .await
       .expect("failed to execute trace_to_csv");
   }
   let mut ret = HashMap::new();
