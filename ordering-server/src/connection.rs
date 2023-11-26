@@ -42,7 +42,7 @@ unsafe impl BufMut for FrameBuffer {
 impl ReadConnection {
     pub async fn read_frame(&mut self) -> Option<Frame> {
         debug!("Reading frame...");
-        if self.stream.read_buf(&mut self.buffer).await.unwrap() == 0 {
+        if self.stream.read_buf(&mut self.buffer).await.unwrap_or(0) == 0 {
             return None;
         }
         debug!("Got frame");
@@ -70,7 +70,10 @@ impl WriteConnection {
             .write_all(&unsafe { std::mem::transmute::<Frame, [u8; FRAME_SIZE]>(frame) })
             .await
             .unwrap();
-        self.stream.flush().await.unwrap();
+        let result = self.stream.flush().await;
+        if let Err(e) = result {
+            debug!("Failed to flush frame: {:?}", e);
+        }
     }
 }
 impl Connection {

@@ -7,7 +7,7 @@ use ordering_server::{
 
 // use simple_logger::SimpleLogger;
 
-const PORT: u16 = 8080;
+const PORT: u16 = 15045;
 
 fn compile_and_run(name: String, runtime_evars: &EnvironmentVariables) -> Child {
     let mut child = Command::new("gcc")
@@ -41,7 +41,7 @@ fn compile_and_run(name: String, runtime_evars: &EnvironmentVariables) -> Child 
 #[tokio::main]
 async fn main() {
     // SimpleLogger::new().init().unwrap();
-    let mut server_handle = server::run(PORT, 1);
+    let mut server_handle = server::run(PORT, 1).await;
     let precedence = Precedence::from_list(
         3,
         // Athe A0 B0 Bwords B0 A1 C0 Cof C0 B1 Bthis A1 B1 C1 Csentence C1 B1 C1 A2 Bare B2 C1 Cordered C1 A3 Aby A4 C2 Cthe C2' A4 Aordering A4' B5 Bserver B6 C2.

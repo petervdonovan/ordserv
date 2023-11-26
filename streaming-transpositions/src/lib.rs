@@ -181,8 +181,9 @@ impl StreamingTranspositions {
         let mut rng = rand::thread_rng();
         loop {
             let i = rng.gen_range(0..self.og_trace_length);
-            for j in i..self.og_trace_length {
+            for j in (i + 1)..self.og_trace_length {
                 if !self.before_and_afters[i].contains(&OgRank(j as u32)) {
+                    println!("DEBUG: i = {}, j = {}", i, j);
                     return (OgRank(j as u32), OgRank(i as u32));
                 }
             }

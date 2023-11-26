@@ -39,11 +39,13 @@ pub struct BlockingClient {
 }
 
 impl Client {
-    pub async fn start<T: ToSocketAddrs>(
+    pub async fn start<T: ToSocketAddrs + std::fmt::Debug>(
         addr: T,
         mut callback: Box<dyn FnMut(Frame) + Send>,
     ) -> (Client, JoinHandle<()>) {
-        let socket = TcpStream::connect(addr).await.unwrap();
+        let socket = TcpStream::connect(&addr)
+            .await
+            .unwrap_or_else(|e| panic!("Failed to connect to {:?}: {}", addr, e));
         let (mut read, write) = Connection::new(socket).into_split();
         (
             Client { connection: write },
@@ -70,7 +72,9 @@ impl Client {
 }
 
 impl ChannelClient {
-    pub async fn start<T: ToSocketAddrs>(addr: T) -> (ChannelClient, JoinHandle<()>) {
+    pub async fn start<T: ToSocketAddrs + std::fmt::Debug>(
+        addr: T,
+    ) -> (ChannelClient, JoinHandle<()>) {
         let (frames_sender, frames_receiver) = mpsc::channel(1);
         let (client, join_handle) = Client::start(
             addr,
@@ -94,7 +98,7 @@ impl ChannelClient {
 }
 
 impl BlockingClient {
-    pub fn start<T: ToSocketAddrs>(
+    pub fn start<T: ToSocketAddrs + std::fmt::Debug>(
         addr: T,
         federate_id: i32,
         wait_timeout: Duration,
@@ -171,7 +175,7 @@ impl BlockingClient {
         self.tracepoint_maybe_wait(hook_invocation.clone());
         self.tracepoint_maybe_notify(hook_invocation);
     }
-    fn get_client<T: ToSocketAddrs>(
+    fn get_client<T: ToSocketAddrs + std::fmt::Debug>(
         rt: &tokio::runtime::Runtime,
         addr: T,
         ok_to_proceed: Arc<Mutex<HashSet<HookInvocation>>>,

@@ -22,7 +22,7 @@ use crate::{
   Traces,
 };
 
-const C_ORDERING_CLIENT_LIBRARY_PATH: &str = "./target/debug/libc_ordering_client.so";
+const C_ORDERING_CLIENT_LIBRARY_PATH: &str = "../../target/release/libc_ordering_client.so";
 const C_ORDERING_CLIENT_LIBRARY_PATH_ENV_VAR: &str = "C_ORDERING_CLIENT_LIBRARY_PATH";
 
 const ORDSERV_WAIT_TIMEOUT_MILLISECONDS: &str = "1500";
@@ -153,7 +153,8 @@ pub fn get_counts(hook_trace: &[TraceRecord]) -> HookInvocationCounts {
     let next = hid2ic.get(&hid).unwrap_or(&0) + 1;
     if next != record.sequence_number_for_file_and_line + 1 {
       panic!(
-        "sequence number mismatch: expected {}, got {}",
+        "sequence number mismatch at line {}: expected {}, got {}",
+        record.line_number,
         next,
         record.sequence_number_for_file_and_line + 1
       );
@@ -202,7 +203,7 @@ impl TempDir {
 
 impl Drop for TempDir {
   fn drop(&mut self) {
-    std::fs::remove_dir_all(&self.0).expect("failed to remove random subdir");
+    // std::fs::remove_dir_all(&self.0).expect("failed to remove random subdir");
   }
 }
 
@@ -236,10 +237,7 @@ pub async fn get_traces(
   let run = executable.run(
     evars,
     tmp,
-    Box::new(|s: &str| {
-      println!("DEBUG: {}", s);
-      s.to_lowercase().contains("fail")
-    }),
+    Box::new(|s: &str| s.to_lowercase().contains("fail")),
   );
   if !run.status.is_success() {
     println!("Failed to get correct traces for {executable}.");
@@ -309,7 +307,14 @@ pub async fn run_with_parameters(
   let tmp = TempDir::new(scratch);
   let unpacked = conl.to_pairs_sorted(&clr.read().unwrap().clr);
   let mut sender2waiters = HashMap::new();
-  for (waiter, sender) in unpacked {
+  println!(
+    "DEBUG: RUN_WITH_PARAMETERS, conl: {:?}, unpacked: {:?}",
+    conl, unpacked
+  );
+  for (waiter, sender) in unpacked
+    .into_iter()
+    .filter(|(waiter, sender)| waiter != sender)
+  {
     sender2waiters
       .entry(hic.ogrank2hinvoc[sender.idx()].clone())
       .or_insert_with(Vec::new)

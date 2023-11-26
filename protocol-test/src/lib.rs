@@ -17,7 +17,7 @@ use streaming_transpositions::OgRank;
 
 pub static CONCURRENCY_LIMIT: OnceCell<usize> = OnceCell::new();
 
-const TEST_TIMEOUT_SECS: u64 = 2;
+const TEST_TIMEOUT_SECS: u64 = 5;
 const MAX_ERROR_LINES: usize = 20;
 
 #[derive(Debug, Clone, Copy)]
@@ -164,7 +164,10 @@ pub mod exec {
         let selected_output: Vec<String> = BufReader::new(stdout.unwrap())
           .lines()
           .map(|l| l.expect("failed to read line of output"))
-          .filter(|s| output_filter(s))
+          .filter(|s| {
+            print!("{}", s);
+            output_filter(s)
+          })
           .collect();
         if let Err(e) = tselected_output.send(selected_output) {
           eprintln!("failed to send output of child process {pid}: {:?}", e);
@@ -174,7 +177,11 @@ pub mod exec {
       thread::spawn(move || {
         let err: Vec<String> = BufReader::new(stderr.unwrap())
           .lines()
-          .map(|l| l.expect("failed to read line of output"))
+          .map(|l| {
+            let s = l.expect("failed to read line of output");
+            eprintln!("{}: {}", pid, s);
+            s
+          })
           .take(crate::MAX_ERROR_LINES)
           .collect();
         if let Err(e) = terr.send(err.join("\n")) {
@@ -230,7 +237,6 @@ pub mod env {
   use crate::CONCURRENCY_LIMIT;
 
   const LF_FED_PORT: &str = "LF_FED_PORT";
-  const LF_FED_DELAYS: &str = "LF_FED_DELAYS";
 
   #[derive(Debug)]
   pub struct EnvironmentUpdate<'a> {
@@ -294,14 +300,15 @@ pub mod env {
   impl<'a> EnvironmentUpdate<'a> {
     pub fn new<T>(tid: ThreadId, tups: &[(T, T)]) -> Self
     where
-      T: Into<OsString> + Clone,
+      T: Into<OsString> + Clone + std::fmt::Debug,
     {
       let mut evars: HashMap<OsString, OsString> = HashMap::new();
       for (k, v) in tups {
+        println!("DEBUG: tups = {k:?} {v:?}");
         evars.insert(k.clone().into(), v.clone().into());
       }
+      println!("DEBUG: evars = {:?}", evars);
       evars.insert(OsString::from(LF_FED_PORT), PORTS_BY_TID[tid.0].clone());
-      evars.insert(OsString::from(LF_FED_DELAYS), OsString::new());
       Self {
         evars,
         _scratch: None,

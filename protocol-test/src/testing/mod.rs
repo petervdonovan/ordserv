@@ -445,7 +445,7 @@ impl AccumulatingTracesState {
       .unwrap();
     rt.block_on(async {
       let port = get_valid_port(); // TODO: get a free port
-      let mut ordserv = ordering_server::server::run(port, *CONCURRENCY_LIMIT.wait());
+      let mut ordserv = ordering_server::server::run(port, *CONCURRENCY_LIMIT.wait()).await;
       async_scoped::TokioScope::scope_and_block(|scope| {
         let self_immut: &AccumulatingTracesState = self;
         for (tidx, ordserv) in ordserv.updates_acks.iter_mut().enumerate() {

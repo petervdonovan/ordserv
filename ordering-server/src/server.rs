@@ -28,7 +28,7 @@ pub type ServerSubHandle = (
 /// 4. Waits for all the processes to finish
 ///
 /// This ends when None is received from the precedence stream.
-pub fn run(port: u16, capacity: usize) -> ServerHandle {
+pub async fn run(port: u16, capacity: usize) -> ServerHandle {
     let mut my_updates_acks = Vec::with_capacity(capacity);
     let mut their_updates_acks = Vec::with_capacity(capacity);
     for _ in 0..capacity {
@@ -39,7 +39,7 @@ pub fn run(port: u16, capacity: usize) -> ServerHandle {
     }
     ServerHandle {
         updates_acks: their_updates_acks,
-        join_handle: run_server(port, my_updates_acks),
+        join_handle: run_server(port, my_updates_acks).await,
     }
 }
 
@@ -57,6 +57,7 @@ async fn process_precedence_stream(
         acks.send(environment_variables_for_clients(&precedence, precid))
             .await
             .unwrap();
+        info!("Expecting {} connections", precedence.n_connections);
         let mut writers = HashMap::new();
         let mut readers = HashMap::new();
         for _ in 0..precedence.n_connections {
@@ -66,6 +67,7 @@ async fn process_precedence_stream(
             writers.insert(fedid, writer);
             readers.insert(fedid, reader);
         }
+        info!("All connections received");
         let (send_frames, mut recv_frames) = mpsc::channel(1);
         for (fedid, mut reader) in readers.into_iter() {
             let send_frames = send_frames.clone();
@@ -121,11 +123,12 @@ fn environment_variables_for_clients(
 }
 
 async fn forward_tcp_connections(
+    listener: TcpListener,
     connection_senders: Vec<mpsc::Sender<(Connection, FederateId)>>,
     port: u16,
 ) {
     loop {
-        let listener = TcpListener::bind(("127.0.0.1", port)).await.unwrap();
+        debug!("Listening for connections on port {}", port);
         let mut connection = Connection::new(listener.accept().await.unwrap().0);
         info!("Accepted connection");
         let frame = connection.read_frame().await;
@@ -144,7 +147,7 @@ async fn forward_tcp_connections(
     }
 }
 
-fn run_server(
+async fn run_server(
     port: u16,
     updates_acks: Vec<(
         mpsc::Receiver<Option<Precedence>>,
@@ -163,7 +166,8 @@ fn run_server(
             PrecedenceId(precid as u32),
         )));
     }
-    let _drop_me = tokio::spawn(forward_tcp_connections(connection_senders, port));
+    let listener = TcpListener::bind(("127.0.0.1", port)).await.unwrap();
+    let _drop_me = tokio::spawn(forward_tcp_connections(listener, connection_senders, port));
     tokio::spawn(async move {
         for handle in handles {
             handle.await.unwrap();
