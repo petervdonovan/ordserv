@@ -62,6 +62,7 @@ async fn main() {
             (("B6", 1, 0), &[("C2", 2, 1)]),               // .
         ],
         "/tmp".into(),
+        0,
     );
     server_handle.updates_acks[0]
         .0

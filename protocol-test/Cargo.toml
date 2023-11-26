@@ -10,6 +10,7 @@ async-scoped = { version = "0.8.0", features = ["use-tokio"] }
 clap = { version = "4.4.7", features = ["derive"] }
 colored = "2.0.4"
 csv = "1.3.0"
+log = "0.4.20"
 ndarray = "0.15.6"
 once_cell = "1.18.0"
 ordering-server = { version = "0.1.0", path = "../ordering-server" }

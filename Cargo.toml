@@ -7,3 +7,11 @@ members = [
     "streaming-transpositions",
     "viz264",
 ]
+
+[profile.dev]
+panic = 'abort'
+incremental = true
+
+[profile.release]
+panic = 'abort'
+incremental = true

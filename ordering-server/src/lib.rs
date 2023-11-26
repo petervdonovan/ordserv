@@ -25,6 +25,7 @@ pub struct Precedence {
     pub sender2waiters: HashMap<HookInvocation, Vec<HookInvocation>>,
     pub n_connections: usize,
     pub scratch_dir: PathBuf,
+    pub run_id: u32, // to avoid getting mucked up by stragglers from previous runs
 }
 pub type HookInvocationShort<'a> = (&'a str, i32, u32);
 pub type PrecedenceElement<'a> = (HookInvocationShort<'a>, &'a [HookInvocationShort<'a>]);
@@ -33,6 +34,7 @@ impl Precedence {
         n_connections: usize,
         sender2waiters: &[PrecedenceElement],
         scratch_dir: PathBuf,
+        run_id: u32,
     ) -> Self {
         Self {
             sender2waiters: sender2waiters
@@ -46,6 +48,7 @@ impl Precedence {
                 .collect(),
             n_connections,
             scratch_dir,
+            run_id,
         }
     }
 }
@@ -86,4 +89,5 @@ pub struct Frame {
     pub federate_id: i32,
     pub hook_id: [u8; 32], // Assume hook id is no more than 31 ascii characters
     pub sequence_number: u32,
+    pub run_id: u32,
 }

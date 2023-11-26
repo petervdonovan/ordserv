@@ -8,6 +8,7 @@ async fn main() {
             hook_id: [b'A'; 32],
             federate_id: 0,
             sequence_number: 0,
+            run_id: 0,
         })
         .await;
     println!("Hello");
@@ -17,6 +18,7 @@ async fn main() {
             hook_id: [b'A'; 32],
             federate_id: 0,
             sequence_number: 0,
+            run_id: 0,
         })
         .await;
 }

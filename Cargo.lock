@@ -1359,6 +1359,7 @@ dependencies = [
  "clap 4.4.8",
  "colored",
  "csv",
+ "log",
  "ndarray",
  "once_cell",
  "ordering-server",

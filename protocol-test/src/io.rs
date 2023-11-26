@@ -30,6 +30,7 @@ pub struct RunContext<'a> {
   pub tid: ThreadId,
   pub ordserv: &'a mut ServerSubHandle,
   pub ordserv_port: u16,
+  pub run_id: u32,
 }
 
 impl HookInvocationCounts {
@@ -202,7 +203,7 @@ impl TempDir {
 
 impl Drop for TempDir {
   fn drop(&mut self) {
-    // std::fs::remove_dir_all(&self.0).expect("failed to remove random subdir");
+    std::fs::remove_dir_all(&self.0).expect("failed to remove random subdir");
   }
 }
 
@@ -313,6 +314,7 @@ pub async fn run_with_parameters(
     sender2waiters,
     n_connections: hic.n_processes,
     scratch_dir: tmp.0.clone(),
+    run_id: rctx.run_id,
   };
   rctx.ordserv.0.send(Some(precedence)).await.unwrap();
   let mut evars = rctx.ordserv.1.recv().await.unwrap();

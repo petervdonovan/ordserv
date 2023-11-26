@@ -164,7 +164,12 @@ pub mod exec {
         let selected_output: Vec<String> = BufReader::new(stdout.unwrap())
           .lines()
           .map(|l| l.expect("failed to read line of output"))
-          .filter(|s| output_filter(s))
+          .filter(|s| s.contains("client"))
+          // .filter(|s| output_filter(s))
+          .map(|s| {
+            eprintln!("DEBUG: {}: {}", pid, s);
+            s
+          })
           .collect();
         if let Err(e) = tselected_output.send(selected_output) {
           eprintln!("failed to send output of child process {pid}: {:?}", e);
@@ -176,6 +181,7 @@ pub mod exec {
           .lines()
           .map(|l| {
             let s = l.expect("failed to read line of output");
+            // eprintln!("DEBUG: {}: {}", pid, s);
             s
           })
           .take(crate::MAX_ERROR_LINES)

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use log::{debug, info};
+use log::{debug, info, warn};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -46,11 +46,13 @@ pub async fn run(port: u16, capacity: usize) -> ServerHandle {
 async fn process_precedence_stream(
     mut precedence_stream: mpsc::Receiver<Option<Precedence>>,
     acks: mpsc::Sender<EnvironmentVariables>,
-    mut connection_receiver: mpsc::Receiver<(Connection, FederateId)>,
+    mut connection_receiver: mpsc::Receiver<(Connection, FederateId, u32)>,
     precid: PrecedenceId,
 ) {
     let mut jhs: Vec<JoinHandle<()>> = Vec::new();
     let mut outer_precedence = precedence_stream.recv().await.unwrap_or(None);
+    let mut n_successful_connections = 0;
+    let mut n_attempted_connections = 0;
     'outer: while let Some(precedence) = outer_precedence.take() {
         debug!("Received precedence");
         for jh in jhs.drain(..) {
@@ -60,24 +62,40 @@ async fn process_precedence_stream(
             .await
             .unwrap();
         info!("Expecting {} connections", precedence.n_connections);
+        n_attempted_connections += precedence.n_connections;
         let mut writers = HashMap::new();
         let mut readers = HashMap::new();
-        for _ in 0..precedence.n_connections {
+        let mut n_connected = 0;
+        while n_connected < precedence.n_connections {
             tokio::select! {
                 new_connection = connection_receiver.recv() => {
-                    let (connection, fedid) = new_connection.unwrap();
-                    debug!("Received connection from {:?}", fedid);
-                    let (reader, writer) = connection.into_split();
-                    writers.insert(fedid, writer);
-                    readers.insert(fedid, reader);
+                    let (connection, fedid, run_id) = new_connection.unwrap();
+                    if run_id != precedence.run_id {
+                        warn!("Received connection with run_id {} but precedence has run_id {}", run_id, precedence.run_id);
+                        connection.close().await;
+                        warn!("Forcibly closed connection; client should crash.");
+                    } else {
+                        debug!("Received connection from {:?}", fedid);
+                        let (reader, writer) = connection.into_split();
+                        writers.insert(fedid, writer);
+                        readers.insert(fedid, reader);
+                        n_connected += 1;
+                        n_successful_connections += 1;
+                    }
                 }
                 new_precedence = precedence_stream.recv() => {
+                    warn!("Received new precedence while waiting for connections");
                     outer_precedence = new_precedence.unwrap_or(None);
                     continue 'outer;
                 }
             }
         }
-        info!("All connections received");
+        info!(
+            "All connections received (success rate = {} / {} = {})",
+            n_successful_connections,
+            n_attempted_connections,
+            n_successful_connections as f64 / n_attempted_connections as f64
+        );
         let (send_frames, mut recv_frames) = mpsc::channel(1);
         for (fedid, mut reader) in readers.into_iter() {
             let send_frames = send_frames.clone();
@@ -88,6 +106,7 @@ async fn process_precedence_stream(
                         Some(frame) => {
                             debug!("Received frame: {:?} from {:?}", frame, fedid);
                             assert!(fedid.0 == frame.federate_id);
+                            assert!(precedence.run_id == frame.run_id);
                             send_frames.send(frame).await.unwrap();
                         }
                         None => {
@@ -103,12 +122,17 @@ async fn process_precedence_stream(
                 for dest in precedence
                     .sender2waiters
                     .get(&frame.hook_invocation())
-                    .unwrap()
+                    .unwrap_or_else(|| {
+                        panic!("Received frame {:?} with hid {:?} for which there are no waiters; the actual precedence is:\n    {:?}", frame, frame.hid(), precedence);
+                    })
                 {
                     debug!("Forwarding frame to {:?}", dest);
+                    let writers_debug = writers.keys().cloned().collect::<Vec<_>>(); // FIXME: this is just for debugging
                     writers
                         .get_mut(&dest.hid.1)
-                        .unwrap()
+                        .unwrap_or_else(|| {
+                            panic!("Received frame {:?} with hid {:?} and dest id {:?} for which there are no writers for the dest; the actual precedence is:\n    {:?}, and the writers are:\n    {:?}", frame, frame.hid(), &dest.hid.1, precedence, writers_debug);
+                        })
                         .write_frame(frame)
                         .await;
                 }
@@ -134,7 +158,7 @@ fn environment_variables_for_clients(
 
 async fn forward_tcp_connections(
     listener: TcpListener,
-    connection_senders: Vec<mpsc::Sender<(Connection, FederateId)>>,
+    connection_senders: Vec<mpsc::Sender<(Connection, FederateId, u32)>>,
     port: u16,
 ) {
     loop {
@@ -145,10 +169,23 @@ async fn forward_tcp_connections(
         match frame {
             Some(frame) => {
                 debug!("Received initial frame: {:?}", frame);
-                connection_senders[frame.precedence_id as usize]
-                    .send((connection, FederateId(frame.federate_id)))
+                if frame.hook_id[0] != b'S' {
+                    eprintln!(
+                        "Received frame with hook_id {:?} instead of 'S'",
+                        frame.hook_id
+                    );
+                    connection.close().await;
+                    eprintln!("Forcibly closed connection; client should crash.");
+                    continue;
+                }
+                if connection_senders[frame.precedence_id as usize]
+                    .send((connection, FederateId(frame.federate_id), frame.run_id))
                     .await
-                    .unwrap();
+                    .is_err()
+                {
+                    debug!("Connection sender dropped; closing channel.");
+                    break;
+                }
             }
             None => {
                 eprintln!("A client disconnected without sending a frame");
@@ -164,7 +201,7 @@ async fn run_server(
         mpsc::Sender<EnvironmentVariables>,
     )>,
 ) -> JoinHandle<()> {
-    let mut connection_senders: Vec<mpsc::Sender<(Connection, FederateId)>> = Vec::new();
+    let mut connection_senders: Vec<mpsc::Sender<(Connection, FederateId, u32)>> = Vec::new();
     let mut handles = Vec::with_capacity(updates_acks.len() + 1);
     for (precid, (update_receiver, ack_sender)) in updates_acks.into_iter().enumerate() {
         let (connection_sender, connection_receiver) = mpsc::channel(1);

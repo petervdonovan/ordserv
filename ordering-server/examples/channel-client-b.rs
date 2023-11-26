@@ -8,6 +8,7 @@ async fn main() {
             hook_id: [b'B'; 32],
             federate_id: 0,
             sequence_number: 0,
+            run_id: 0,
         })
         .await;
     println!("Sent frame");

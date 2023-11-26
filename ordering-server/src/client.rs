@@ -35,6 +35,7 @@ pub struct BlockingClient {
     rt: tokio::runtime::Runtime,
     precid: PrecedenceId,
     fedid: FederateId,
+    run_id: u32,
     wait_timeout: Duration,
 }
 
@@ -61,7 +62,7 @@ impl Client {
                         }
                         None => {
                             info!(target: "client", "Connection closed");
-                            break;
+                            panic!("The client is supposed to be the one to close the connection, not the server. The server can close the connection if this client is a straggler from a previous run.");
                         }
                     }
                 }
@@ -112,6 +113,7 @@ impl BlockingClient {
             .build()
             .unwrap();
         let precedence = load_precedence();
+        let run_id = precedence.run_id;
         let requires_ok_to_proceed = Self::get_requires_ok_to_proceed(&precedence);
         let requires_notify = Self::get_requires_notify(&precedence);
         let (client, jh) = Self::get_client(
@@ -137,6 +139,7 @@ impl BlockingClient {
             precid: Self::load_precid(),
             fedid: FederateId(federate_id),
             wait_timeout,
+            run_id,
         };
         client.send_initial_frame();
         (client, join_handle)
@@ -170,6 +173,7 @@ impl BlockingClient {
                 federate_id: self.fedid.0,
                 hook_id,
                 sequence_number: hook_invocation.seqnum.0,
+                run_id: self.run_id,
             }));
         }
     }
@@ -224,6 +228,7 @@ impl BlockingClient {
             federate_id: self.fedid.0,
             hook_id: [b'S'; 32],
             sequence_number: 0,
+            run_id: self.run_id,
         }));
     }
 }

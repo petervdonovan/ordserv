@@ -438,20 +438,23 @@ impl AccumulatingTracesState {
       .enable_all()
       .build()
       .unwrap();
+    let scratch = self.kcs.scratch_dir();
     rt.block_on(async {
-      let port = get_valid_port(); // TODO: get a free port
-      let mut ordserv = ordering_server::server::run(port, *CONCURRENCY_LIMIT.wait()).await;
       async_scoped::TokioScope::scope_and_block(|scope| {
         let self_immut: &AccumulatingTracesState = self;
-        for (tidx, ordserv) in ordserv.updates_acks.iter_mut().enumerate() {
-          let mut rctx = RunContext {
-            scratch: self.kcs.scratch_dir(),
-            tid: ThreadId(tidx),
-            ordserv,
-            ordserv_port: port,
-          };
+        for tidx in 0..*CONCURRENCY_LIMIT.wait() {
+          let port = get_valid_port();
           let my_ovr = Arc::clone(&self.ovr);
           let proc = || async move {
+            let mut ordserv = ordering_server::server::run(port, 1).await;
+            let ordserv = &mut ordserv.updates_acks[0];
+            let mut rctx = RunContext {
+              scratch,
+              tid: ThreadId(tidx),
+              ordserv,
+              ordserv_port: port,
+              run_id: 13,
+            };
             while std::time::Instant::now() - t0
               < std::time::Duration::from_secs(time_seconds as u64)
             {
@@ -460,6 +463,8 @@ impl AccumulatingTracesState {
               let conl = self_immut.get_constraint_vector(id);
               let clr = Arc::clone(&self_immut.runs[id]);
               let run = self_immut.get_run(id, exe, &conl, clr, &mut rctx).await;
+              println!("DEBUG: Success (run id {}).", rctx.run_id);
+              rctx.run_id += 1;
               let mut entry = self_immut.runs.get(id).unwrap().write().unwrap();
               entry.clr.push(conl);
               let idx = ConstraintListIndex(entry.clr.len() as u32 - 1);

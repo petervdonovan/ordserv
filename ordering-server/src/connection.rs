@@ -96,6 +96,9 @@ impl Connection {
     pub async fn write_frame(&mut self, frame: Frame) {
         self.write.write_frame(frame).await
     }
+    pub async fn close(mut self) {
+        let _ = self.write.stream.shutdown().await; // if this fails, it was already closed anyway
+    }
     pub fn into_split(self) -> (ReadConnection, WriteConnection) {
         (self.read, self.write)
     }
