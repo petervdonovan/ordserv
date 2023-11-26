@@ -1,6 +1,5 @@
 use std::{
   collections::HashMap,
-  ffi::OsString,
   path::{Path, PathBuf},
   process::Command,
   sync::{Arc, RwLock},
@@ -18,8 +17,7 @@ use crate::{
   exec::{ExecResult, Executable},
   state::CommitHash,
   testing::TestRuns,
-  ConstraintList, ConstraintListRegistry, HookId, HookInvocationCounts, ThreadId, TraceRecord,
-  Traces,
+  ConstraintList, HookId, HookInvocationCounts, ThreadId, TraceRecord, Traces,
 };
 
 const C_ORDERING_CLIENT_LIBRARY_PATH: &str = "../../target/release/libc_ordering_client.so";
@@ -27,17 +25,19 @@ const C_ORDERING_CLIENT_LIBRARY_PATH_ENV_VAR: &str = "C_ORDERING_CLIENT_LIBRARY_
 
 const ORDSERV_WAIT_TIMEOUT_MILLISECONDS: &str = "1500";
 
+pub struct RunContext<'a> {
+  pub scratch: &'a Path,
+  pub tid: ThreadId,
+  pub ordserv: &'a mut ServerSubHandle,
+  pub ordserv_port: u16,
+}
+
 impl HookInvocationCounts {
   pub fn len(&self) -> usize {
     self.hid2ic.values().map(|it| *it as usize).sum::<usize>()
   }
   pub fn is_empty(&self) -> bool {
     self.len() == 0
-  }
-  pub fn to_vec(&self) -> Vec<(&HookId, &u32)> {
-    let mut keys: Vec<_> = self.hid2ic.iter().collect();
-    // keys.sort();
-    keys
   }
 }
 
@@ -145,7 +145,7 @@ pub fn get_counts(hook_trace: &[TraceRecord]) -> HookInvocationCounts {
   let mut hid2ic = HashMap::new();
   let mut ogrank2hinvoc = Vec::new();
   let mut process_ids = vec![];
-  for (ogrank, record) in hook_trace.iter().enumerate() {
+  for record in hook_trace {
     let hid = HookId::new(
       format!("{} {}", record.line_number, record.source),
       FederateId(record.source),
@@ -162,7 +162,7 @@ pub fn get_counts(hook_trace: &[TraceRecord]) -> HookInvocationCounts {
     hid2ic.insert(hid.clone(), next);
     ogrank2hinvoc.push(HookInvocation {
       hid: hid.clone(),
-      seqnum: SequenceNumberByFileAndLine(record.sequence_number_for_file_and_line as u32),
+      seqnum: SequenceNumberByFileAndLine(record.sequence_number_for_file_and_line),
     });
     if !process_ids.contains(&record.source) {
       process_ids.push(record.source);
@@ -174,7 +174,6 @@ pub fn get_counts(hook_trace: &[TraceRecord]) -> HookInvocationCounts {
     ogrank2hinvoc,
     n_processes: process_ids.len(),
   };
-  println!("len is {}", ret.len());
   assert!(ogrank2hinvoc_len == ret.len());
   ret
 }
@@ -229,11 +228,6 @@ pub async fn get_traces(
   evars: EnvironmentUpdate<'_>,
 ) -> Result<Traces, ExecResult> {
   let evarsc = evars.get_evars().clone();
-  println!(
-    "Running {executable} with {evars:?}.",
-    executable = executable,
-    evars = evarsc
-  );
   let run = executable.run(
     evars,
     tmp,
@@ -294,23 +288,15 @@ fn assert_compatible(ic: &HookInvocationCounts, conl: &ConstraintList) {
 
 pub async fn run_with_parameters(
   executable: &Executable,
-  scratch: &Path,
   hic: &HookInvocationCounts,
   conl: &ConstraintList,
   clr: Arc<RwLock<TestRuns>>,
-  ordserv: &mut ServerSubHandle,
-  ordserv_port: u16,
-  tid: ThreadId,
+  rctx: &mut RunContext<'_>,
 ) -> (TempDir, Result<Traces, ExecResult>) {
-  println!("DEBUG: RUN_WITH_PARAMETERS, EXECUTABLE: {:?}", executable);
   assert_compatible(hic, conl);
-  let tmp = TempDir::new(scratch);
+  let tmp = TempDir::new(rctx.scratch);
   let unpacked = conl.to_pairs_sorted(&clr.read().unwrap().clr);
   let mut sender2waiters = HashMap::new();
-  println!(
-    "DEBUG: RUN_WITH_PARAMETERS, conl: {:?}, unpacked: {:?}",
-    conl, unpacked
-  );
   for (waiter, sender) in unpacked
     .into_iter()
     .filter(|(waiter, sender)| waiter != sender)
@@ -325,13 +311,12 @@ pub async fn run_with_parameters(
     n_connections: hic.n_processes,
     scratch_dir: tmp.0.clone(),
   };
-  ordserv.0.send(Some(precedence)).await.unwrap();
-  println!("DEBUG: RUN_WITH_PARAMETERS, AWAITING EVARS");
-  let mut evars = ordserv.1.recv().await.unwrap();
-  println!("DEBUG: RUN_WITH_PARAMETERS, GOT EVARS");
-  evars
-    .0
-    .push((ORDSERV_PORT_ENV_VAR.into(), ordserv_port.to_string().into()));
+  rctx.ordserv.0.send(Some(precedence)).await.unwrap();
+  let mut evars = rctx.ordserv.1.recv().await.unwrap();
+  evars.0.push((
+    ORDSERV_PORT_ENV_VAR.into(),
+    rctx.ordserv_port.to_string().into(),
+  ));
   evars.0.push((
     ORDSERV_WAIT_TIMEOUT_MILLISECONDS_ENV_VAR.into(),
     ORDSERV_WAIT_TIMEOUT_MILLISECONDS.into(),
@@ -340,7 +325,7 @@ pub async fn run_with_parameters(
     C_ORDERING_CLIENT_LIBRARY_PATH_ENV_VAR.into(),
     C_ORDERING_CLIENT_LIBRARY_PATH.into(),
   ));
-  let traces = get_traces(executable, &tmp, EnvironmentUpdate::new(tid, &evars.0)).await;
+  let traces = get_traces(executable, &tmp, EnvironmentUpdate::new(rctx.tid, &evars.0)).await;
   (tmp, traces)
 }
 

@@ -304,10 +304,8 @@ pub mod env {
     {
       let mut evars: HashMap<OsString, OsString> = HashMap::new();
       for (k, v) in tups {
-        println!("DEBUG: tups = {k:?} {v:?}");
         evars.insert(k.clone().into(), v.clone().into());
       }
-      println!("DEBUG: evars = {:?}", evars);
       evars.insert(OsString::from(LF_FED_PORT), PORTS_BY_TID[tid.0].clone());
       Self {
         evars,

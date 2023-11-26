@@ -20,7 +20,7 @@ use crate::{
   io::{clean, get_commit_hash, get_counts, get_lf_files_non_recursive, get_traces, TempDir},
   outputvector::{OutputVectorKey, OUTPUT_VECTOR_CHUNK_SIZE},
   testing::AccumulatingTracesState,
-  HookInvocationCounts, ThreadId, TraceRecord, Traces, CONCURRENCY_LIMIT, DELAY_VECTOR_CHUNK_SIZE,
+  HookInvocationCounts, ThreadId, TraceRecord, Traces, CONCURRENCY_LIMIT,
 };
 
 #[derive(Debug, Serialize, Deserialize)]

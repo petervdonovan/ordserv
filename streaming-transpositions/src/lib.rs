@@ -1,6 +1,6 @@
 use std::{collections::HashSet, fmt::Display};
 
-use rand::Rng;
+use rand::{distributions::Distribution, Rng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 
@@ -177,13 +177,19 @@ impl StreamingTranspositions {
         self.traces_recorded
     }
     /// Goes into an infinite loop if all pairs have been observed.
-    pub fn random_unobserved_ordering(&self) -> (OgRank, OgRank) {
+    pub fn random_unobserved_ordering(
+        &self,
+        r: f64,
+        filter: impl Fn(OgRank, OgRank) -> bool,
+    ) -> (OgRank, OgRank) {
         let mut rng = rand::thread_rng();
+        let d = rand::distributions::Bernoulli::new(r).unwrap();
         loop {
             let i = rng.gen_range(0..self.og_trace_length);
-            for j in (i + 1)..self.og_trace_length {
-                if !self.before_and_afters[i].contains(&OgRank(j as u32)) {
-                    println!("DEBUG: i = {}, j = {}", i, j);
+            for j in ((i + 1)..self.og_trace_length)
+                .filter(|&it| filter(OgRank(it as u32), OgRank(i as u32)))
+            {
+                if d.sample(&mut rng) && !self.before_and_afters[i].contains(&OgRank(j as u32)) {
                     return (OgRank(j as u32), OgRank(i as u32));
                 }
             }

@@ -125,7 +125,6 @@ impl OutputVectorKey {
       ret.entry(tpi).or_insert(vec![]).push(OgRank(idx));
       idx += 1;
     }
-    println!("DEBUG: ROUNDING UP TO 0 MOD {}", round_up_to_zero_mod);
     Self {
       map: ret,
       n_tracepoints: (idx as usize - 1) / round_up_to_zero_mod * round_up_to_zero_mod
@@ -236,7 +235,7 @@ impl OutputVector {
     if seqnum2hookinvoc.len() / OUTPUT_VECTOR_CHUNK_SIZE * OUTPUT_VECTOR_CHUNK_SIZE
       != seqnum2hookinvoc.len()
     {
-      println!("seqnum2hookinvoc.len() = {}", seqnum2hookinvoc.len());
+      eprintln!("seqnum2hookinvoc.len() = {}", seqnum2hookinvoc.len());
       panic!("seqnum2hookinvoc.len() must be a multiple of OUTPUT_VECTOR_CHUNK_SIZE");
     }
     match ovrdata.idx2node[ovnid.0 as usize] {

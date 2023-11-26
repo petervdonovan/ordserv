@@ -7,7 +7,6 @@ use std::{
 };
 
 use colored::Colorize;
-use ordering_server::server::ServerSubHandle;
 use priority_queue::DoublePriorityQueue;
 use rand::{seq::SliceRandom, SeedableRng};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
@@ -16,10 +15,12 @@ use streaming_transpositions::{
   HookOgRank2CurRank, OgRank2CurRank, OutOgRank2CurRank, StreamingTranspositions,
 };
 
+const RANDOM_ORDERING_GEOMETRIC_R: f64 = 0.5;
+
 use crate::{
   env::get_valid_port,
   exec::{ExecResult, Executable},
-  io::run_with_parameters,
+  io::{run_with_parameters, RunContext},
   outputvector::{OutputVector, OutputVectorRegistry, OvrDelta, OvrReg, VectorfyStatus},
   state::{InitialState, KnownCountsState, State, TestId},
   ConstraintList, ConstraintListIndex, ConstraintListRegistry, ThreadId, TraceRecord,
@@ -86,7 +87,7 @@ impl<'de> Deserialize<'de> for AccumulatingTracesState {
   {
     let ancestors = ancestors_chronological(deserializer)?;
     let kcs: KnownCountsState =
-      rmp_serde::from_read(std::fs::File::open(&ancestors[0].parent.clone()).unwrap()).unwrap();
+      rmp_serde::from_read(std::fs::File::open(ancestors[0].parent.clone()).unwrap()).unwrap();
     let ovrd: Vec<OvrDelta> = ancestors
       .par_iter()
       .map(|atsd| rmp_serde::from_read(std::fs::File::open(&atsd.ovrdelta_path).unwrap()).unwrap())
@@ -120,6 +121,7 @@ fn ancestors_chronological<'de, D>(deserializer: D) -> Result<Vec<AtsDelta>, D::
 where
   D: serde::Deserializer<'de>,
 {
+  println!("Loading ancestors.");
   let mut ancestors = vec![AtsDelta::deserialize(deserializer)?];
   while ancestors.last().unwrap().total_runs > 0 {
     println!(
@@ -160,7 +162,7 @@ fn reconstruct_test_runs(
   let mut clr = vec![];
   let mut raw_traces = vec![];
   let mut iomats = HashMap::new();
-  let mut strans_out = kcs.empty_streaming_transpositions_out(&tid);
+  let mut strans_out = kcs.empty_streaming_transpositions_out(tid);
   let strans_hook = trdeltas.last().unwrap().strans_hook.clone(); // FIXME: waste of cycles and memory
   let interesting = trdeltas
     .last()
@@ -175,7 +177,7 @@ fn reconstruct_test_runs(
     }
     for rtd in trdelta.raws_delta {
       add_to_iomats(&mut iomats, &rtd);
-      add_to_strans(&mut strans_out, &rtd.1, &ovr);
+      add_to_strans(&mut strans_out, &rtd.1, ovr);
       raw_traces.push(rtd);
     }
   }
@@ -305,7 +307,7 @@ fn add_to_strans(
   raw: &Result<SuccessfulRun, ExecResult>,
   ovr: &OutputVectorRegistry,
 ) {
-  if let Ok((ov, trhash, _status)) = &raw {
+  if let Ok((ov, _trhash, _status)) = &raw {
     strans.record(OgRank2CurRank(ov.unpack(ovr)));
   }
 }
@@ -361,7 +363,11 @@ impl AccumulatingTracesState {
       .read()
       .unwrap()
       .strans_hook
-      .random_unobserved_ordering();
+      .random_unobserved_ordering(RANDOM_ORDERING_GEOMETRIC_R, |before, after| {
+        let before_hinvoc = &self.kcs.metadata(id).hic.ogrank2hinvoc[before.idx()];
+        let after_hinvoc = &self.kcs.metadata(id).hic.ogrank2hinvoc[after.idx()];
+        before_hinvoc.hid.1 != after_hinvoc.hid.1
+      });
     ConstraintList::singleton(after, before, self.kcs.metadata(id).hic.len() as u32)
   }
   async fn get_run(
@@ -369,10 +375,8 @@ impl AccumulatingTracesState {
     id: &TestId,
     exe: &Executable,
     conl: &ConstraintList,
-    tidx: ThreadId,
     clr: Arc<RwLock<TestRuns>>,
-    ordserv: &mut ServerSubHandle,
-    ordserv_port: u16,
+    rctx: &mut RunContext<'_>,
   ) -> Result<
     (
       HookOgRank2CurRank,
@@ -382,17 +386,8 @@ impl AccumulatingTracesState {
     ),
     ExecResult,
   > {
-    let (_, traces_map) = run_with_parameters(
-      exe,
-      self.kcs.scratch_dir(),
-      &self.kcs.metadata(id).hic,
-      conl,
-      clr,
-      ordserv,
-      ordserv_port,
-      tidx,
-    )
-    .await;
+    let (_, traces_map) =
+      run_with_parameters(exe, &self.kcs.metadata(id).hic, conl, clr, rctx).await;
     let mut traces_map = traces_map?;
     let (raw_traces, raw_traces_rti_only) = traces_map.hooks_and_outs();
     let (hook_orcr, _th, _status) = self
@@ -449,6 +444,12 @@ impl AccumulatingTracesState {
       async_scoped::TokioScope::scope_and_block(|scope| {
         let self_immut: &AccumulatingTracesState = self;
         for (tidx, ordserv) in ordserv.updates_acks.iter_mut().enumerate() {
+          let mut rctx = RunContext {
+            scratch: self.kcs.scratch_dir(),
+            tid: ThreadId(tidx),
+            ordserv,
+            ordserv_port: port,
+          };
           let my_ovr = Arc::clone(&self.ovr);
           let proc = || async move {
             while std::time::Instant::now() - t0
@@ -458,11 +459,7 @@ impl AccumulatingTracesState {
               let (id, exe) = executables.choose(&mut rng).unwrap();
               let conl = self_immut.get_constraint_vector(id);
               let clr = Arc::clone(&self_immut.runs[id]);
-              println!("DEBUG: THREAD {} STARTING RUN", tidx);
-              let run = self_immut
-                .get_run(id, exe, &conl, ThreadId(tidx), clr, ordserv, port)
-                .await;
-              println!("DEBUG: THREAD {} FINISHED RUN", tidx);
+              let run = self_immut.get_run(id, exe, &conl, clr, &mut rctx).await;
               let mut entry = self_immut.runs.get(id).unwrap().write().unwrap();
               entry.clr.push(conl);
               let idx = ConstraintListIndex(entry.clr.len() as u32 - 1);
@@ -470,7 +467,6 @@ impl AccumulatingTracesState {
                 Ok((hook_orcr, out_orcr, trhash, status)) => {
                   entry.strans_hook.record(hook_orcr.0.clone());
                   entry.strans_out.record(out_orcr.0.clone());
-                  println!("DEBUG: THREAD {} RECORDED RUN", tidx);
                   let ov = OutputVector::new(out_orcr.0, Arc::clone(&my_ovr));
                   entry
                     .iomats

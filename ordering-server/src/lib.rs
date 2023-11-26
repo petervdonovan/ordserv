@@ -51,7 +51,7 @@ impl Precedence {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone)]
-pub struct HookId(String, FederateId);
+pub struct HookId(String, pub FederateId);
 
 impl HookId {
     pub fn new(hid: String, fedid: FederateId) -> Self {
