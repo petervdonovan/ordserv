@@ -2,11 +2,9 @@ use std::process::Command;
 
 use ordering_server::{server, Precedence};
 
-// use simple_logger::SimpleLogger;
-
 #[tokio::main]
 async fn main() {
-    // SimpleLogger::new().init().unwrap();
+    // simple_logger::SimpleLogger::new().init().unwrap();
     let mut server_handle = server::run(15045, 1).await;
     let precedence = Precedence::from_list(
         3,

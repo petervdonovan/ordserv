@@ -11,7 +11,7 @@ async fn main() {
         .unwrap();
     server_handle.updates_acks[0].1.recv().await.unwrap();
     println!("Received ack");
-    server_handle.updates_acks[0].0.send(None).await.unwrap();
+    // server_handle.updates_acks[0].0.send(None).await.unwrap();
     server_handle.join_handle.await.unwrap();
     println!("Server finished");
 }

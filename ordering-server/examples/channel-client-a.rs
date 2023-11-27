@@ -5,17 +5,19 @@ async fn main() {
     client
         .write(ordering_server::Frame {
             precedence_id: 0,
-            hook_id: [b'A'; 32],
+            hook_id: [b'S'; 32],
             federate_id: 0,
             sequence_number: 0,
             run_id: 0,
         })
         .await;
     println!("Hello");
+    let mut hook_id = [0; 32];
+    hook_id[0] = b'A';
     client
         .write(ordering_server::Frame {
             precedence_id: 0,
-            hook_id: [b'A'; 32],
+            hook_id,
             federate_id: 0,
             sequence_number: 0,
             run_id: 0,

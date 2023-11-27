@@ -1,5 +1,7 @@
+use std::os::fd::AsRawFd;
+
 use bytes::BufMut;
-use log::debug;
+use log::{debug, info};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufWriter};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
@@ -78,6 +80,7 @@ impl WriteConnection {
 }
 impl Connection {
     pub fn new(stream: TcpStream) -> Self {
+        // println!("DEBUG: File descriptor: {}", stream.as_raw_fd());
         let (read, write) = stream.into_split();
         Self {
             read: ReadConnection {
@@ -97,6 +100,7 @@ impl Connection {
         self.write.write_frame(frame).await
     }
     pub async fn close(mut self) {
+        info!("Closing connection");
         let _ = self.write.stream.shutdown().await; // if this fails, it was already closed anyway
     }
     pub fn into_split(self) -> (ReadConnection, WriteConnection) {

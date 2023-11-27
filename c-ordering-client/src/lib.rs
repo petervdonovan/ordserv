@@ -58,12 +58,8 @@ pub unsafe extern "C" fn start_client(fedid: c_int) -> ClientAndJoinHandle {
     simple_logger::SimpleLogger::new().init().unwrap();
     println!("Starting client");
     #[allow(clippy::unnecessary_cast)]
-    let (client, join_handle) = ordering_server::client::BlockingClient::start(
-        (
-            "127.0.0.1",
-            env::var(ORDSERV_PORT_ENV_VAR).unwrap().parse().unwrap(),
-        ),
-        fedid as i32,
+    let (client, join_handle) = ordering_server::client::BlockingClient::start_reusing_connection(
+        FederateId(fedid as i32),
         Duration::from_millis(
             env::var(ORDSERV_WAIT_TIMEOUT_MILLISECONDS_ENV_VAR)
                 .unwrap()

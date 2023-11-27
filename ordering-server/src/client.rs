@@ -15,6 +15,7 @@ use tokio::{
 use crate::{
     connection::{Connection, WriteConnection},
     server::{PRECEDENCE_FILE_NAME, PRECEDENCE_ID_NAME},
+    tcpconnectionprovider::socket_from_raw_fd,
     FederateId, Frame, HookInvocation, Precedence, PrecedenceId,
 };
 
@@ -42,13 +43,14 @@ pub struct BlockingClient {
 impl Client {
     pub async fn start<T: ToSocketAddrs + std::fmt::Debug>(
         addr: T,
+        callback: Box<dyn FnMut(Frame) + Send>,
+    ) -> (Client, JoinHandle<()>) {
+        Self::start_from_socket(socket_from_addr(addr).await, callback).await
+    }
+    async fn start_from_socket(
+        socket: TcpStream,
         mut callback: Box<dyn FnMut(Frame) + Send>,
     ) -> (Client, JoinHandle<()>) {
-        info!(target: "client", "Connecting to {:?}...", addr);
-        let socket = TcpStream::connect(&addr)
-            .await
-            .unwrap_or_else(|e| panic!("Failed to connect to {:?}: {}", addr, e));
-        info!(target: "client", "Connected to {:?}", addr);
         let (mut read, write) = Connection::new(socket).into_split();
         (
             Client { connection: write },
@@ -103,25 +105,46 @@ impl ChannelClient {
 impl BlockingClient {
     pub fn start<T: ToSocketAddrs + std::fmt::Debug>(
         addr: T,
-        federate_id: i32,
+        federate_id: FederateId,
         wait_timeout: Duration,
     ) -> (BlockingClient, std::thread::JoinHandle<()>) {
-        let ok_to_proceed = Arc::new(Mutex::new(HashSet::new()));
-        let ok_cvar = Arc::new(Condvar::new());
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_io()
             .build()
             .unwrap();
+        let socket = rt.block_on(socket_from_addr(addr));
+        Self::start_from_socket(rt, federate_id, wait_timeout, socket)
+    }
+    pub fn start_reusing_connection(
+        federate_id: FederateId,
+        wait_timeout: Duration,
+    ) -> (BlockingClient, std::thread::JoinHandle<()>) {
+        let raw_fd = crate::server::connection_raw_fd_for(federate_id);
+        let socket = unsafe { socket_from_raw_fd(raw_fd) };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .build()
+            .unwrap();
+        Self::start_from_socket(rt, federate_id, wait_timeout, socket)
+    }
+    fn start_from_socket(
+        rt: tokio::runtime::Runtime,
+        federate_id: FederateId,
+        wait_timeout: Duration,
+        socket: TcpStream,
+    ) -> (BlockingClient, std::thread::JoinHandle<()>) {
+        let ok_to_proceed = Arc::new(Mutex::new(HashSet::new()));
+        let ok_cvar = Arc::new(Condvar::new());
         let precedence = load_precedence();
         let run_id = precedence.run_id;
         let requires_ok_to_proceed = Self::get_requires_ok_to_proceed(&precedence);
         let requires_notify = Self::get_requires_notify(&precedence);
         let (client, jh) = Self::get_client(
             &rt,
-            addr,
             Arc::clone(&ok_to_proceed),
             Arc::clone(&ok_cvar),
             precedence,
+            socket,
         );
         let join_handle = std::thread::spawn(move || {
             rt.block_on(jh).unwrap();
@@ -137,7 +160,7 @@ impl BlockingClient {
                 .build()
                 .unwrap(),
             precid: Self::load_precid(),
-            fedid: FederateId(federate_id),
+            fedid: federate_id,
             wait_timeout,
             run_id,
         };
@@ -181,15 +204,15 @@ impl BlockingClient {
         self.tracepoint_maybe_wait(hook_invocation.clone());
         self.tracepoint_maybe_notify(hook_invocation);
     }
-    fn get_client<T: ToSocketAddrs + std::fmt::Debug>(
+    fn get_client(
         rt: &tokio::runtime::Runtime,
-        addr: T,
         ok_to_proceed: Arc<Mutex<HashSet<HookInvocation>>>,
         ok_cvar: Arc<Condvar>,
         precedence: Precedence,
+        socket: TcpStream,
     ) -> (Client, tokio::task::JoinHandle<()>) {
-        rt.block_on(Client::start(
-            addr,
+        rt.block_on(Client::start_from_socket(
+            socket,
             Box::new(move |frame| {
                 debug!("Inside callback on frame: {:?}", frame);
                 let mut ok_to_proceed = ok_to_proceed.lock().unwrap();
@@ -231,6 +254,15 @@ impl BlockingClient {
             run_id: self.run_id,
         }));
     }
+}
+
+async fn socket_from_addr<T: ToSocketAddrs + std::fmt::Debug>(addr: T) -> TcpStream {
+    info!(target: "client", "Connecting to {:?}...", addr);
+    let socket = TcpStream::connect(&addr)
+        .await
+        .unwrap_or_else(|e| panic!("Failed to connect to {:?}: {}", addr, e));
+    info!(target: "client", "Connected to {:?}", addr);
+    socket
 }
 
 fn load_precedence() -> Precedence {

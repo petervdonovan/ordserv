@@ -1,6 +1,7 @@
 use std::{collections::HashMap, ffi::OsString, fmt::Display, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 
 pub mod client;
 mod connection;
@@ -12,6 +13,8 @@ pub const ORDSERV_WAIT_TIMEOUT_MILLISECONDS_ENV_VAR: &str = "ORDSERV_WAIT_TIMEOU
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrecedenceId(pub u32);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunId(pub u32);
 
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Clone, Copy)]
 pub struct SequenceNumberByFileAndLine(pub u32);
@@ -91,4 +94,17 @@ pub struct Frame {
     pub hook_id: [u8; 32], // Assume hook id is no more than 31 ascii characters
     pub sequence_number: u32,
     pub run_id: u32,
+}
+
+pub(crate) fn channel_vec<T>(
+    n_connection_streams: usize,
+) -> (Vec<mpsc::Sender<T>>, Vec<mpsc::Receiver<T>>) {
+    let mut senders = Vec::with_capacity(n_connection_streams);
+    let mut receivers = Vec::with_capacity(n_connection_streams);
+    for _ in 0..n_connection_streams {
+        let (sender, receiver) = mpsc::channel(1);
+        senders.push(sender);
+        receivers.push(receiver);
+    }
+    (senders, receivers)
 }

@@ -5,13 +5,24 @@ async fn main() {
     client
         .write(ordering_server::Frame {
             precedence_id: 0,
-            hook_id: [b'B'; 32],
-            federate_id: 0,
+            hook_id: [b'S'; 32],
+            federate_id: 1,
             sequence_number: 0,
             run_id: 0,
         })
         .await;
     println!("Sent frame");
+    // let mut hook_id = [0; 32];
+    // hook_id[0] = b'B';
+    // client
+    //     .write(ordering_server::Frame {
+    //         precedence_id: 0,
+    //         hook_id,
+    //         federate_id: 0,
+    //         sequence_number: 0,
+    //         run_id: 0,
+    //     })
+    //     .await;
     client.frames.recv().await.unwrap();
     println!("\n      world.");
 }
