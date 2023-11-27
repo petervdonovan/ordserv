@@ -71,7 +71,6 @@ pub async fn run(port: u16, capacity: usize) -> ServerHandle {
 ///
 /// This ends when None is received from the precedence stream.
 pub async fn run_reusing_connections(
-    port: u16,
     capacity: usize,
     max_n_simultaneous_connections: usize,
 ) -> ServerHandle {
@@ -86,7 +85,6 @@ pub async fn run_reusing_connections(
     ServerHandle {
         updates_acks: their_updates_acks,
         join_handle: run_server_reusing_connections(
-            port,
             my_updates_acks,
             max_n_simultaneous_connections,
         )
@@ -94,13 +92,16 @@ pub async fn run_reusing_connections(
     }
 }
 
-async fn process_precedence_stream(
+async fn process_precedence_stream<R, W>(
     mut precedence_stream: mpsc::Receiver<Option<Precedence>>,
     acks: mpsc::Sender<EnvironmentVariables>,
-    mut connection_receiver: mpsc::Receiver<(Connection, FederateId, RunId)>,
+    mut connection_receiver: mpsc::Receiver<(Connection<R, W>, FederateId, RunId)>,
     precid: PrecedenceId,
     connection_requests: Option<mpsc::Sender<usize>>,
-) {
+) where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+    W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
     let mut jhs: Vec<JoinHandle<()>> = Vec::new();
     let mut outer_precedence = precedence_stream.recv().await.unwrap_or(None);
     let mut n_successful_connections = 0;
@@ -159,6 +160,7 @@ async fn process_precedence_stream(
             let send_frames = send_frames.clone();
             jhs.push(tokio::spawn(async move {
                 loop {
+                    debug!("Waiting for frame from {:?}", fedid);
                     let frame = reader.read_frame().await;
                     match frame {
                         Some(frame) => {
@@ -244,7 +246,6 @@ async fn run_server(
 }
 
 async fn run_server_reusing_connections(
-    port: u16,
     updates_acks: Vec<(
         mpsc::Receiver<Option<Precedence>>,
         mpsc::Sender<EnvironmentVariables>,
@@ -257,7 +258,6 @@ async fn run_server_reusing_connections(
     let (granted_connections_senders, granted_connections_receivers) =
         channel_vec(updates_acks.len());
     let connection_receivers = reusing(
-        port,
         updates_acks.len(),
         max_n_simultaneous_connections,
         connection_requests_receivers,
@@ -277,7 +277,7 @@ async fn run_server_reusing_connections(
         .zip(granted_connections_receivers.into_iter())
         .enumerate()
     {
-        let (evars_re_sender, evars_receiver) = mpsc::channel::<EnvironmentVariables>(1);
+        let (evars_sender, evars_receiver) = mpsc::channel::<EnvironmentVariables>(1);
         handles.push(tokio::spawn(async move {
             let mut evars = evars_receiver;
             while let Some(mut evars) = evars.recv().await {
@@ -293,12 +293,12 @@ async fn run_server_reusing_connections(
                         granted.to_string().into(),
                     ));
                 }
-                evars_re_sender.send(evars).await.unwrap();
+                ack_sender.send(evars).await.unwrap();
             }
         }));
         handles.push(tokio::spawn(process_precedence_stream(
             update_receiver,
-            ack_sender,
+            evars_sender,
             connection_receiver,
             PrecedenceId(precid as u32),
             Some(connection_requests_sender),

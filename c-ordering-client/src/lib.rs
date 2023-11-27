@@ -5,9 +5,12 @@ use std::{
 };
 
 use ordering_server::{
-    FederateId, HookId, HookInvocation, SequenceNumberByFileAndLine, ORDSERV_PORT_ENV_VAR,
+    FederateId, HookId, HookInvocation, SequenceNumberByFileAndLine,
     ORDSERV_WAIT_TIMEOUT_MILLISECONDS_ENV_VAR,
 };
+
+// type Client = ordering_server::client::BlockingClient<std::os::unix::net::UnixStream>;
+type Client = ordering_server::client::BlockingClient<tokio::net::UnixStream>;
 
 #[no_mangle]
 pub static ORDERING_CLIENT_API: OrderingClientApi = OrderingClientApi {
@@ -98,7 +101,7 @@ pub unsafe extern "C" fn tracepoint_maybe_wait(
     federate_id: c_int,
     sequence_number: c_int,
 ) {
-    let client = &*(client as *mut ordering_server::client::BlockingClient);
+    let client = &*(client as *mut Client);
     client.tracepoint_maybe_wait(make_hook_invocation(hook_id, federate_id, sequence_number));
 }
 
@@ -113,7 +116,7 @@ pub unsafe extern "C" fn tracepoint_maybe_notify(
     federate_id: c_int,
     sequence_number: c_int,
 ) {
-    let client = &*(client as *mut ordering_server::client::BlockingClient);
+    let client = &*(client as *mut Client);
     client.tracepoint_maybe_notify(make_hook_invocation(hook_id, federate_id, sequence_number));
 }
 

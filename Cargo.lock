@@ -196,6 +196,7 @@ checksum = "a2bd12c1caf447e69cd4528f47f94d203fd2582878ecb9e9465484c4148a8223"
 name = "c-ordering-client"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "ordering-server",
  "simple_logger",
  "tokio",
@@ -1183,6 +1184,7 @@ name = "ordering-server"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "libc",
  "log",
  "rmp-serde",
  "serde",

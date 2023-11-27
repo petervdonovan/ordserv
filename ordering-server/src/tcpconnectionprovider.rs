@@ -1,22 +1,24 @@
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::{AsRawFd, IntoRawFd, RawFd};
 
 use std::os::unix::io::FromRawFd;
+use tokio::net::{unix, UnixStream};
 
 use log::{debug, info};
-use tokio::{
-    net::{TcpListener, TcpStream},
-    sync::mpsc,
-};
+use tokio::{net::TcpListener, sync::mpsc};
 
-use crate::channel_vec;
+use crate::{channel_vec, client};
 use crate::{connection::Connection, FederateId, RunId};
 
-pub type ConnectionElt = (Connection, FederateId, RunId);
+pub type ConnectionElt<R, W> = (Connection<R, W>, FederateId, RunId);
+pub type TcpConnectionElt =
+    ConnectionElt<tokio::net::tcp::OwnedReadHalf, tokio::net::tcp::OwnedWriteHalf>;
+pub type UnixConnectionElt =
+    ConnectionElt<tokio::net::unix::OwnedReadHalf, tokio::net::unix::OwnedWriteHalf>;
 
 pub async fn forwarding(
     port: u16,
     n_connection_streams: usize,
-) -> Vec<mpsc::Receiver<ConnectionElt>> {
+) -> Vec<mpsc::Receiver<TcpConnectionElt>> {
     let (senders, receivers) = channel_vec(n_connection_streams);
     let listener = TcpListener::bind(("127.0.0.1", port)).await.unwrap();
     let _drop_me = tokio::spawn(forward_tcp_connections(listener, senders, port));
@@ -25,12 +27,12 @@ pub async fn forwarding(
 
 async fn forward_tcp_connections(
     listener: TcpListener,
-    connection_senders: Vec<mpsc::Sender<ConnectionElt>>,
+    connection_senders: Vec<mpsc::Sender<TcpConnectionElt>>,
     port: u16,
 ) {
     loop {
         debug!("Listening for connections on port {}", port);
-        let mut connection = Connection::new(listener.accept().await.unwrap().0);
+        let mut connection = Connection::new(listener.accept().await.unwrap().0.into_split());
         info!("Accepted connection");
         let frame = connection.read_frame().await;
         match frame {
@@ -67,27 +69,30 @@ async fn forward_tcp_connections(
 }
 
 pub async fn reusing(
-    port: u16,
     n_connection_streams: usize,
     max_n_simultaneous_connections: usize,
     connection_requests: Vec<mpsc::Receiver<usize>>,
     granted_connections: Vec<mpsc::Sender<Vec<RawFd>>>,
-) -> Vec<mpsc::Receiver<ConnectionElt>> {
+) -> Vec<mpsc::Receiver<UnixConnectionElt>> {
     let (senders, receivers) = channel_vec(n_connection_streams);
-    let listener = TcpListener::bind(("127.0.0.1", port)).await.unwrap();
     let mut connection_table: Vec<Vec<(RawFd, RawFd)>> = Vec::with_capacity(n_connection_streams);
     for _ in 0..n_connection_streams {
         let mut connections = Vec::with_capacity(max_n_simultaneous_connections);
         for _ in 0..max_n_simultaneous_connections {
-            let jh = tokio::task::spawn(async move {
-                TcpStream::connect(("127.0.0.1", port))
-                    .await
-                    .unwrap()
-                    .as_raw_fd()
-            });
-            let server_connection = listener.accept().await.unwrap().0.as_raw_fd();
-            let client_connection = jh.await.unwrap();
-            connections.push((server_connection, client_connection));
+            let (server_connection, client_connection) =
+                std::os::unix::net::UnixStream::pair().unwrap();
+            let client_connection = client_connection.into_raw_fd();
+            unsafe {
+                // magic snippet I don't understand dug up from the depths of the web
+                // https://stackoverflow.com/questions/55540577/how-to-communicate-a-rust-and-a-ruby-process-using-a-unix-socket-pair
+                // where the link that was supposed to explain it is dead
+                let flags = libc::fcntl(client_connection, libc::F_GETFD);
+                libc::fcntl(client_connection, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
+            }
+            connections.push((
+                server_connection.into_raw_fd(),
+                client_connection.into_raw_fd(),
+            ));
         }
         connection_table.push(connections);
     }
@@ -108,13 +113,16 @@ pub async fn reusing(
     receivers
 }
 
-pub(crate) unsafe fn socket_from_raw_fd(fd: RawFd) -> TcpStream {
-    TcpStream::from_std(std::net::TcpStream::from_raw_fd(fd)).unwrap()
+pub unsafe fn socket_from_raw_fd(fd: RawFd) -> (unix::OwnedReadHalf, unix::OwnedWriteHalf) {
+    let std = std::os::unix::net::UnixStream::from_raw_fd(fd);
+    std.set_nonblocking(true).unwrap();
+    println!("DEBUG: std: {:?}", std);
+    UnixStream::from_std(std).unwrap().into_split()
 }
 
 async fn reuse_tcp_connections(
     connection_list: Vec<(RawFd, RawFd)>,
-    connection_sender: mpsc::Sender<ConnectionElt>,
+    connection_sender: mpsc::Sender<UnixConnectionElt>,
     mut n_connections: mpsc::Receiver<usize>,
     granted_connection_sender: mpsc::Sender<Vec<RawFd>>,
 ) {
@@ -131,9 +139,8 @@ async fn reuse_tcp_connections(
             .await
             .unwrap();
         for (server_connection, _client_connection) in connection_list.iter().take(n_connections) {
-            let mut server_connection = Connection::new(unsafe {
-                TcpStream::from_std(std::net::TcpStream::from_raw_fd(*server_connection)).unwrap()
-            });
+            let mut server_connection =
+                Connection::new(unsafe { socket_from_raw_fd(*server_connection) });
             let frame = server_connection.read_frame().await;
             match frame {
                 Some(frame) => {

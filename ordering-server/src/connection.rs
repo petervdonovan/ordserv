@@ -1,10 +1,6 @@
-use std::os::fd::AsRawFd;
-
 use bytes::BufMut;
 use log::{debug, info};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufWriter};
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::net::TcpStream;
 
 use crate::{FederateId, Frame, HookId, HookInvocation};
 
@@ -15,16 +11,26 @@ impl Default for FrameBuffer {
         Self([0; FRAME_SIZE], 0)
     }
 }
-pub struct Connection {
-    read: ReadConnection,
-    write: WriteConnection,
+pub struct Connection<R, W>
+where
+    R: AsyncReadExt + Unpin,
+    W: AsyncWriteExt + Unpin,
+{
+    read: ReadConnection<R>,
+    write: WriteConnection<W>,
 }
-pub struct ReadConnection {
-    stream: OwnedReadHalf,
+pub struct ReadConnection<R>
+where
+    R: AsyncReadExt + Unpin,
+{
+    stream: R,
     buffer: FrameBuffer,
 }
-pub struct WriteConnection {
-    stream: BufWriter<OwnedWriteHalf>,
+pub struct WriteConnection<W>
+where
+    W: AsyncWriteExt + Unpin,
+{
+    stream: BufWriter<W>,
 }
 
 unsafe impl BufMut for FrameBuffer {
@@ -41,7 +47,10 @@ unsafe impl BufMut for FrameBuffer {
     }
 }
 
-impl ReadConnection {
+impl<R> ReadConnection<R>
+where
+    R: AsyncReadExt + Unpin,
+{
     pub async fn read_frame(&mut self) -> Option<Frame> {
         debug!("Reading frame...");
         if self.stream.read_buf(&mut self.buffer).await.unwrap_or(0) == 0 {
@@ -66,7 +75,10 @@ impl ReadConnection {
     }
 }
 
-impl WriteConnection {
+impl<W> WriteConnection<W>
+where
+    W: AsyncWriteExt + Unpin,
+{
     pub async fn write_frame(&mut self, frame: Frame) {
         self.stream
             .write_all(&unsafe { std::mem::transmute::<Frame, [u8; FRAME_SIZE]>(frame) })
@@ -78,10 +90,14 @@ impl WriteConnection {
         }
     }
 }
-impl Connection {
-    pub fn new(stream: TcpStream) -> Self {
-        // println!("DEBUG: File descriptor: {}", stream.as_raw_fd());
-        let (read, write) = stream.into_split();
+
+impl<R, W> Connection<R, W>
+where
+    R: AsyncReadExt + Unpin,
+    W: AsyncWriteExt + Unpin,
+{
+    pub fn new(stream: (R, W)) -> Self {
+        let (read, write) = stream;
         Self {
             read: ReadConnection {
                 stream: read,
@@ -103,7 +119,7 @@ impl Connection {
         info!("Closing connection");
         let _ = self.write.stream.shutdown().await; // if this fails, it was already closed anyway
     }
-    pub fn into_split(self) -> (ReadConnection, WriteConnection) {
+    pub fn into_split(self) -> (ReadConnection<R>, WriteConnection<W>) {
         (self.read, self.write)
     }
 }

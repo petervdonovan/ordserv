@@ -7,7 +7,11 @@ use std::{
 
 use log::{debug, info};
 use tokio::{
-    net::{TcpStream, ToSocketAddrs},
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{
+        tcp::{self, OwnedWriteHalf},
+        unix, TcpStream, ToSocketAddrs,
+    },
     sync::mpsc,
     task::JoinHandle,
 };
@@ -19,16 +23,25 @@ use crate::{
     FederateId, Frame, HookInvocation, Precedence, PrecedenceId,
 };
 
-pub struct Client {
-    connection: WriteConnection,
+pub struct Client<W>
+where
+    W: AsyncWriteExt + Unpin,
+{
+    connection: WriteConnection<W>,
 }
-pub struct ChannelClient {
-    client: Client,
+pub struct ChannelClient<W>
+where
+    W: AsyncWriteExt + Unpin,
+{
+    client: Client<W>,
     pub frames: mpsc::Receiver<Frame>,
 }
 
-pub struct BlockingClient {
-    client: Arc<Mutex<Client>>,
+pub struct BlockingClient<W>
+where
+    W: AsyncWriteExt + Unpin,
+{
+    client: Arc<Mutex<Client<W>>>,
     requires_ok_to_proceed: HashSet<HookInvocation>,
     requires_notify: HashSet<HookInvocation>,
     ok_to_proceed: Arc<Mutex<HashSet<HookInvocation>>>,
@@ -40,17 +53,23 @@ pub struct BlockingClient {
     wait_timeout: Duration,
 }
 
-impl Client {
+impl Client<OwnedWriteHalf> {
     pub async fn start<T: ToSocketAddrs + std::fmt::Debug>(
         addr: T,
         callback: Box<dyn FnMut(Frame) + Send>,
-    ) -> (Client, JoinHandle<()>) {
-        Self::start_from_socket(socket_from_addr(addr).await, callback).await
+    ) -> (Client<OwnedWriteHalf>, JoinHandle<()>) {
+        Self::start_from_socket(socket_from_addr(addr).await.into_split(), callback).await
     }
-    async fn start_from_socket(
-        socket: TcpStream,
+}
+
+impl<W> Client<W>
+where
+    W: AsyncWriteExt + Unpin,
+{
+    async fn start_from_socket<R: AsyncReadExt + Unpin + Send + 'static>(
+        socket: (R, W),
         mut callback: Box<dyn FnMut(Frame) + Send>,
-    ) -> (Client, JoinHandle<()>) {
+    ) -> (Client<W>, JoinHandle<()>) {
         let (mut read, write) = Connection::new(socket).into_split();
         (
             Client { connection: write },
@@ -76,13 +95,24 @@ impl Client {
     }
 }
 
-impl ChannelClient {
+impl ChannelClient<tcp::OwnedWriteHalf> {
     pub async fn start<T: ToSocketAddrs + std::fmt::Debug>(
         addr: T,
-    ) -> (ChannelClient, JoinHandle<()>) {
+    ) -> (ChannelClient<tcp::OwnedWriteHalf>, JoinHandle<()>) {
+        ChannelClient::start_from_socket(socket_from_addr(addr).await.into_split()).await
+    }
+}
+
+impl<W> ChannelClient<W>
+where
+    W: AsyncWriteExt + Unpin,
+{
+    pub async fn start_from_socket<R: AsyncReadExt + Unpin + Send + 'static>(
+        socket: (R, W),
+    ) -> (ChannelClient<W>, JoinHandle<()>) {
         let (frames_sender, frames_receiver) = mpsc::channel(1);
-        let (client, join_handle) = Client::start(
-            addr,
+        let (client, join_handle) = Client::start_from_socket(
+            socket,
             Box::new(move |frame| {
                 debug!("Forwarding frame to parent: {:?}", frame);
                 frames_sender.clone().try_send(frame).unwrap();
@@ -102,37 +132,52 @@ impl ChannelClient {
     }
 }
 
-impl BlockingClient {
+impl BlockingClient<tcp::OwnedWriteHalf> {
     pub fn start<T: ToSocketAddrs + std::fmt::Debug>(
         addr: T,
         federate_id: FederateId,
         wait_timeout: Duration,
-    ) -> (BlockingClient, std::thread::JoinHandle<()>) {
+    ) -> (
+        BlockingClient<tcp::OwnedWriteHalf>,
+        std::thread::JoinHandle<()>,
+    ) {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_io()
             .build()
             .unwrap();
         let socket = rt.block_on(socket_from_addr(addr));
-        Self::start_from_socket(rt, federate_id, wait_timeout, socket)
+        Self::start_from_socket(rt, federate_id, wait_timeout, socket.into_split())
     }
+}
+
+impl BlockingClient<unix::OwnedWriteHalf> {
     pub fn start_reusing_connection(
         federate_id: FederateId,
         wait_timeout: Duration,
-    ) -> (BlockingClient, std::thread::JoinHandle<()>) {
+    ) -> (
+        BlockingClient<unix::OwnedWriteHalf>,
+        std::thread::JoinHandle<()>,
+    ) {
         let raw_fd = crate::server::connection_raw_fd_for(federate_id);
-        let socket = unsafe { socket_from_raw_fd(raw_fd) };
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_io()
             .build()
             .unwrap();
+        let socket = rt.block_on(async { unsafe { socket_from_raw_fd(raw_fd) } });
         Self::start_from_socket(rt, federate_id, wait_timeout, socket)
     }
-    fn start_from_socket(
+}
+
+impl<W> BlockingClient<W>
+where
+    W: AsyncWriteExt + Unpin,
+{
+    fn start_from_socket<R: AsyncReadExt + Unpin + Send + 'static>(
         rt: tokio::runtime::Runtime,
         federate_id: FederateId,
         wait_timeout: Duration,
-        socket: TcpStream,
-    ) -> (BlockingClient, std::thread::JoinHandle<()>) {
+        socket: (R, W),
+    ) -> (BlockingClient<W>, std::thread::JoinHandle<()>) {
         let ok_to_proceed = Arc::new(Mutex::new(HashSet::new()));
         let ok_cvar = Arc::new(Condvar::new());
         let precedence = load_precedence();
@@ -170,6 +215,7 @@ impl BlockingClient {
     pub fn tracepoint_maybe_wait(&self, hook_invocation: HookInvocation) {
         assert!(hook_invocation.hid.1 == self.fedid);
         if self.requires_ok_to_proceed.contains(&hook_invocation) {
+            debug!("{:?} requires wait", hook_invocation);
             let mut ok_to_proceed = self.ok_to_proceed.lock().unwrap();
             while !ok_to_proceed.contains(&hook_invocation) {
                 let result = self
@@ -185,6 +231,7 @@ impl BlockingClient {
         }
     }
     pub fn tracepoint_maybe_notify(&self, hook_invocation: HookInvocation) {
+        debug!("Checking if {:?} requires notify", hook_invocation);
         if self.requires_notify.contains(&hook_invocation) {
             let mut hook_id = [0; 32];
             for (idx, byte) in hook_invocation.hid.0.as_bytes().iter().enumerate() {
@@ -204,13 +251,13 @@ impl BlockingClient {
         self.tracepoint_maybe_wait(hook_invocation.clone());
         self.tracepoint_maybe_notify(hook_invocation);
     }
-    fn get_client(
+    fn get_client<R: AsyncReadExt + Unpin + Send + 'static>(
         rt: &tokio::runtime::Runtime,
         ok_to_proceed: Arc<Mutex<HashSet<HookInvocation>>>,
         ok_cvar: Arc<Condvar>,
         precedence: Precedence,
-        socket: TcpStream,
-    ) -> (Client, tokio::task::JoinHandle<()>) {
+        socket: (R, W),
+    ) -> (Client<W>, tokio::task::JoinHandle<()>) {
         rt.block_on(Client::start_from_socket(
             socket,
             Box::new(move |frame| {
