@@ -5,17 +5,21 @@ use std::{
 };
 
 use ordering_server::{
+    client::BlockingClientJoinHandle,
+    connection::{ReadConnection, WriteConnection, UNIX_CONNECTION_MANAGEMENT},
     FederateId, HookId, HookInvocation, SequenceNumberByFileAndLine,
     ORDSERV_WAIT_TIMEOUT_MILLISECONDS_ENV_VAR,
 };
 
+use log::debug;
+
 // type Client = ordering_server::client::BlockingClient<std::os::unix::net::UnixStream>;
-type Client = ordering_server::client::BlockingClient<tokio::net::UnixStream>;
+type Client = ordering_server::client::BlockingClient;
 
 #[no_mangle]
 pub static ORDERING_CLIENT_API: OrderingClientApi = OrderingClientApi {
     start_client,
-    drop_join_handle,
+    finish,
     tracepoint_maybe_wait,
     tracepoint_maybe_notify,
     tracepoint_maybe_do,
@@ -24,7 +28,7 @@ pub static ORDERING_CLIENT_API: OrderingClientApi = OrderingClientApi {
 #[repr(C)]
 pub struct OrderingClientApi {
     start_client: unsafe extern "C" fn(fedid: c_int) -> ClientAndJoinHandle,
-    drop_join_handle: unsafe extern "C" fn(join_handle: *mut c_void),
+    finish: unsafe extern "C" fn(client_and_join_handle: ClientAndJoinHandle),
     tracepoint_maybe_wait: unsafe extern "C" fn(
         client: *mut c_void,
         hook_id: *const c_char,
@@ -58,7 +62,7 @@ pub struct ClientAndJoinHandle {
 /// return value of this function; it is already protected by a mutex internally.
 #[no_mangle]
 pub unsafe extern "C" fn start_client(fedid: c_int) -> ClientAndJoinHandle {
-    simple_logger::SimpleLogger::new().init().unwrap();
+    // simple_logger::SimpleLogger::new().init().unwrap();
     println!("Starting client");
     #[allow(clippy::unnecessary_cast)]
     let (client, join_handle) = ordering_server::client::BlockingClient::start_reusing_connection(
@@ -77,17 +81,28 @@ pub unsafe extern "C" fn start_client(fedid: c_int) -> ClientAndJoinHandle {
     }
 }
 
-/// Terminate the client thread.
+/// Wait for the client thread to finish its final tasks, and GC its resources.
 ///
 /// # Safety
 ///
 /// This function invalidates its argument (by freeing it).
 #[no_mangle]
-pub unsafe extern "C" fn drop_join_handle(join_handle: *mut c_void) {
-    // FIXME: it is not clear how to do this (and it is not strictly necessary)
-    // (join_handle as *mut std::thread::JoinHandle<()>)
-    //     .as_ref()
-    //     .unwrap();
+pub unsafe extern "C" fn finish(client_and_join_handle: ClientAndJoinHandle) {
+    let client = Box::from_raw(client_and_join_handle.client as *mut Client);
+    client.halt.send(()).unwrap();
+    let join_handle =
+        Box::from_raw(client_and_join_handle.join_handle as *mut BlockingClientJoinHandle);
+    debug!("Joining client thread");
+    drop(client);
+    let (inner_client, read) = join_handle.join().unwrap();
+    debug!("Client thread joined");
+    (UNIX_CONNECTION_MANAGEMENT.unborrow)((
+        ReadConnection::new(read),
+        WriteConnection {
+            stream: inner_client.connection.stream,
+        },
+    ));
+    debug!("Exiting.");
 }
 
 /// # Safety

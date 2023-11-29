@@ -8,6 +8,7 @@ int main(int argc, char **argv) {
   ClientAndJoinHandle client_and_jh = api->start_client(1);
   void* client = client_and_jh.client;
   // client.tracepoint_maybe_do(HookInvocation::from_short(("B99", 1, 0)));
+  printf("B is starting maybe do\n");
   api->tracepoint_maybe_do(client, "B99", 1, 0);
   // client.tracepoint_maybe_do(HookInvocation::from_short(("B0", 1, 0)));
   api->tracepoint_maybe_do(client, "B0", 1, 0);
@@ -33,5 +34,5 @@ int main(int argc, char **argv) {
   printf("      server\n");
   // client.tracepoint_maybe_do(HookInvocation::from_short(("B6", 1, 0)));
   api->tracepoint_maybe_do(client, "B6", 1, 0);
-  api->drop_join_handle(client_and_jh.join_handle);
+  api->finish(client_and_jh);
 }

@@ -6,7 +6,7 @@ use tokio::task::JoinHandle;
 
 use crate::{
     channel_vec,
-    connection::Connection,
+    connection::{Connection, ConnectionManagement, UNIX_CONNECTION_MANAGEMENT},
     tcpconnectionprovider::{forwarding, reusing},
     EnvironmentVariables, FederateId, Precedence, PrecedenceId, RunId,
 };
@@ -46,20 +46,20 @@ pub type ServerSubHandle = (
 /// 4. Waits for all the processes to finish
 ///
 /// This ends when None is received from the precedence stream.
-pub async fn run(port: u16, capacity: usize) -> ServerHandle {
-    let mut my_updates_acks = Vec::with_capacity(capacity);
-    let mut their_updates_acks = Vec::with_capacity(capacity);
-    for _ in 0..capacity {
-        let (update_sender, update_receiver) = mpsc::channel(1);
-        let (ack_sender, ack_receiver) = mpsc::channel(1);
-        their_updates_acks.push((update_sender, ack_receiver));
-        my_updates_acks.push((update_receiver, ack_sender));
-    }
-    ServerHandle {
-        updates_acks: their_updates_acks,
-        join_handle: run_server(port, my_updates_acks).await,
-    }
-}
+// pub async fn run(port: u16, capacity: usize) -> ServerHandle {
+//     let mut my_updates_acks = Vec::with_capacity(capacity);
+//     let mut their_updates_acks = Vec::with_capacity(capacity);
+//     for _ in 0..capacity {
+//         let (update_sender, update_receiver) = mpsc::channel(1);
+//         let (ack_sender, ack_receiver) = mpsc::channel(1);
+//         their_updates_acks.push((update_sender, ack_receiver));
+//         my_updates_acks.push((update_receiver, ack_sender));
+//     }
+//     ServerHandle {
+//         updates_acks: their_updates_acks,
+//         join_handle: run_server(port, my_updates_acks).await,
+//     }
+// }
 
 /// This function spawns a process that assumes that each element of `updates_acks` is managed by a
 /// single sequential process that repeatedly:
@@ -95,9 +95,10 @@ pub async fn run_reusing_connections(
 async fn process_precedence_stream<R, W>(
     mut precedence_stream: mpsc::Receiver<Option<Precedence>>,
     acks: mpsc::Sender<EnvironmentVariables>,
-    mut connection_receiver: mpsc::Receiver<(Connection<R, W>, FederateId, RunId)>,
+    mut connection_receiver: mpsc::Receiver<(RawFd, FederateId, RunId)>,
     precid: PrecedenceId,
     connection_requests: Option<mpsc::Sender<usize>>,
+    connection_management: ConnectionManagement<R, W>,
 ) where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
     W: tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -129,6 +130,7 @@ async fn process_precedence_stream<R, W>(
             tokio::select! {
                 new_connection = connection_receiver.recv() => {
                     let (connection, fedid, run_id) = new_connection.unwrap();
+                    let connection = unsafe {(connection_management.borrow)(connection)};
                     if run_id.0 != precedence.run_id {
                         warn!("Received connection with run_id {} but precedence has run_id {}", run_id.0, precedence.run_id);
                         connection.close().await;
@@ -156,50 +158,98 @@ async fn process_precedence_stream<R, W>(
             n_successful_connections as f64 / n_attempted_connections as f64
         );
         let (send_frames, mut recv_frames) = mpsc::channel(1);
+        let (halt_sender, mut halt_receiver) = tokio::sync::watch::channel(());
+        let mut reader_handles = HashMap::new();
         for (fedid, mut reader) in readers.into_iter() {
+            let mut halt_receiver = halt_receiver.clone();
             let send_frames = send_frames.clone();
-            jhs.push(tokio::spawn(async move {
-                loop {
-                    debug!("Waiting for frame from {:?}", fedid);
-                    let frame = reader.read_frame().await;
-                    match frame {
-                        Some(frame) => {
-                            debug!("Received frame: {:?} from {:?}", frame, fedid);
-                            assert!(fedid.0 == frame.federate_id);
-                            assert!(precedence.run_id == frame.run_id);
-                            send_frames.send(frame).await.unwrap();
+            reader_handles.insert(
+                fedid,
+                tokio::spawn(async move {
+                    loop {
+                        debug!("Waiting for frame from {:?}", fedid);
+                        tokio::select! {
+                            _ = halt_receiver.changed() => {
+                                info!("Reader received halt signal");
+                                break;
+                            }
+                            frame = reader.read_frame() => {
+                                match frame {
+                                    Some(frame) => {
+                                        debug!("Received frame: {:?} from {:?}", frame, fedid);
+                                        assert!(fedid.0 == frame.federate_id);
+                                        assert!(precedence.run_id == frame.run_id);
+                                        send_frames.send(frame).await.unwrap();
+                                    }
+                                    None => {
+                                        info!(target: "server", "Connection closed");
+                                        break;
+                                    }
+                                }
+                            }
                         }
-                        None => {
-                            info!(target: "server", "Connection closed");
-                            break;
+                    }
+                    reader
+                }),
+            );
+        }
+        let writer_handle = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = halt_receiver.changed() => {
+                        info!("Writer received halt signal");
+                        break;
+                    }
+                    frame = recv_frames.recv() => {
+                        match frame {
+                            Some(frame) => {
+                                for dest in precedence
+                                    .sender2waiters
+                                    .get(&frame.hook_invocation())
+                                    .unwrap_or_else(|| {
+                                        panic!("Received frame {:?} with hid {:?} for which there are no waiters; the actual precedence is:\n    {:?}", frame, frame.hid(), precedence);
+                                    })
+                                {
+                                    debug!("Forwarding frame to {:?}", dest);
+                                    let writers_debug = writers.keys().cloned().collect::<Vec<_>>(); // FIXME: this is just for debugging
+                                    writers
+                                        .get_mut(&dest.hid.1)
+                                        .unwrap_or_else(|| {
+                                            panic!("Received frame {:?} with hid {:?} and dest id {:?} for which there are no writers for the dest; the actual precedence is:\n    {:?}, and the writers are:\n    {:?}", frame, frame.hid(), &dest.hid.1, precedence, writers_debug);
+                                        })
+                                        .write_frame(frame)
+                                        .await;
+                                }
+                            }
+                            None => {
+                                info!(target: "server", "Connection closed");
+                                break;
+                            }
                         }
                     }
                 }
-            }));
-        }
-        jhs.push(tokio::spawn(async move {
-            while let Some(frame) = recv_frames.recv().await {
-                for dest in precedence
-                    .sender2waiters
-                    .get(&frame.hook_invocation())
-                    .unwrap_or_else(|| {
-                        panic!("Received frame {:?} with hid {:?} for which there are no waiters; the actual precedence is:\n    {:?}", frame, frame.hid(), precedence);
-                    })
-                {
-                    debug!("Forwarding frame to {:?}", dest);
-                    let writers_debug = writers.keys().cloned().collect::<Vec<_>>(); // FIXME: this is just for debugging
-                    writers
-                        .get_mut(&dest.hid.1)
-                        .unwrap_or_else(|| {
-                            panic!("Received frame {:?} with hid {:?} and dest id {:?} for which there are no writers for the dest; the actual precedence is:\n    {:?}, and the writers are:\n    {:?}", frame, frame.hid(), &dest.hid.1, precedence, writers_debug);
-                        })
-                        .write_frame(frame)
-                        .await;
-                }
             }
-        }));
+            writers
+        });
         debug!("Awaiting a new precedence");
         outer_precedence = precedence_stream.recv().await.unwrap_or(None);
+        debug!("Received new precedence");
+        halt_sender.send(()).unwrap();
+        let mut writer_handle = writer_handle.await.unwrap();
+        for fedid in reader_handles.keys().cloned().collect::<Vec<_>>() {
+            unsafe {
+                (connection_management.unborrow)((
+                    reader_handles
+                        .remove_entry(&fedid)
+                        .unwrap()
+                        .1
+                        .await
+                        .unwrap(),
+                    writer_handle.remove_entry(&fedid).unwrap().1,
+                ))
+            }
+        }
+        info!("unborrows done");
     }
     debug!("Received None from precedence stream");
 }
@@ -216,34 +266,38 @@ fn environment_variables_for_clients(
     ])
 }
 
-async fn run_server(
-    port: u16,
-    updates_acks: Vec<(
-        mpsc::Receiver<Option<Precedence>>,
-        mpsc::Sender<EnvironmentVariables>,
-    )>,
-) -> JoinHandle<()> {
-    let mut handles = Vec::with_capacity(updates_acks.len() + 1);
-    let connection_receivers = forwarding(port, updates_acks.len()).await;
-    for (precid, ((update_receiver, ack_sender), connection_receiver)) in updates_acks
-        .into_iter()
-        .zip(connection_receivers.into_iter())
-        .enumerate()
-    {
-        handles.push(tokio::spawn(process_precedence_stream(
-            update_receiver,
-            ack_sender,
-            connection_receiver,
-            PrecedenceId(precid as u32),
-            None,
-        )));
-    }
-    tokio::spawn(async move {
-        for handle in handles {
-            handle.await.unwrap();
-        }
-    })
-}
+// async fn run_server(
+//     port: u16,
+//     updates_acks: Vec<(
+//         mpsc::Receiver<Option<Precedence>>,
+//         mpsc::Sender<EnvironmentVariables>,
+//     )>,
+// ) -> JoinHandle<()> {
+//     let mut handles = Vec::with_capacity(updates_acks.len() + 1);
+//     let connection_receivers = forwarding(port, updates_acks.len()).await;
+//     for (precid, ((update_receiver, ack_sender), connection_receiver)) in updates_acks
+//         .into_iter()
+//         .zip(connection_receivers.into_iter())
+//         .enumerate()
+//     {
+//         handles.push(tokio::spawn(process_precedence_stream(
+//             update_receiver,
+//             ack_sender,
+//             connection_receiver,
+//             PrecedenceId(precid as u32),
+//             None,
+//             ConnectionManagement {
+//                 borrow: (),
+//                 unborrow: (),
+//             },
+//         )));
+//     }
+//     tokio::spawn(async move {
+//         for handle in handles {
+//             handle.await.unwrap();
+//         }
+//     })
+// }
 
 async fn run_server_reusing_connections(
     updates_acks: Vec<(
@@ -302,6 +356,7 @@ async fn run_server_reusing_connections(
             connection_receiver,
             PrecedenceId(precid as u32),
             Some(connection_requests_sender),
+            UNIX_CONNECTION_MANAGEMENT,
         )));
     }
     tokio::spawn(async move {

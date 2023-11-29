@@ -1,4 +1,4 @@
-use std::process::{Child, Command};
+use std::process::Command;
 
 use ordering_server::{
     server, EnvironmentVariables, Precedence, ORDSERV_PORT_ENV_VAR,
@@ -7,17 +7,7 @@ use ordering_server::{
 
 const PORT: u16 = 15045;
 
-fn compile_and_run(name: String, runtime_evars: &EnvironmentVariables) -> Child {
-    if !Command::new("cargo")
-        .args(["build", "-p", "c-ordering-client"])
-        .spawn()
-        .unwrap()
-        .wait()
-        .unwrap()
-        .success()
-    {
-        panic!("failed to compile");
-    }
+fn compile(name: String) {
     let mut child = Command::new("gcc")
         .args([
             "-g",
@@ -34,22 +24,31 @@ fn compile_and_run(name: String, runtime_evars: &EnvironmentVariables) -> Child 
     if !child.wait().unwrap().success() {
         panic!("failed to compile");
     }
-    println!("DEBUG: evars: {:?}", runtime_evars.0);
-    Command::new(format!("./c-ordering-client/examples/{}.run", name))
-        .envs(runtime_evars.0.clone())
-        .env(ORDSERV_PORT_ENV_VAR, PORT.to_string())
-        .env(ORDSERV_WAIT_TIMEOUT_MILLISECONDS_ENV_VAR, "5000")
-        .env(
-            "C_ORDERING_CLIENT_LIBRARY_PATH",
-            "./target/debug/libc_ordering_client.so",
-        )
-        .spawn()
-        .expect("failed to execute process")
+}
+
+fn run_federate(name: String, runtime_evars: &EnvironmentVariables) -> std::thread::JoinHandle<()> {
+    let evars = runtime_evars.0.clone();
+    std::thread::spawn(move || {
+        let mut child = Command::new(format!("./c-ordering-client/examples/{}.run", name))
+            .envs(evars)
+            .env(ORDSERV_PORT_ENV_VAR, PORT.to_string())
+            .env(ORDSERV_WAIT_TIMEOUT_MILLISECONDS_ENV_VAR, "50000000000")
+            .env(
+                "C_ORDERING_CLIENT_LIBRARY_PATH",
+                "./target/debug/libc_ordering_client.so",
+            )
+            .spawn()
+            .expect("failed to execute process");
+        let result = child.wait().expect("failed to wait for child");
+        if !result.success() {
+            panic!("failure {}", name);
+        }
+    })
 }
 
 #[tokio::main]
 async fn main() {
-    simple_logger::SimpleLogger::new().init().unwrap();
+    // simple_logger::SimpleLogger::new().init().unwrap();
     let mut server_handle = server::run_reusing_connections(1, 16).await;
     let precedence = Precedence::from_list(
         3,
@@ -73,19 +72,46 @@ async fn main() {
         "/tmp".into(),
         0,
     );
+    if !Command::new("cargo")
+        .args(["build", "-p", "c-ordering-client"])
+        .spawn()
+        .unwrap()
+        .wait()
+        .unwrap()
+        .success()
+    {
+        panic!("failed to compile");
+    }
+    server_handle.updates_acks[0]
+        .0
+        .send(Some(precedence.clone()))
+        .await
+        .unwrap();
+    let evars = server_handle.updates_acks[0].1.recv().await.unwrap();
+    compile("blocking-client-a".into());
+    compile("blocking-client-b".into());
+    compile("blocking-client-c".into());
+    let child_a = run_federate("blocking-client-a".into(), &evars);
+    let child_b = run_federate("blocking-client-b".into(), &evars);
+    let child_c = run_federate("blocking-client-c".into(), &evars);
+    child_a.join().unwrap();
+    child_b.join().unwrap();
+    child_c.join().unwrap();
     server_handle.updates_acks[0]
         .0
         .send(Some(precedence))
         .await
         .unwrap();
     let evars = server_handle.updates_acks[0].1.recv().await.unwrap();
-    println!("DEBUG: Got evars: {:?}", evars);
-    let mut child_a = compile_and_run("blocking-client-a".into(), &evars);
-    let mut child_b = compile_and_run("blocking-client-b".into(), &evars);
-    let mut child_c = compile_and_run("blocking-client-c".into(), &evars);
-    child_a.wait().unwrap();
-    child_b.wait().unwrap();
-    child_c.wait().unwrap();
+    compile("blocking-client-a".into());
+    compile("blocking-client-b".into());
+    compile("blocking-client-c".into());
+    let child_a = run_federate("blocking-client-a".into(), &evars);
+    let child_b = run_federate("blocking-client-b".into(), &evars);
+    let child_c = run_federate("blocking-client-c".into(), &evars);
+    child_a.join().unwrap();
+    child_b.join().unwrap();
+    child_c.join().unwrap();
     server_handle.updates_acks[0].0.send(None).await.unwrap();
     server_handle.join_handle.await.unwrap();
     println!("Server finished");

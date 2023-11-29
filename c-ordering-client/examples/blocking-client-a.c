@@ -32,5 +32,5 @@ int main(int argc, char **argv) {
   printf("ordering\n");
   // client.tracepoint_maybe_notify(HookInvocation::from_short(("A4", 0, 1)));
   api->tracepoint_maybe_notify(client, "A4", 0, 1);
-  api->drop_join_handle(client_and_jh.join_handle);
+  api->finish(client_and_jh);
 }

@@ -1,19 +1,16 @@
-use std::os::fd::{AsRawFd, IntoRawFd, RawFd};
-
-use std::os::unix::io::FromRawFd;
-use tokio::net::{unix, UnixStream};
+use std::os::fd::{IntoRawFd, RawFd};
 
 use log::{debug, info};
 use tokio::{net::TcpListener, sync::mpsc};
 
-use crate::{channel_vec, client};
+use crate::channel_vec;
+use crate::connection::UNIX_CONNECTION_MANAGEMENT;
 use crate::{connection::Connection, FederateId, RunId};
 
 pub type ConnectionElt<R, W> = (Connection<R, W>, FederateId, RunId);
 pub type TcpConnectionElt =
     ConnectionElt<tokio::net::tcp::OwnedReadHalf, tokio::net::tcp::OwnedWriteHalf>;
-pub type UnixConnectionElt =
-    ConnectionElt<tokio::net::unix::OwnedReadHalf, tokio::net::unix::OwnedWriteHalf>;
+pub type UnixConnectionElt = (RawFd, FederateId, RunId);
 
 pub async fn forwarding(
     port: u16,
@@ -82,17 +79,17 @@ pub async fn reusing(
             let (server_connection, client_connection) =
                 std::os::unix::net::UnixStream::pair().unwrap();
             let client_connection = client_connection.into_raw_fd();
+            let server_connection = server_connection.into_raw_fd();
             unsafe {
                 // magic snippet I don't understand dug up from the depths of the web
                 // https://stackoverflow.com/questions/55540577/how-to-communicate-a-rust-and-a-ruby-process-using-a-unix-socket-pair
                 // where the link that was supposed to explain it is dead
                 let flags = libc::fcntl(client_connection, libc::F_GETFD);
                 libc::fcntl(client_connection, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
+                let flags = libc::fcntl(server_connection, libc::F_GETFD);
+                libc::fcntl(server_connection, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
             }
-            connections.push((
-                server_connection.into_raw_fd(),
-                client_connection.into_raw_fd(),
-            ));
+            connections.push((server_connection, client_connection));
         }
         connection_table.push(connections);
     }
@@ -111,13 +108,6 @@ pub async fn reusing(
         ));
     }
     receivers
-}
-
-pub unsafe fn socket_from_raw_fd(fd: RawFd) -> (unix::OwnedReadHalf, unix::OwnedWriteHalf) {
-    let std = std::os::unix::net::UnixStream::from_raw_fd(fd);
-    std.set_nonblocking(true).unwrap();
-    println!("DEBUG: std: {:?}", std);
-    UnixStream::from_std(std).unwrap().into_split()
 }
 
 async fn reuse_tcp_connections(
@@ -139,9 +129,10 @@ async fn reuse_tcp_connections(
             .await
             .unwrap();
         for (server_connection, _client_connection) in connection_list.iter().take(n_connections) {
-            let mut server_connection =
-                Connection::new(unsafe { socket_from_raw_fd(*server_connection) });
-            let frame = server_connection.read_frame().await;
+            let mut server_connection_borrowed =
+                unsafe { (UNIX_CONNECTION_MANAGEMENT.borrow)(*server_connection) };
+            // Connection::new(unsafe { socket_from_raw_fd(*server_connection) });
+            let frame = server_connection_borrowed.read_frame().await;
             match frame {
                 Some(frame) => {
                     debug!("Received initial frame: {:?}", frame);
@@ -150,7 +141,7 @@ async fn reuse_tcp_connections(
                         //     "Received frame with hook_id {:?} instead of 'S'",
                         //     frame.hook_id
                         // );
-                        // server_connection.close().await;
+                        // server_connection_borrowed.close().await;
                         // eprintln!("Forcibly closed connection; client should crash.");
                         // continue;
                         panic!(
@@ -158,9 +149,16 @@ async fn reuse_tcp_connections(
                             frame.hook_id
                         );
                     }
+                    unsafe {
+                        (UNIX_CONNECTION_MANAGEMENT.unborrow)(
+                            server_connection_borrowed.into_split(),
+                        );
+                    }
+                    // let second_frame = server_connection.read_frame().await; // DEBUG
+                    // debug!("Second frame: {:?}", second_frame); // DEBUG
                     if connection_sender
                         .send((
-                            server_connection,
+                            *server_connection,
                             FederateId(frame.federate_id),
                             RunId(frame.run_id),
                         ))

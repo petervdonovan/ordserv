@@ -16,6 +16,7 @@ use streaming_transpositions::{
 };
 
 const RANDOM_ORDERING_GEOMETRIC_R: f64 = 0.5;
+const MAX_NUM_FEDERATES_PER_TEST: usize = 48;
 
 use crate::{
   env::get_valid_port,
@@ -443,10 +444,11 @@ impl AccumulatingTracesState {
       async_scoped::TokioScope::scope_and_block(|scope| {
         let self_immut: &AccumulatingTracesState = self;
         for tidx in 0..*CONCURRENCY_LIMIT.wait() {
-          let port = get_valid_port();
+          let port = get_valid_port(); // FIXME: not needed
           let my_ovr = Arc::clone(&self.ovr);
           let proc = || async move {
-            let mut ordserv = ordering_server::server::run(port, 1).await;
+            let mut ordserv =
+              ordering_server::server::run_reusing_connections(1, MAX_NUM_FEDERATES_PER_TEST).await;
             let ordserv = &mut ordserv.updates_acks[0];
             let mut rctx = RunContext {
               scratch,
@@ -462,8 +464,14 @@ impl AccumulatingTracesState {
               let (id, exe) = executables.choose(&mut rng).unwrap();
               let conl = self_immut.get_constraint_vector(id);
               let clr = Arc::clone(&self_immut.runs[id]);
+              let t1 = std::time::Instant::now();
               let run = self_immut.get_run(id, exe, &conl, clr, &mut rctx).await;
-              println!("DEBUG: Success (run id {}).", rctx.run_id);
+              println!(
+                "DEBUG: Success (run id {}) in {} milliseconds. Success: {}.",
+                rctx.run_id,
+                (std::time::Instant::now() - t1).as_millis(),
+                run.is_ok()
+              );
               rctx.run_id += 1;
               let mut entry = self_immut.runs.get(id).unwrap().write().unwrap();
               entry.clr.push(conl);

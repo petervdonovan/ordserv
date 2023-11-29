@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 pub mod client;
-mod connection;
+pub mod connection;
 pub mod server;
 pub mod tcpconnectionprovider;
 
@@ -24,7 +24,7 @@ pub struct HookInvocation {
     pub hid: HookId,
     pub seqnum: SequenceNumberByFileAndLine,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Precedence {
     pub sender2waiters: HashMap<HookInvocation, Vec<HookInvocation>>,
     pub n_connections: usize,

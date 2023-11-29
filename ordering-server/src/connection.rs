@@ -1,6 +1,11 @@
+use std::os::fd::{FromRawFd, IntoRawFd, RawFd};
+
 use bytes::BufMut;
 use log::{debug, info};
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufWriter};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt, BufWriter},
+    net::{unix, UnixStream},
+};
 
 use crate::{FederateId, Frame, HookId, HookInvocation};
 
@@ -23,26 +28,45 @@ pub struct ReadConnection<R>
 where
     R: AsyncReadExt + Unpin,
 {
-    stream: R,
+    pub stream: R, // FIXME: should be private
     buffer: FrameBuffer,
 }
+impl<R> ReadConnection<R>
+where
+    R: AsyncReadExt + Unpin,
+{
+    pub fn new(stream: R) -> Self {
+        Self {
+            stream,
+            buffer: FrameBuffer::default(),
+        }
+    }
+}
+
 pub struct WriteConnection<W>
 where
     W: AsyncWriteExt + Unpin,
 {
-    stream: BufWriter<W>,
+    pub stream: BufWriter<W>, // FIXME: should be private
 }
 
 unsafe impl BufMut for FrameBuffer {
+    // FIXME: not thread-safe
     fn remaining_mut(&self) -> usize {
         FRAME_SIZE - self.1
     }
 
     unsafe fn advance_mut(&mut self, cnt: usize) {
+        if self.1 + cnt > FRAME_SIZE {
+            panic!("Frame buffer overflow");
+        }
         self.1 += cnt;
     }
 
     fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice {
+        if self.1 % FRAME_SIZE != 0 {
+            panic!("Frame buffer is not aligned");
+        }
         unsafe { std::mem::transmute(&mut self.0[self.1..]) }
     }
 }
@@ -80,11 +104,14 @@ where
     W: AsyncWriteExt + Unpin,
 {
     pub async fn write_frame(&mut self, frame: Frame) {
+        debug!("Writing frame to the socket: {:?}", frame);
         self.stream
             .write_all(&unsafe { std::mem::transmute::<Frame, [u8; FRAME_SIZE]>(frame) })
             .await
             .unwrap();
+        debug!("Flushing frame to the socket");
         let result = self.stream.flush().await;
+        debug!("Flushed frame to the socket");
         if let Err(e) = result {
             debug!("Failed to flush frame: {:?}", e);
         }
@@ -122,6 +149,41 @@ where
     pub fn into_split(self) -> (ReadConnection<R>, WriteConnection<W>) {
         (self.read, self.write)
     }
+}
+
+/// ### Safety
+///
+/// Creation and destruction functions for a connection assuming that the file handle is mutably
+/// borrowed, not owned -- this is not expressed in the type system, although it should be, hence
+/// the use of `unsafe`.
+pub struct ConnectionManagement<R, W>
+where
+    R: AsyncReadExt + Unpin,
+    W: AsyncWriteExt + Unpin,
+{
+    pub borrow: unsafe fn(RawFd) -> Connection<R, W>,
+    pub unborrow: unsafe fn((ReadConnection<R>, WriteConnection<W>)),
+}
+
+pub const UNIX_CONNECTION_MANAGEMENT: ConnectionManagement<
+    unix::OwnedReadHalf,
+    unix::OwnedWriteHalf,
+> = ConnectionManagement {
+    borrow: |fd| unsafe { Connection::new(socket_from_raw_fd(fd)) },
+    unborrow: |(r, w)| {
+        let reunited = r
+            .stream
+            .reunite(w.stream.into_inner())
+            .expect("Failed to reunite connection");
+        reunited.into_std().unwrap().into_raw_fd();
+    },
+};
+
+unsafe fn socket_from_raw_fd(fd: RawFd) -> (unix::OwnedReadHalf, unix::OwnedWriteHalf) {
+    let std = std::os::unix::net::UnixStream::from_raw_fd(fd);
+    std.set_nonblocking(true).unwrap();
+    info!("recovering socket from std: {:?}", std);
+    UnixStream::from_std(std).unwrap().into_split()
 }
 
 impl Frame {

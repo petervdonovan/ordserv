@@ -39,5 +39,5 @@ int main(int argc, char **argv) {
   api->tracepoint_maybe_do(client, "C2", -1, 1);
   // println!("            .");
   printf("            .\n");
-  api->drop_join_handle(client_and_jh.join_handle);
+  api->finish(client_and_jh);
 }
