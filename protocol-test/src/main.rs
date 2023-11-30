@@ -28,7 +28,8 @@ const DEFAULT_SCRATCH_DIR: &str = "scratch";
 const DEFAULT_SAVE_INTERVAL_SECONDS: u32 = 60;
 
 fn main() {
-  simple_logger::init_with_level(log::Level::Warn).unwrap();
+  simple_logger::init_with_level(log::Level::Debug).unwrap();
+  console_subscriber::init();
   let args = Cli::parse();
   let scratch_dir = args
     .scratch_dir

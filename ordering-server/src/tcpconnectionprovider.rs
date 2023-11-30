@@ -120,10 +120,11 @@ fn make_server_and_client_connection_pair() -> (RawFd, RawFd) {
 async fn reuse_tcp_connections(
     mut connection_list: Vec<(RawFd, RawFd)>,
     connection_sender: mpsc::Sender<UnixConnectionElt>,
-    mut n_connections: mpsc::Receiver<usize>,
+    mut n_connections_receiver: mpsc::Receiver<usize>,
     granted_connection_sender: mpsc::Sender<Vec<RawFd>>,
 ) {
-    while let Some(n_connections) = n_connections.recv().await {
+    let mut n_connections_option = n_connections_receiver.recv().await;
+    'outer_outer: while let Some(n_connections) = n_connections_option {
         let mut server_connections_borrowed = Vec::with_capacity(n_connections);
         for (server_connection, client_connection) in connection_list.iter_mut().take(n_connections)
         {
@@ -154,51 +155,59 @@ async fn reuse_tcp_connections(
         {
             // Connection::new(unsafe { socket_from_raw_fd(*server_connection) });
             loop {
-                let frame = server_connection_borrowed.read_frame().await;
-                match frame {
-                    Some(frame) => {
-                        debug!("Received initial frame: {:?}", frame);
-                        if frame.hook_id[0] != b'S' {
-                            // eprintln!(
-                            //     "Received frame with hook_id {:?} instead of 'S'",
-                            //     frame.hook_id
-                            // );
-                            // server_connection_borrowed.close().await;
-                            // eprintln!("Forcibly closed connection; client should crash.");
-                            // continue;
-                            warn!(
-                            "Expected initial frame to have hook_id 'S', but got {:?}. This is not strictly an error condition because it is possible for frames from prior runs to be received by the server.",
-                            frame.hook_id
-                        );
-                            continue;
+                tokio::select! {
+                    frame = server_connection_borrowed.read_frame() => {
+                        match frame {
+                            Some(frame) => {
+                                debug!("Received initial frame: {:?}", frame);
+                                if frame.hook_id[0] != b'S' {
+                                    // eprintln!(
+                                    //     "Received frame with hook_id {:?} instead of 'S'",
+                                    //     frame.hook_id
+                                    // );
+                                    // server_connection_borrowed.close().await;
+                                    // eprintln!("Forcibly closed connection; client should crash.");
+                                    // continue;
+                                    warn!(
+                                    "Expected initial frame to have hook_id 'S', but got {:?}. This is not strictly an error condition because it is possible for frames from prior runs to be received by the server.",
+                                    frame.hook_id
+                                );
+                                    continue;
+                                }
+                                unsafe {
+                                    (UNIX_CONNECTION_MANAGEMENT.unborrow)(
+                                        server_connection_borrowed.into_split(),
+                                    );
+                                }
+                                // let second_frame = server_connection.read_frame().await; // DEBUG
+                                // debug!("Second frame: {:?}", second_frame); // DEBUG
+                                if connection_sender
+                                    .send((
+                                        server_connection,
+                                        FederateId(frame.federate_id),
+                                        RunId(frame.run_id),
+                                    ))
+                                    .await
+                                    .is_err()
+                                {
+                                    debug!("Connection sender dropped; closing channel.");
+                                    break 'outer;
+                                }
+                                break;
+                            }
+                            None => {
+                                eprintln!("A client disconnected without sending a frame");
+                                break;
+                            }
                         }
-                        unsafe {
-                            (UNIX_CONNECTION_MANAGEMENT.unborrow)(
-                                server_connection_borrowed.into_split(),
-                            );
-                        }
-                        // let second_frame = server_connection.read_frame().await; // DEBUG
-                        // debug!("Second frame: {:?}", second_frame); // DEBUG
-                        if connection_sender
-                            .send((
-                                server_connection,
-                                FederateId(frame.federate_id),
-                                RunId(frame.run_id),
-                            ))
-                            .await
-                            .is_err()
-                        {
-                            debug!("Connection sender dropped; closing channel.");
-                            break 'outer;
-                        }
-                        break;
                     }
-                    None => {
-                        eprintln!("A client disconnected without sending a frame");
-                        break;
+                    n_connections_option_next = n_connections_receiver.recv() => {
+                        n_connections_option = n_connections_option_next;
+                        continue 'outer_outer;
                     }
                 }
             }
         }
+        n_connections_option = n_connections_receiver.recv().await;
     }
 }

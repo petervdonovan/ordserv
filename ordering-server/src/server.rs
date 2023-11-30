@@ -1,4 +1,4 @@
-use std::{collections::HashMap, env, ffi::c_int, os::fd::RawFd};
+use std::{collections::HashMap, env, ffi::c_int, os::fd::RawFd, time::Duration};
 
 use log::{debug, error, info, warn};
 use tokio::sync::mpsc;
@@ -103,15 +103,11 @@ async fn process_precedence_stream<R, W>(
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
     W: tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
-    let mut jhs: Vec<JoinHandle<()>> = Vec::new();
     let mut outer_precedence = precedence_stream.recv().await.unwrap_or(None);
     let mut n_successful_connections = 0;
     let mut n_attempted_connections = 0;
     'outer: while let Some(precedence) = outer_precedence.take() {
         debug!("Received precedence");
-        for jh in jhs.drain(..) {
-            jh.abort();
-        }
         acks.send(environment_variables_for_clients(&precedence, precid))
             .await
             .unwrap();
@@ -161,7 +157,7 @@ async fn process_precedence_stream<R, W>(
         let (halt_sender, mut halt_receiver) = tokio::sync::watch::channel(());
         let mut reader_handles = HashMap::new();
         for (fedid, mut reader) in readers.into_iter() {
-            let mut halt_receiver = halt_receiver.clone();
+            let mut halt_receiver = halt_sender.subscribe();
             let send_frames = send_frames.clone();
             reader_handles.insert(
                 fedid,
@@ -171,6 +167,7 @@ async fn process_precedence_stream<R, W>(
                         tokio::select! {
                             _ = halt_receiver.changed() => {
                                 info!("Reader received halt signal");
+                                halt_receiver.mark_changed();
                                 break;
                             }
                             frame = reader.read_frame() => {
@@ -200,6 +197,7 @@ async fn process_precedence_stream<R, W>(
                 tokio::select! {
                     _ = halt_receiver.changed() => {
                         info!("Writer received halt signal");
+                        halt_receiver.mark_changed();
                         break;
                     }
                     frame = recv_frames.recv() => {
@@ -214,13 +212,21 @@ async fn process_precedence_stream<R, W>(
                                 {
                                     debug!("Forwarding frame to {:?}", dest);
                                     let writers_debug = writers.keys().cloned().collect::<Vec<_>>(); // FIXME: this is just for debugging
-                                    writers
+                                    tokio::select!{
+                                        _ = halt_receiver.changed() => {
+                                            info!("Writer received halt signal");
+                                            halt_receiver.mark_changed();
+                                            break;
+                                        }
+                                        _ = writers
                                         .get_mut(&dest.hid.1)
                                         .unwrap_or_else(|| {
                                             panic!("Received frame {:?} with hid {:?} and dest id {:?} for which there are no writers for the dest; the actual precedence is:\n    {:?}, and the writers are:\n    {:?}", frame, frame.hid(), &dest.hid.1, precedence, writers_debug);
                                         })
-                                        .write_frame(frame)
-                                        .await;
+                                        .write_frame(frame) => {
+                                            debug!("Frame forwarded to {:?}", dest);
+                                        }
+                                    }
                                 }
                             }
                             None => {
@@ -239,16 +245,16 @@ async fn process_precedence_stream<R, W>(
         halt_sender.send(()).unwrap();
         let mut writer_handle = writer_handle.await.unwrap();
         for fedid in reader_handles.keys().cloned().collect::<Vec<_>>() {
-            unsafe {
-                (connection_management.unborrow)((
-                    reader_handles
-                        .remove_entry(&fedid)
-                        .unwrap()
-                        .1
-                        .await
-                        .unwrap(),
-                    writer_handle.remove_entry(&fedid).unwrap().1,
-                ))
+            let join_result = reader_handles.remove_entry(&fedid).unwrap().1.await;
+            if let Err(e) = join_result {
+                error!("Failed to join reader thread for {:?}. This is very bad because it means that we cannot recover the socket handle, but it is non-fatal because later when we find out that the socket handle is f**ed, we'll make a new one. Error:\n    {:?}", fedid, e);
+            } else {
+                unsafe {
+                    (connection_management.unborrow)((
+                        join_result.unwrap(),
+                        writer_handle.remove_entry(&fedid).unwrap().1,
+                    ))
+                }
             }
         }
         info!("unborrows done");
@@ -332,23 +338,32 @@ async fn run_server_reusing_connections(
         .zip(granted_connections_receivers.into_iter())
         .enumerate()
     {
-        let (evars_sender, evars_receiver) = mpsc::channel::<EnvironmentVariables>(1);
+        let (evars_sender, mut evars_receiver) = mpsc::channel::<EnvironmentVariables>(1);
         handles.push(tokio::spawn(async move {
-            let mut evars = evars_receiver;
-            while let Some(mut evars) = evars.recv().await {
-                for (fednum, granted) in granted_connections_receiver
-                    .recv()
-                    .await
-                    .unwrap()
-                    .iter()
-                    .enumerate()
-                {
-                    evars.0.push((
-                        evar_name_for(FederateId(fednum as i32 - 1)).into(), // Start counting at -1 cuz RTI is -1. Assumes contiguousness
-                        granted.to_string().into(),
-                    ));
+            let mut evars_option = evars_receiver.recv().await;
+            while let Some(mut evars) = evars_option.take() {
+                tokio::select! {
+                    granted_connections = granted_connections_receiver.recv() => {
+                        for (fednum, granted) in granted_connections
+                            .unwrap()
+                            .iter()
+                            .enumerate()
+                        {
+                            evars.0.push((
+                                evar_name_for(FederateId(fednum as i32 - 1)).into(), // Start counting at -1 cuz RTI is -1. Assumes contiguousness
+                                granted.to_string().into(),
+                            ));
+                        }
+                        ack_sender.send(evars).await.unwrap();
+                        evars_option = evars_receiver.recv().await;
+                    }
+                    next_evars = evars_receiver.recv() => {
+                        if next_evars.is_some() {
+                            error!("received next evars when it was not expected. Continuing...");
+                        }
+                        evars_option = next_evars;
+                    }
                 }
-                ack_sender.send(evars).await.unwrap();
             }
         }));
         handles.push(tokio::spawn(process_precedence_stream(

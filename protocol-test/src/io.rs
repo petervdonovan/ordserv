@@ -235,13 +235,15 @@ pub async fn get_traces(
   evars: EnvironmentUpdate<'_>,
 ) -> Result<Traces, ExecResult> {
   let evarsc = evars.get_evars().clone();
-  let run = executable.run(
-    evars,
-    tmp,
-    // Box::new(|_: &_| true),
-    // Box::new(|s: &str| s.to_lowercase().contains("fail")),
-    Box::new(|_: &_| false),
-  );
+  let run = executable
+    .run(
+      evars,
+      tmp,
+      // Box::new(|_: &_| true),
+      // Box::new(|s: &str| s.to_lowercase().contains("fail")),
+      Box::new(|_: &_| false),
+    )
+    .await;
   if !run.status.is_success() {
     warn!("Failed to get correct traces for {executable}.");
     warn!("summary of failed run:\n{run}");

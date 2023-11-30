@@ -43,8 +43,9 @@ pub mod exec {
 
   use log::{debug, error, warn};
   use serde::{Deserialize, Serialize};
+  use tokio::io::AsyncBufReadExt;
 
-  use crate::{env::EnvironmentUpdate, io::TempDir, TEST_TIMEOUT_SECS};
+  use crate::{env::EnvironmentUpdate, io::TempDir, MAX_ERROR_LINES, TEST_TIMEOUT_SECS};
 
   #[derive(Debug, Serialize, Deserialize, Clone)]
   pub struct Executable(PathBuf);
@@ -138,14 +139,14 @@ pub mod exec {
         .to_string()
     }
 
-    pub fn run(
+    pub async fn run(
       // TODO: make this async
       &self,
-      env: EnvironmentUpdate,
+      env: EnvironmentUpdate<'_>,
       cwd: &TempDir,
       output_filter: Box<impl Fn(&str) -> bool + std::marker::Send + 'static>,
     ) -> ExecResult {
-      let mut child = Command::new(
+      let mut child = tokio::process::Command::new(
         self
           .0
           .canonicalize()
@@ -161,43 +162,48 @@ pub mod exec {
       let (tselected_output, rselected_output) = mpsc::channel();
       let stdout = child.stdout.take();
       let stderr = child.stderr.take();
-      let pid = child.id();
-      thread::spawn(move || {
-        let selected_output: Vec<String> = BufReader::new(stdout.unwrap())
-          .lines()
-          .filter_map(|l| {
-            if l.is_err() {
-              error!("failed to read line of output");
-              return None;
+      let pid = child
+        .id()
+        .expect("the child has not been polled, so it cannot have been reaped");
+      let mut out_lines = tokio::io::BufReader::new(stdout.unwrap()).lines();
+      tokio::task::spawn(async move {
+        let mut out: Vec<String> = vec![];
+        while let Some(line) = out_lines.next_line().await.transpose() {
+          if let Err(e) = line {
+            error!("failed to read line of stdout: {:?}", e);
+            out.push("???".to_string());
+          } else {
+            let s = line.unwrap();
+            // debug!("DEBUG: {}: {}", pid, s);
+            out.push(s);
+            if out.len() > MAX_ERROR_LINES {
+              out.push("...".to_string());
+              break;
             }
-            Some(l.unwrap())
-          })
-          .filter(|s| s.contains("client"))
-          .map(|s| {
-            debug!("DEBUG: {}: {}", pid, s);
-            s
-          })
-          .filter(|s| output_filter(s))
-          .collect();
-        if let Err(e) = tselected_output.send(selected_output) {
-          error!("failed to send output of child process {pid}: {:?}", e);
+          }
+        }
+        if let Err(e) = tselected_output.send(out) {
+          debug!("failed to send stderr of child process {pid}: {:?}", e);
         }
       });
       let (terr, rerr) = mpsc::channel();
-      thread::spawn(move || {
-        let err: Vec<String> = BufReader::new(stderr.unwrap())
-          .lines()
-          .filter_map(|l| {
-            if l.is_err() {
-              error!("failed to read line of stderr");
-              return None;
+      let mut err_lines = tokio::io::BufReader::new(stderr.unwrap()).lines();
+      tokio::task::spawn(async move {
+        let mut err = vec![];
+        while let Some(line) = err_lines.next_line().await.transpose() {
+          if let Err(e) = line {
+            error!("failed to read line of stderr: {:?}", e);
+            err.push("???".to_string());
+          } else {
+            let s = line.unwrap();
+            // debug!("DEBUG: {}: {}", pid, s);
+            err.push(s.to_string());
+            if err.len() > MAX_ERROR_LINES {
+              err.push("...".to_string());
+              break;
             }
-            let s = l.unwrap();
-            debug!("DEBUG: {}: {}", pid, s);
-            Some(s)
-          })
-          .take(crate::MAX_ERROR_LINES)
-          .collect();
+          }
+        }
         if let Err(e) = terr.send(err.join("\n")) {
           debug!("failed to send stderr of child process {pid}: {:?}", e);
         }
@@ -211,19 +217,29 @@ pub mod exec {
           result = Some(status);
           break;
         }
-        thread::sleep(std::time::Duration::from_millis(10));
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
       }
       if result.is_none() {
         warn!(
           "killing child process {:?} in {:?} due to timeout",
           pid, cwd.0
         );
-        let mut kill = Command::new("kill")
-          .args(["-s", "TERM", &child.id().to_string()])
+        let mut kill = tokio::process::Command::new("kill")
+          .args([
+            "-s",
+            "TERM",
+            &child
+              .id()
+              .expect("not reaped because the latest try_wait() failed")
+              .to_string(),
+          ])
           .spawn()
           .unwrap();
-        kill.wait().unwrap();
-        child.wait().expect("failed to wait for child process");
+        kill.wait().await.unwrap();
+        child
+          .wait()
+          .await
+          .expect("failed to wait for child process");
       }
       ExecResult {
         status: Status::from_result(result),

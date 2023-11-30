@@ -449,9 +449,9 @@ impl AccumulatingTracesState {
           let port = get_valid_port(); // FIXME: not needed
           let my_ovr = Arc::clone(&self.ovr);
           let proc = || async move {
-            let mut ordserv =
+            let mut ordserv_handle =
               ordering_server::server::run_reusing_connections(1, MAX_NUM_FEDERATES_PER_TEST).await;
-            let ordserv = &mut ordserv.updates_acks[0];
+            let ordserv = &mut ordserv_handle.updates_acks[0];
             let mut rctx = RunContext {
               scratch,
               tid: ThreadId(tidx),
@@ -504,14 +504,13 @@ impl AccumulatingTracesState {
                 }
               }
             }
+            ordserv_handle.updates_acks[0].0.send(None).await.unwrap();
+            ordserv_handle.join_handle.await.unwrap();
           };
           scope.spawn(proc());
         }
       });
     });
-    // std::thread::scope(|scope| {
-
-    // });
     let dt = std::time::Instant::now() - t0;
     self.dt += dt;
     let msg = format!(
