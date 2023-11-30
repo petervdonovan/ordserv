@@ -3,9 +3,11 @@ use std::{
   path::{Path, PathBuf},
   process::Command,
   sync::{Arc, RwLock},
+  time::Duration,
 };
 
 use csv::ReaderBuilder;
+use log::{error, info, warn};
 use ordering_server::{
   server::ServerSubHandle, FederateId, HookInvocation, Precedence, SequenceNumberByFileAndLine,
   ORDSERV_PORT_ENV_VAR, ORDSERV_WAIT_TIMEOUT_MILLISECONDS_ENV_VAR,
@@ -180,7 +182,10 @@ pub fn get_counts(hook_trace: &[TraceRecord]) -> HookInvocationCounts {
 }
 
 #[derive(Debug)]
-pub struct TempDir(pub PathBuf);
+pub struct TempDir(
+  pub PathBuf,
+  // std::marker::PhantomData<std::sync::MutexGuard<'static, ()>>,
+);
 
 impl TempDir {
   pub fn new(scratch: &Path) -> Self {
@@ -192,6 +197,7 @@ impl TempDir {
       rand_subdir
         .canonicalize()
         .expect("failed to canonicalize random subdir"),
+      // std::marker::PhantomData,
     )
   }
   pub fn rand_file(&self, prefix: &str) -> PathBuf {
@@ -211,8 +217,8 @@ fn print_repro_instructions(
   executable: &Executable,
   evars: &HashMap<std::ffi::OsString, std::ffi::OsString>,
 ) {
-  println!("To reproduce, run:");
-  println!(
+  warn!("To reproduce, run:");
+  warn!(
     "  {evars} {executable} ",
     executable = executable,
     evars = evars
@@ -237,8 +243,8 @@ pub async fn get_traces(
     Box::new(|_: &_| false),
   );
   if !run.status.is_success() {
-    println!("Failed to get correct traces for {executable}.");
-    println!("summary of failed run:\n{run}");
+    warn!("Failed to get correct traces for {executable}.");
+    warn!("summary of failed run:\n{run}");
     print_repro_instructions(executable, &evarsc);
     return Err(run);
   }
@@ -249,12 +255,24 @@ pub async fn get_traces(
     .flatten()
     .filter(|it| it.file_name().to_str().unwrap().ends_with(".lft"))
   {
-    tokio::process::Command::new("trace_to_csv")
-      .current_dir(&tmp.0)
-      .arg(entry.file_name())
-      .output()
-      .await
-      .expect("failed to execute trace_to_csv");
+    loop {
+      let result = tokio::process::Command::new("trace_to_csv")
+        .current_dir(&tmp.0)
+        .arg(entry.file_name())
+        .output()
+        .await;
+      if let Err(e) = result {
+        error!(
+          "failed to execute trace_to_csv on {:?} in dir {:?} for reasons that I have not taken the time to understand due to being in a hurry. Error:\n    {:?}",
+          entry.file_name(),
+          &tmp.0,
+          e
+        );
+        std::thread::sleep(Duration::from_millis(10)); // FIXME: horrible hack
+      } else {
+        break;
+      }
+    }
   }
   let mut ret = HashMap::new();
   for entry in tmp
@@ -340,7 +358,7 @@ pub fn clean(scratch: &Path) {
     if entry.file_type().expect("failed to get file type").is_dir()
       && entry.file_name().to_str().unwrap().starts_with("rand")
     {
-      println!("removing {}", entry.path().to_str().unwrap());
+      info!("removing {}", entry.path().to_str().unwrap());
       std::fs::remove_dir_all(entry.path()).expect("failed to remove scratch dir");
     }
   }

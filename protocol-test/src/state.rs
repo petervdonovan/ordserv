@@ -1,3 +1,4 @@
+use log::info;
 use rayon::prelude::*;
 use streaming_transpositions::StreamingTranspositions;
 
@@ -263,7 +264,7 @@ impl InitialState {
         let src_stem = src.file_stem().expect("could not get file stem");
         exe = exe.join("bin").join(src_stem);
         let lfc_name = format!("lfcpartest-{}", self.src_commit);
-        println!("compiling {src:?} with {lfc_name}...",);
+        info!("compiling {src:?} with {lfc_name}...",);
         let output = std::process::Command::new(lfc_name)
           .arg(src)
           .arg("--trace")
@@ -370,7 +371,7 @@ impl CompiledState {
       .build()
       .expect("failed to build thread pool");
     let metadata = pool.install(|| self.get_metadata());
-    println!("metadata collected.");
+    info!("metadata collected.");
     KnownCountsState { cs: self, metadata }
   }
 }

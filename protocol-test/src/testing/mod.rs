@@ -7,6 +7,7 @@ use std::{
 };
 
 use colored::Colorize;
+use log::{info, warn};
 use priority_queue::DoublePriorityQueue;
 use rand::{seq::SliceRandom, SeedableRng};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
@@ -17,6 +18,7 @@ use streaming_transpositions::{
 
 const RANDOM_ORDERING_GEOMETRIC_R: f64 = 0.5;
 const MAX_NUM_FEDERATES_PER_TEST: usize = 48;
+const HEALTH_CHECK_FREQUENCY: u32 = 200;
 
 use crate::{
   env::get_valid_port,
@@ -122,10 +124,10 @@ fn ancestors_chronological<'de, D>(deserializer: D) -> Result<Vec<AtsDelta>, D::
 where
   D: serde::Deserializer<'de>,
 {
-  println!("Loading ancestors.");
+  info!("Loading ancestors.");
   let mut ancestors = vec![AtsDelta::deserialize(deserializer)?];
   while ancestors.last().unwrap().total_runs > 0 {
-    println!(
+    info!(
       "Loading ancestor delta with {} runs.",
       ancestors.last().unwrap().total_runs
     );
@@ -431,7 +433,7 @@ impl AccumulatingTracesState {
     let initial_total_runs = self.total_runs();
     let executables = self.kcs.executables().iter().collect::<Vec<_>>();
     let executables = &executables;
-    println!(
+    info!(
       "Spawning {} threads to gather execution traces.",
       *CONCURRENCY_LIMIT.wait()
     );
@@ -455,8 +457,9 @@ impl AccumulatingTracesState {
               tid: ThreadId(tidx),
               ordserv,
               ordserv_port: port,
-              run_id: 13,
+              run_id: 0,
             };
+            let mut successes = 0;
             while std::time::Instant::now() - t0
               < std::time::Duration::from_secs(time_seconds as u64)
             {
@@ -464,15 +467,21 @@ impl AccumulatingTracesState {
               let (id, exe) = executables.choose(&mut rng).unwrap();
               let conl = self_immut.get_constraint_vector(id);
               let clr = Arc::clone(&self_immut.runs[id]);
-              let t1 = std::time::Instant::now();
               let run = self_immut.get_run(id, exe, &conl, clr, &mut rctx).await;
-              println!(
-                "DEBUG: Success (run id {}) in {} milliseconds. Success: {}.",
-                rctx.run_id,
-                (std::time::Instant::now() - t1).as_millis(),
-                run.is_ok()
-              );
               rctx.run_id += 1;
+              if run.is_ok() {
+                successes += 1;
+              }
+              if rctx.run_id % HEALTH_CHECK_FREQUENCY == 0 || run.is_err() {
+                warn!(
+                  "Thread {} health check. Success rate: {} / {} ({}). Speed: {} runs/second.",
+                  tidx,
+                  successes,
+                  rctx.run_id,
+                  (successes as f64) / (rctx.run_id as f64),
+                  rctx.run_id as f64 / (std::time::Instant::now() - t0).as_secs_f64()
+                );
+              }
               let mut entry = self_immut.runs.get(id).unwrap().write().unwrap();
               entry.clr.push(conl);
               let idx = ConstraintListIndex(entry.clr.len() as u32 - 1);

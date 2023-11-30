@@ -1,6 +1,6 @@
 use std::os::fd::{IntoRawFd, RawFd};
 
-use log::{debug, info};
+use log::{debug, info, warn};
 use tokio::{net::TcpListener, sync::mpsc};
 
 use crate::channel_vec;
@@ -65,30 +65,21 @@ async fn forward_tcp_connections(
     }
 }
 
-pub async fn reusing(
+static CREATING_CONNECTIONS_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub fn reusing(
     n_connection_streams: usize,
     max_n_simultaneous_connections: usize,
     connection_requests: Vec<mpsc::Receiver<usize>>,
     granted_connections: Vec<mpsc::Sender<Vec<RawFd>>>,
 ) -> Vec<mpsc::Receiver<UnixConnectionElt>> {
+    let _lock = CREATING_CONNECTIONS_MUTEX.lock().unwrap();
     let (senders, receivers) = channel_vec(n_connection_streams);
     let mut connection_table: Vec<Vec<(RawFd, RawFd)>> = Vec::with_capacity(n_connection_streams);
     for _ in 0..n_connection_streams {
         let mut connections = Vec::with_capacity(max_n_simultaneous_connections);
         for _ in 0..max_n_simultaneous_connections {
-            let (server_connection, client_connection) =
-                std::os::unix::net::UnixStream::pair().unwrap();
-            let client_connection = client_connection.into_raw_fd();
-            let server_connection = server_connection.into_raw_fd();
-            unsafe {
-                // magic snippet I don't understand dug up from the depths of the web
-                // https://stackoverflow.com/questions/55540577/how-to-communicate-a-rust-and-a-ruby-process-using-a-unix-socket-pair
-                // where the link that was supposed to explain it is dead
-                let flags = libc::fcntl(client_connection, libc::F_GETFD);
-                libc::fcntl(client_connection, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
-                let flags = libc::fcntl(server_connection, libc::F_GETFD);
-                libc::fcntl(server_connection, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
-            }
+            let (server_connection, client_connection) = make_server_and_client_connection_pair();
             connections.push((server_connection, client_connection));
         }
         connection_table.push(connections);
@@ -110,13 +101,43 @@ pub async fn reusing(
     receivers
 }
 
+fn make_server_and_client_connection_pair() -> (RawFd, RawFd) {
+    let (server_connection, client_connection) = std::os::unix::net::UnixStream::pair().unwrap();
+    let client_connection = client_connection.into_raw_fd();
+    let server_connection = server_connection.into_raw_fd();
+    unsafe {
+        // magic snippet I don't understand dug up from the depths of the web
+        // https://stackoverflow.com/questions/55540577/how-to-communicate-a-rust-and-a-ruby-process-using-a-unix-socket-pair
+        // where the link that was supposed to explain it is dead
+        let flags = libc::fcntl(client_connection, libc::F_GETFD);
+        libc::fcntl(client_connection, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
+        let flags = libc::fcntl(server_connection, libc::F_GETFD);
+        libc::fcntl(server_connection, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
+    }
+    (server_connection, client_connection)
+}
+
 async fn reuse_tcp_connections(
-    connection_list: Vec<(RawFd, RawFd)>,
+    mut connection_list: Vec<(RawFd, RawFd)>,
     connection_sender: mpsc::Sender<UnixConnectionElt>,
     mut n_connections: mpsc::Receiver<usize>,
     granted_connection_sender: mpsc::Sender<Vec<RawFd>>,
 ) {
     while let Some(n_connections) = n_connections.recv().await {
+        let mut server_connections_borrowed = Vec::with_capacity(n_connections);
+        for (server_connection, client_connection) in connection_list.iter_mut().take(n_connections)
+        {
+            let mut server_connection_borrowed =
+                unsafe { (UNIX_CONNECTION_MANAGEMENT.borrow)(*server_connection) };
+            while let Err(e) = server_connection_borrowed {
+                warn!("Failed to borrow connection: {:?}", e);
+                (*server_connection, *client_connection) = make_server_and_client_connection_pair();
+                server_connection_borrowed =
+                    unsafe { (UNIX_CONNECTION_MANAGEMENT.borrow)(*server_connection) };
+            }
+            server_connections_borrowed
+                .push((*server_connection, server_connection_borrowed.unwrap()));
+        }
         granted_connection_sender
             .send(
                 connection_list
@@ -128,49 +149,54 @@ async fn reuse_tcp_connections(
             )
             .await
             .unwrap();
-        for (server_connection, _client_connection) in connection_list.iter().take(n_connections) {
-            let mut server_connection_borrowed =
-                unsafe { (UNIX_CONNECTION_MANAGEMENT.borrow)(*server_connection) };
+        'outer: for (server_connection, mut server_connection_borrowed) in
+            server_connections_borrowed
+        {
             // Connection::new(unsafe { socket_from_raw_fd(*server_connection) });
-            let frame = server_connection_borrowed.read_frame().await;
-            match frame {
-                Some(frame) => {
-                    debug!("Received initial frame: {:?}", frame);
-                    if frame.hook_id[0] != b'S' {
-                        // eprintln!(
-                        //     "Received frame with hook_id {:?} instead of 'S'",
-                        //     frame.hook_id
-                        // );
-                        // server_connection_borrowed.close().await;
-                        // eprintln!("Forcibly closed connection; client should crash.");
-                        // continue;
-                        panic!(
-                            "Expected initial frame to have hook_id 'S', but got {:?}",
+            loop {
+                let frame = server_connection_borrowed.read_frame().await;
+                match frame {
+                    Some(frame) => {
+                        debug!("Received initial frame: {:?}", frame);
+                        if frame.hook_id[0] != b'S' {
+                            // eprintln!(
+                            //     "Received frame with hook_id {:?} instead of 'S'",
+                            //     frame.hook_id
+                            // );
+                            // server_connection_borrowed.close().await;
+                            // eprintln!("Forcibly closed connection; client should crash.");
+                            // continue;
+                            warn!(
+                            "Expected initial frame to have hook_id 'S', but got {:?}. This is not strictly an error condition because it is possible for frames from prior runs to be received by the server.",
                             frame.hook_id
                         );
-                    }
-                    unsafe {
-                        (UNIX_CONNECTION_MANAGEMENT.unborrow)(
-                            server_connection_borrowed.into_split(),
-                        );
-                    }
-                    // let second_frame = server_connection.read_frame().await; // DEBUG
-                    // debug!("Second frame: {:?}", second_frame); // DEBUG
-                    if connection_sender
-                        .send((
-                            *server_connection,
-                            FederateId(frame.federate_id),
-                            RunId(frame.run_id),
-                        ))
-                        .await
-                        .is_err()
-                    {
-                        debug!("Connection sender dropped; closing channel.");
+                            continue;
+                        }
+                        unsafe {
+                            (UNIX_CONNECTION_MANAGEMENT.unborrow)(
+                                server_connection_borrowed.into_split(),
+                            );
+                        }
+                        // let second_frame = server_connection.read_frame().await; // DEBUG
+                        // debug!("Second frame: {:?}", second_frame); // DEBUG
+                        if connection_sender
+                            .send((
+                                server_connection,
+                                FederateId(frame.federate_id),
+                                RunId(frame.run_id),
+                            ))
+                            .await
+                            .is_err()
+                        {
+                            debug!("Connection sender dropped; closing channel.");
+                            break 'outer;
+                        }
                         break;
                     }
-                }
-                None => {
-                    eprintln!("A client disconnected without sending a frame");
+                    None => {
+                        eprintln!("A client disconnected without sending a frame");
+                        break;
+                    }
                 }
             }
         }

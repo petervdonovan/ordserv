@@ -5,16 +5,13 @@ use std::{
 };
 
 use ordering_server::{
-    client::BlockingClientJoinHandle,
+    client::{BlockingClient, BlockingClientJoinHandle},
     connection::{ReadConnection, WriteConnection, UNIX_CONNECTION_MANAGEMENT},
     FederateId, HookId, HookInvocation, SequenceNumberByFileAndLine,
     ORDSERV_WAIT_TIMEOUT_MILLISECONDS_ENV_VAR,
 };
 
-use log::debug;
-
-// type Client = ordering_server::client::BlockingClient<std::os::unix::net::UnixStream>;
-type Client = ordering_server::client::BlockingClient;
+use log::{debug, info};
 
 #[no_mangle]
 pub static ORDERING_CLIENT_API: OrderingClientApi = OrderingClientApi {
@@ -62,8 +59,8 @@ pub struct ClientAndJoinHandle {
 /// return value of this function; it is already protected by a mutex internally.
 #[no_mangle]
 pub unsafe extern "C" fn start_client(fedid: c_int) -> ClientAndJoinHandle {
-    // simple_logger::SimpleLogger::new().init().unwrap();
-    println!("Starting client");
+    simple_logger::init_with_level(log::Level::Warn).unwrap();
+    info!("Starting client");
     #[allow(clippy::unnecessary_cast)]
     let (client, join_handle) = ordering_server::client::BlockingClient::start_reusing_connection(
         FederateId(fedid as i32),
@@ -74,7 +71,7 @@ pub unsafe extern "C" fn start_client(fedid: c_int) -> ClientAndJoinHandle {
                 .unwrap(),
         ),
     );
-    println!("Client started");
+    info!("Client started");
     ClientAndJoinHandle {
         client: Box::into_raw(Box::new(client)) as *mut c_void,
         join_handle: Box::into_raw(Box::new(join_handle)) as *mut c_void,
@@ -88,8 +85,11 @@ pub unsafe extern "C" fn start_client(fedid: c_int) -> ClientAndJoinHandle {
 /// This function invalidates its argument (by freeing it).
 #[no_mangle]
 pub unsafe extern "C" fn finish(client_and_join_handle: ClientAndJoinHandle) {
-    let client = Box::from_raw(client_and_join_handle.client as *mut Client);
+    info!("Shutting down client");
+    let client = Box::from_raw(client_and_join_handle.client as *mut BlockingClient);
+    info!("Sending halt message");
     client.halt.send(()).unwrap();
+    info!("Recovering join handle");
     let join_handle =
         Box::from_raw(client_and_join_handle.join_handle as *mut BlockingClientJoinHandle);
     debug!("Joining client thread");
@@ -116,7 +116,7 @@ pub unsafe extern "C" fn tracepoint_maybe_wait(
     federate_id: c_int,
     sequence_number: c_int,
 ) {
-    let client = &*(client as *mut Client);
+    let client = &*(client as *mut BlockingClient);
     client.tracepoint_maybe_wait(make_hook_invocation(hook_id, federate_id, sequence_number));
 }
 
@@ -131,7 +131,7 @@ pub unsafe extern "C" fn tracepoint_maybe_notify(
     federate_id: c_int,
     sequence_number: c_int,
 ) {
-    let client = &*(client as *mut Client);
+    let client = &*(client as *mut BlockingClient);
     client.tracepoint_maybe_notify(make_hook_invocation(hook_id, federate_id, sequence_number));
 }
 

@@ -5,20 +5,17 @@ use std::{
     time::Duration,
 };
 
-use log::{debug, info};
+use log::{debug, info, warn};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::{
-        tcp::{self, OwnedWriteHalf},
-        unix, TcpStream, ToSocketAddrs, UnixStream,
-    },
+    net::{tcp::OwnedWriteHalf, unix, TcpStream, ToSocketAddrs},
     select,
     sync::{mpsc, watch},
     task::JoinHandle,
 };
 
 use crate::{
-    connection::{Connection, ConnectionManagement, WriteConnection, UNIX_CONNECTION_MANAGEMENT},
+    connection::{Connection, WriteConnection, UNIX_CONNECTION_MANAGEMENT},
     server::{PRECEDENCE_FILE_NAME, PRECEDENCE_ID_NAME},
     FederateId, Frame, HookInvocation, Precedence, PrecedenceId,
 };
@@ -175,7 +172,14 @@ impl BlockingClient {
             .build()
             .unwrap();
         let socket = rt.block_on(async { unsafe { (UNIX_CONNECTION_MANAGEMENT.borrow)(raw_fd) } });
-        let (r, w) = socket.into_split();
+        let (r, w) = socket
+            .unwrap_or_else(|err| {
+                panic!(
+                    "Failed to borrow connection for federate id {}: {}",
+                    federate_id.0, err
+                )
+            })
+            .into_split();
         Self::start_from_socket::<unix::OwnedReadHalf, unix::OwnedWriteHalf>(
             rt,
             federate_id,
@@ -207,15 +211,14 @@ impl BlockingClient {
         let ok_cvar_clone = Arc::clone(&ok_cvar);
         let (halt_send, halt_recv) = watch::channel(());
         let join_handle = std::thread::spawn(move || {
-            let client = rt.block_on(Self::run_client(
+            rt.block_on(Self::run_client(
                 ok_to_proceed_clone,
                 ok_cvar_clone,
                 precedence,
                 socket,
                 notification_receiver2async,
                 halt_recv,
-            ));
-            client
+            ))
         });
         let client = BlockingClient {
             ok_to_proceed,
@@ -254,7 +257,6 @@ impl BlockingClient {
         }
     }
     pub fn tracepoint_maybe_notify(&self, hook_invocation: HookInvocation) {
-        debug!("Checking if {:?} requires notify", hook_invocation);
         if self.requires_notify.contains(&hook_invocation) {
             let mut hook_id = [0; 32];
             for (idx, byte) in hook_invocation.hid.0.as_bytes().iter().enumerate() {
@@ -288,16 +290,31 @@ impl BlockingClient {
         mut notification_receiver: tokio::sync::mpsc::UnboundedReceiver<Frame>,
         halt: watch::Receiver<()>,
     ) -> (Client<W>, R) {
+        info!("Client starting");
         let (mut client, jh) = Client::start_from_socket(
             socket,
             Box::new(move |frame| {
+                if frame.run_id != precedence.run_id {
+                    warn!(
+                        "Received notification for run id {} but expected {}. Ignoring it. The server sometimes forwards messages from stragglers from previous runs, which is probably not the ideal behavior but is not currently considered an error condition.",
+                        frame.run_id, precedence.run_id);
+                    return;
+                }
                 debug!("Inside callback on frame: {:?}", frame);
                 let mut ok_to_proceed = ok_to_proceed.lock().unwrap();
                 debug!("Got lock on ok_to_proceed");
                 for hook_invocation in precedence
                     .sender2waiters
                     .get(&frame.hook_invocation())
-                    .unwrap()
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "Received notification for {:?} (run id {}) but no one is waiting for it. The sender2waiters map is {:?} (run id {})",
+                            frame.hook_invocation(),
+                            frame.run_id,
+                            precedence.sender2waiters,
+                            precedence.run_id,
+                        )
+                    })
                 {
                     ok_to_proceed.insert(hook_invocation.clone());
                 }
@@ -306,6 +323,7 @@ impl BlockingClient {
             halt,
         )
         .await;
+        info!("Client started and entering steady state");
         while let Some(frame) = notification_receiver.recv().await {
             debug!("Received notification: {:?}", frame);
             client.write(frame).await;

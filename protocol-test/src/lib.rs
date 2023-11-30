@@ -41,6 +41,7 @@ pub mod exec {
     time::Duration,
   };
 
+  use log::{debug, error, warn};
   use serde::{Deserialize, Serialize};
 
   use crate::{env::EnvironmentUpdate, io::TempDir, TEST_TIMEOUT_SECS};
@@ -138,6 +139,7 @@ pub mod exec {
     }
 
     pub fn run(
+      // TODO: make this async
       &self,
       env: EnvironmentUpdate,
       cwd: &TempDir,
@@ -163,31 +165,41 @@ pub mod exec {
       thread::spawn(move || {
         let selected_output: Vec<String> = BufReader::new(stdout.unwrap())
           .lines()
-          .map(|l| l.expect("failed to read line of output"))
+          .filter_map(|l| {
+            if l.is_err() {
+              error!("failed to read line of output");
+              return None;
+            }
+            Some(l.unwrap())
+          })
           .filter(|s| s.contains("client"))
-          // .filter(|s| output_filter(s))
           .map(|s| {
-            eprintln!("DEBUG: {}: {}", pid, s);
+            debug!("DEBUG: {}: {}", pid, s);
             s
           })
+          .filter(|s| output_filter(s))
           .collect();
         if let Err(e) = tselected_output.send(selected_output) {
-          eprintln!("failed to send output of child process {pid}: {:?}", e);
+          error!("failed to send output of child process {pid}: {:?}", e);
         }
       });
       let (terr, rerr) = mpsc::channel();
       thread::spawn(move || {
         let err: Vec<String> = BufReader::new(stderr.unwrap())
           .lines()
-          .map(|l| {
-            let s = l.expect("failed to read line of output");
-            // eprintln!("DEBUG: {}: {}", pid, s);
-            s
+          .filter_map(|l| {
+            if l.is_err() {
+              error!("failed to read line of stderr");
+              return None;
+            }
+            let s = l.unwrap();
+            debug!("DEBUG: {}: {}", pid, s);
+            Some(s)
           })
           .take(crate::MAX_ERROR_LINES)
           .collect();
         if let Err(e) = terr.send(err.join("\n")) {
-          eprintln!("failed to send stderr of child process {pid}: {:?}", e);
+          debug!("failed to send stderr of child process {pid}: {:?}", e);
         }
       });
       let mut result = None;
@@ -202,7 +214,7 @@ pub mod exec {
         thread::sleep(std::time::Duration::from_millis(10));
       }
       if result.is_none() {
-        println!(
+        warn!(
           "killing child process {:?} in {:?} due to timeout",
           pid, cwd.0
         );
@@ -218,7 +230,7 @@ pub mod exec {
         selected_output: rselected_output
           .recv_timeout(Duration::from_secs(3))
           .map_err(|e| {
-            println!("failed to read output of child process {pid}: {:?}", e);
+            error!("failed to read output of child process {pid}: {:?}", e);
             e
           })
           .unwrap_or_default(),
@@ -246,6 +258,7 @@ pub mod env {
     _scratch: Option<&'a TempDir>, // enforce that the scratch directory is not dropped before the environment update
   }
 
+  use log::error;
   use once_cell::sync::Lazy;
 
   static OPEN_PORTS: Lazy<Vec<u16>> = Lazy::new(|| {
@@ -272,7 +285,7 @@ pub mod env {
     let mut open_ports_idx = match OPEN_PORTS_IDX.lock() {
       Ok(guard) => guard,
       Err(poisoned) => {
-        println!("poisoned mutex: {:?}", poisoned);
+        error!("poisoned mutex: {:?}", poisoned);
         panic!("poisoned mutex")
       }
     };

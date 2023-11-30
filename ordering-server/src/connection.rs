@@ -1,4 +1,7 @@
-use std::os::fd::{FromRawFd, IntoRawFd, RawFd};
+use std::{
+    io,
+    os::fd::{FromRawFd, IntoRawFd, RawFd},
+};
 
 use bytes::BufMut;
 use log::{debug, info};
@@ -161,15 +164,19 @@ where
     R: AsyncReadExt + Unpin,
     W: AsyncWriteExt + Unpin,
 {
-    pub borrow: unsafe fn(RawFd) -> Connection<R, W>,
+    pub borrow: unsafe fn(RawFd) -> io::Result<Connection<R, W>>,
     pub unborrow: unsafe fn((ReadConnection<R>, WriteConnection<W>)),
+}
+
+pub struct CreateConnectionError {
+    pub message: String,
 }
 
 pub const UNIX_CONNECTION_MANAGEMENT: ConnectionManagement<
     unix::OwnedReadHalf,
     unix::OwnedWriteHalf,
 > = ConnectionManagement {
-    borrow: |fd| unsafe { Connection::new(socket_from_raw_fd(fd)) },
+    borrow: |fd| Ok(unsafe { Connection::new(socket_from_raw_fd(fd)?) }),
     unborrow: |(r, w)| {
         let reunited = r
             .stream
@@ -179,11 +186,11 @@ pub const UNIX_CONNECTION_MANAGEMENT: ConnectionManagement<
     },
 };
 
-unsafe fn socket_from_raw_fd(fd: RawFd) -> (unix::OwnedReadHalf, unix::OwnedWriteHalf) {
+unsafe fn socket_from_raw_fd(fd: RawFd) -> io::Result<(unix::OwnedReadHalf, unix::OwnedWriteHalf)> {
     let std = std::os::unix::net::UnixStream::from_raw_fd(fd);
-    std.set_nonblocking(true).unwrap();
+    std.set_nonblocking(true)?;
     info!("recovering socket from std: {:?}", std);
-    UnixStream::from_std(std).unwrap().into_split()
+    Ok(UnixStream::from_std(std)?.into_split())
 }
 
 impl Frame {
