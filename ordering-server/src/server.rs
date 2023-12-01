@@ -167,7 +167,7 @@ async fn process_precedence_stream<R, W>(
                         tokio::select! {
                             _ = halt_receiver.changed() => {
                                 debug!("Reader received halt signal");
-                                halt_receiver.mark_changed();
+                                // halt_receiver.mark_changed();
                                 break;
                             }
                             frame = reader.read_frame() => {
@@ -197,7 +197,7 @@ async fn process_precedence_stream<R, W>(
                 tokio::select! {
                     _ = halt_receiver.changed() => {
                         debug!("Writer received halt signal");
-                        halt_receiver.mark_changed();
+                        // halt_receiver.mark_changed();
                         break;
                     }
                     frame = recv_frames.recv() => {
@@ -215,7 +215,7 @@ async fn process_precedence_stream<R, W>(
                                     tokio::select!{
                                         _ = halt_receiver.changed() => {
                                             debug!("Writer received halt signal");
-                                            halt_receiver.mark_changed();
+                                            // halt_receiver.mark_changed();
                                             break;
                                         }
                                         _ = writers

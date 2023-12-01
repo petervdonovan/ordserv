@@ -173,67 +173,69 @@ pub mod exec {
       }
       let mut child = child.unwrap();
       let (tselected_output, mut rselected_output) = tokio::sync::mpsc::unbounded_channel();
-      let stdout = child.stdout.take();
-      let stderr = child.stderr.take();
+      let stdout = child.stdout.take().unwrap();
+      let stderr = child.stderr.take().unwrap();
       let pid = child
         .id()
         .expect("the child has not been polled, so it cannot have been reaped");
-      let mut out_lines = tokio::io::BufReader::new(stdout.unwrap()).lines();
+      let (stop_collecting_sender, mut stop_collecting_receiver) = tokio::sync::watch::channel(());
+      let mut out_subscription = stop_collecting_sender.subscribe();
       let output_task = tokio::task::spawn(async move {
-        let mut out: Vec<String> = vec![];
-        while let Some(line) = out_lines.next_line().await.transpose() {
-          if let Err(e) = line {
-            error!("failed to read line of stdout: {:?}", e);
-            out.push("???".to_string());
-          } else {
-            let s = line.unwrap();
-            // debug!("DEBUG: {}: {}", pid, s);
-            if output_filter(&s) {
-              out.push(s);
-            }
-            if out.len() > MAX_ERROR_LINES {
-              out.push("...".to_string());
-              break;
-            }
-          }
-        }
-        if let Err(e) = tselected_output.send(out) {
-          debug!("failed to send stdout of child process {pid}: {:?}", e);
-        }
+        output_collector(
+          stdout,
+          out_subscription,
+          tselected_output,
+          output_filter,
+          pid,
+        )
+        .await;
       });
       let (terr, mut rerr) = tokio::sync::mpsc::unbounded_channel();
-      let mut err_lines = tokio::io::BufReader::new(stderr.unwrap()).lines();
       let err_task = tokio::task::spawn(async move {
-        let mut err = vec![];
-        while let Some(line) = err_lines.next_line().await.transpose() {
-          if let Err(e) = line {
-            error!("failed to read line of stderr: {:?}", e);
-            err.push("???".to_string());
-          } else {
-            let s = line.unwrap();
-            // debug!("DEBUG: {}: {}", pid, s);
-            err.push(s.to_string());
-            if err.len() > MAX_ERROR_LINES {
-              err.push("...".to_string());
-              break;
-            }
-          }
-        }
-        if let Err(e) = terr.send(err.join("\n")) {
-          debug!("failed to send stderr of child process {pid}: {:?}", e);
-        }
+        output_collector(
+          stderr,
+          stop_collecting_receiver,
+          terr,
+          Box::new(|_: &_| true),
+          pid,
+        )
+        .await;
       });
+      // let mut err_lines = tokio::io::BufReader::new(stderr).lines();
+      // let err_task = tokio::task::spawn(async move {
+      //   let mut err = vec![];
+      //   while let Some(line) = err_lines.next_line().await.transpose() {
+      //     if let Err(e) = line {
+      //       error!("failed to read line of stderr: {:?}", e);
+      //       err.push("???".to_string());
+      //     } else {
+      //       let s = line.unwrap();
+      //       // debug!("DEBUG: {}: {}", pid, s);
+      //       err.push(s.to_string());
+      //       if err.len() > MAX_ERROR_LINES {
+      //         err.push("...".to_string());
+      //         break;
+      //       }
+      //     }
+      //   }
+      //   if let Err(e) = terr.send(err.join("\n")) {
+      //     debug!("failed to send stderr of child process {pid}: {:?}", e);
+      //   }
+      // });
       let result;
-      let (send_kill, mut recv_kill) = tokio::sync::mpsc::channel::<()>(1);
-      let (send_kill2, mut recv_kill2) = tokio::sync::mpsc::channel::<()>(1);
-      let (send_kill3, mut recv_kill3) = tokio::sync::mpsc::channel::<()>(1);
+      let (send_kill, mut recv_kill) = tokio::sync::mpsc::unbounded_channel::<()>();
+      let (send_kill2, mut recv_kill2) = tokio::sync::mpsc::unbounded_channel::<()>();
+      let (send_kill3, mut recv_kill3) = tokio::sync::mpsc::unbounded_channel::<()>();
       let killer = tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(TEST_TIMEOUT_SECS)).await;
-        send_kill.send(()).await.unwrap();
+        warn!("killing subprocess");
+        send_kill.send(()).unwrap();
         tokio::time::sleep(std::time::Duration::from_secs(TEST_TIMEOUT_SECS)).await;
-        send_kill2.send(()).await.unwrap();
+        error!("making second attempt to kill subprocess");
+        send_kill2.send(()).unwrap();
         tokio::time::sleep(std::time::Duration::from_secs(TEST_TIMEOUT_SECS)).await;
-        send_kill3.send(()).await.unwrap();
+        error!("making third attempt to kill subprocess");
+        send_kill3.send(()).unwrap();
       });
       loop {
         tokio::select! {
@@ -271,13 +273,46 @@ pub mod exec {
       drop(recv_kill);
       drop(recv_kill2);
       drop(recv_kill3);
+      let _ = stop_collecting_sender.send(()); // if the receivers are all dropped already, that's dandy. They are ahead of the game
       let _ = output_task.await; // do not care if these tasks were cancelled. If they were cancelled then recv() should return None
       let _ = err_task.await;
       ExecResult {
         status: Status::from_result(result),
         selected_output: rselected_output.recv().await.unwrap_or_default(),
-        stderr: rerr.recv().await.unwrap_or_default(),
+        stderr: rerr.recv().await.unwrap_or_default().join("\n"),
       }
+    }
+  }
+  async fn output_collector<R: AsyncRead + Unpin>(
+    stdout: R,
+    mut out_subscription: tokio::sync::watch::Receiver<()>,
+    tselected_output: UnboundedSender<Vec<String>>,
+    output_filter: Box<impl Fn(&str) -> bool + std::marker::Send + 'static>,
+    pid: u32,
+  ) {
+    let mut out_lines = tokio::io::BufReader::new(stdout).lines();
+    let mut out: Vec<String> = vec![];
+    while let Some(line) = tokio::select! {
+     next = out_lines.next_line() => next.transpose(),
+     _ = out_subscription.changed() => None,
+    } {
+      if let Err(e) = line {
+        error!("failed to read line of stdout: {:?}", e);
+        out.push("???".to_string());
+      } else {
+        let s = line.unwrap();
+        // debug!("DEBUG: {}: {}", pid, s);
+        if output_filter(&s) {
+          out.push(s);
+        }
+        if out.len() > MAX_ERROR_LINES {
+          out.push("...".to_string());
+          break;
+        }
+      }
+    }
+    if let Err(e) = tselected_output.send(out) {
+      debug!("failed to send stdout of child process {pid}: {:?}", e);
     }
   }
 }

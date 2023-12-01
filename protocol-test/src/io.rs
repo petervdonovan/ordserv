@@ -260,7 +260,7 @@ pub async fn get_traces(
     .flatten()
     .filter(|it| it.file_name().to_str().unwrap().ends_with(".lft"))
   {
-    loop {
+    for retries in 0..5 {
       let result = tokio::process::Command::new("trace_to_csv")
         .current_dir(&tmp.0)
         .arg(entry.file_name())
@@ -276,6 +276,9 @@ pub async fn get_traces(
         tokio::time::sleep(Duration::from_millis(10)).await; // FIXME: horrible hack
       } else {
         break;
+      }
+      if retries == 4 {
+        return Err(run);
       }
     }
   }

@@ -11,7 +11,7 @@ edition = "2021"
 [dependencies]
 ordering-server = { version = "0.1.0", path = "../ordering-server" }
 simple_logger = "4.3.0"
-tokio = { version = "1.34.0", features = ["macros"] }
+tokio = { version = "=1.21.0", features = ["macros"] }
 libc = "0.2"
 log = "0.4.20"
 

@@ -455,7 +455,7 @@ impl AccumulatingTracesState {
       "Spawning {} threads to gather execution traces.",
       *CONCURRENCY_LIMIT.wait()
     );
-    let rt = tokio::runtime::Builder::new_multi_thread()
+    let rt = tokio::runtime::Builder::new_current_thread()
       .enable_all()
       .build()
       .unwrap();
@@ -505,6 +505,9 @@ impl AccumulatingTracesState {
       } //)
       ;
     });
+    rt.shutdown_timeout(std::time::Duration::from_secs(
+      time_seconds as u64 + TEST_TIMEOUT_SECS * 2,
+    ));
     let dt = std::time::Instant::now() - t0;
     self.dt += dt;
     let msg = format!(

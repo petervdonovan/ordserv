@@ -1,0 +1,29 @@
+* thread #1, name = 'protocol-test', stop reason = signal SIGSEGV
+  * frame #0: 0x0000560559e7a9be protocol-test`tokio::runtime::io::scheduled_io::ScheduledIo::wake::h21c775330150dc61 + 318
+    frame #1: 0x0000560559e73614 protocol-test`tokio::runtime::io::driver::Driver::turn::h717912583e8e4b3e (.llvm.3291630858025851285) + 596
+    frame #2: 0x0000560559e99fd6 protocol-test`tokio::runtime::time::Driver::park_internal::h6a8564d0e45faa82 (.llvm.10154264224991549798) + 710
+    frame #3: 0x0000560559e779af protocol-test`tokio::runtime::scheduler::multi_thread::park::Parker::park::hee897b8cbd2e66cd + 95
+    frame #4: 0x0000560559e88148 protocol-test`tokio::runtime::scheduler::multi_thread::worker::Context::park_timeout::heca9598146668405 + 152
+    frame #5: 0x0000560559e87774 protocol-test`tokio::runtime::scheduler::multi_thread::worker::Context::run::hf6a5643deee842cb + 3316
+    frame #6: 0x0000560559ea3646 protocol-test`tokio::runtime::context::scoped::Scoped$LT$T$GT$::set::h86470f91a3f8021b + 54
+    frame #7: 0x0000560559e8e1a3 protocol-test`tokio::runtime::context::runtime::enter_runtime::hb8fbd2df22516099 + 467
+    frame #8: 0x0000560559e869ee protocol-test`tokio::runtime::scheduler::multi_thread::worker::run::hb66260b37b04dcc8 + 78
+    frame #9: 0x0000560559ea359e protocol-test`_$LT$tracing..instrument..Instrumented$LT$T$GT$$u20$as$u20$core..future..future..Future$GT$::poll::hb261b4cce2c8a71f + 158
+    frame #10: 0x0000560559e7f0cc protocol-test`tokio::runtime::task::core::Core$LT$T$C$S$GT$::poll::h298f6ec0d85c0c55 + 172
+    frame #11: 0x0000560559e628ef protocol-test`tokio::runtime::task::harness::Harness$LT$T$C$S$GT$::poll::h0af6049256605fe0 + 159
+    frame #12: 0x0000560559e96f93 protocol-test`tokio::runtime::blocking::pool::Inner::run::h9982e50a202059d9 + 291
+    frame #13: 0x0000560559e827b2 protocol-test`std::sys_common::backtrace::__rust_begin_short_backtrace::hb3753b05914cc4dc + 226
+    frame #14: 0x0000560559e75879 protocol-test`core::ops::function::FnOnce::call_once$u7b$$u7b$vtable.shim$u7d$$u7d$::h90f3f9e1993521cb + 169
+    frame #15: 0x0000560559f34bb5 protocol-test`std::sys::unix::thread::Thread::new::thread_start::ha211bb47f6f5cedc [inlined] _$LT$alloc..boxed..Box$LT$F$C$A$GT$$u20$as$u20$core..ops..function..FnOnce$LT$Args$GT$$GT$::call_once::h9adfc2ae43657457 at boxed.rs:1985:9
+    frame #16: 0x0000560559f34bad protocol-test`std::sys::unix::thread::Thread::new::thread_start::ha211bb47f6f5cedc [inlined] _$LT$alloc..boxed..Box$LT$F$C$A$GT$$u20$as$u20$core..ops..function..FnOnce$LT$Args$GT$$GT$::call_once::h14fefbfa7b574396 at boxed.rs:1985:9
+    frame #17: 0x0000560559f34ba6 protocol-test`std::sys::unix::thread::Thread::new::thread_start::ha211bb47f6f5cedc at thread.rs:108:17
+    frame #18: 0x00007f835d694ac3 libc.so.6`start_thread(arg=<unavailable>) at pthread_create.c:442:8
+    frame #19: 0x00007f835d726a40 libc.so.6`__clone3 at clone3.S:81
+
+
+
+
+
+----
+
+Observation: This is a segfault in tokio. If I had time, I might trim this down to an MRE and submit a bug report...
