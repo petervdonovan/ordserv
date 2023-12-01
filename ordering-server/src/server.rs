@@ -1,4 +1,4 @@
-use std::{collections::HashMap, env, ffi::c_int, os::fd::RawFd, time::Duration};
+use std::{collections::HashMap, env, ffi::c_int, os::fd::RawFd};
 
 use log::{debug, error, info, warn};
 use tokio::sync::mpsc;
@@ -111,7 +111,7 @@ async fn process_precedence_stream<R, W>(
         acks.send(environment_variables_for_clients(&precedence, precid))
             .await
             .unwrap();
-        info!("Expecting {} connections", precedence.n_connections);
+        debug!("Expecting {} connections", precedence.n_connections);
         if let Some(connection_requests) = &connection_requests {
             connection_requests
                 .send(precedence.n_connections)
@@ -147,7 +147,7 @@ async fn process_precedence_stream<R, W>(
                 }
             }
         }
-        info!(
+        debug!(
             "All connections received (success rate = {} / {} = {})",
             n_successful_connections,
             n_attempted_connections,
@@ -166,7 +166,7 @@ async fn process_precedence_stream<R, W>(
                         debug!("Waiting for frame from {:?}", fedid);
                         tokio::select! {
                             _ = halt_receiver.changed() => {
-                                info!("Reader received halt signal");
+                                debug!("Reader received halt signal");
                                 halt_receiver.mark_changed();
                                 break;
                             }
@@ -196,7 +196,7 @@ async fn process_precedence_stream<R, W>(
             loop {
                 tokio::select! {
                     _ = halt_receiver.changed() => {
-                        info!("Writer received halt signal");
+                        debug!("Writer received halt signal");
                         halt_receiver.mark_changed();
                         break;
                     }
@@ -214,7 +214,7 @@ async fn process_precedence_stream<R, W>(
                                     let writers_debug = writers.keys().cloned().collect::<Vec<_>>(); // FIXME: this is just for debugging
                                     tokio::select!{
                                         _ = halt_receiver.changed() => {
-                                            info!("Writer received halt signal");
+                                            debug!("Writer received halt signal");
                                             halt_receiver.mark_changed();
                                             break;
                                         }
@@ -257,7 +257,7 @@ async fn process_precedence_stream<R, W>(
                 }
             }
         }
-        info!("unborrows done");
+        debug!("unborrows done");
     }
     debug!("Received None from precedence stream");
 }

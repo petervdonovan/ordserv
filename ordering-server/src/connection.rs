@@ -189,7 +189,7 @@ pub const UNIX_CONNECTION_MANAGEMENT: ConnectionManagement<
 unsafe fn socket_from_raw_fd(fd: RawFd) -> io::Result<(unix::OwnedReadHalf, unix::OwnedWriteHalf)> {
     let std = std::os::unix::net::UnixStream::from_raw_fd(fd);
     std.set_nonblocking(true)?;
-    info!("recovering socket from std: {:?}", std);
+    debug!("recovering socket from std: {:?}", std);
     Ok(UnixStream::from_std(std)?.into_split())
 }
 

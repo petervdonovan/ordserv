@@ -30,6 +30,7 @@ pub struct ChannelClient<W>
 where
     W: AsyncWriteExt + Unpin,
 {
+    #[allow(dead_code)] // FIXME: un-suppress this feature
     client: Client<W>,
     pub frames: mpsc::Receiver<Frame>,
 }

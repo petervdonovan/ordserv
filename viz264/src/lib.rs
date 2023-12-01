@@ -318,45 +318,44 @@ pub fn describe_permutable_sets(ats: &AccumulatingTracesState) {
         .iter()
         .map(|(testid, st)| (testid, st.cumsums().last().unwrap().1))
         .collect::<HashMap<_, _>>();
-    for (ordering_name, ordering_projection) in Orderings::projections() {
-        let projected_stats: HashMap<_, _> = ats
-            .runs
-            .keys()
-            .map(|tid| {
-                (
-                    tid,
-                    BasicStats::new(
-                        ordering_projection(
-                            permutable_sets_by_testid.get(tid).unwrap().orderings(),
-                        )
+    let projected_stats: HashMap<_, _> = ats
+        .runs
+        .keys()
+        .map(|tid| {
+            (
+                tid,
+                BasicStats::new(
+                    permutable_sets_by_testid
+                        .get(tid)
+                        .unwrap()
+                        .orderings()
                         .iter()
                         .map(|it| {
                             it.len() as f64 / ats.kcs.metadata(tid).out_ovkey.n_tracepoints as f64
                         }),
-                    ),
-                )
-            })
-            .collect();
-        let (int2id, trep) = TestFormatter::make_with_sort(ats.kcs.executables(), |(tid, _)| {
-            -projected_stats.get(tid).unwrap().mean
-        });
-        for projection in BasicStats::projections() {
-            println!("plotting {} {}", ordering_name, projection.0);
-            histogram_by_test(
-                ats,
-                int2id
-                    .iter()
-                    .map(|tid| projected_stats[tid])
-                    .enumerate()
-                    .map(|(idx, stats)| (idx as u32, projection.1(&stats))),
-                &format!("plots/{}_{}.png", ordering_name, projection.0),
-                &format!("{} {}", ordering_name, projection.0),
-                &projection.0,
-                0.0..Statistics::max(projected_stats.values().map(|it| projection.1(it))),
-                &trep,
-            );
-            println!("done");
-        }
+                ),
+            )
+        })
+        .collect();
+    let (int2id, trep) = TestFormatter::make_with_sort(ats.kcs.executables(), |(tid, _)| {
+        -projected_stats.get(tid).unwrap().mean
+    });
+    for projection in BasicStats::projections() {
+        println!("plotting {}", projection.0);
+        histogram_by_test(
+            ats,
+            int2id
+                .iter()
+                .map(|tid| projected_stats[tid])
+                .enumerate()
+                .map(|(idx, stats)| (idx as u32, projection.1(&stats))),
+            &format!("plots/permutable_pairs_{}.png", projection.0),
+            &format!("{} Number of Permutable Pairs", projection.0),
+            &projection.0,
+            0.0..Statistics::max(projected_stats.values().map(|it| projection.1(it))),
+            &trep,
+        );
+        println!("done");
     }
     let (int2id, trep) = TestFormatter::make_with_sort(ats.kcs.executables(), |(tid, _)| {
         *maxes_by_testid.get(tid).unwrap()
@@ -365,7 +364,6 @@ pub fn describe_permutable_sets(ats: &AccumulatingTracesState) {
         let st = permutable_sets_by_testid.get(tid).unwrap();
         let max = maxes_by_testid.get(&tid).unwrap().0 as f64;
         st.cumsums()
-            .iter()
             .map(move |(ntraces, cumsum)| (ntraces.0, cumsum.0 as f64 / max))
     });
     let xmax = permutable_sets_by_testid

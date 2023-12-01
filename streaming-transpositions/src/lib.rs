@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt::Display};
+use std::{collections::HashSet, fmt::Display, hash::Hash};
 
 use rand::{distributions::Distribution, Rng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -34,7 +34,32 @@ pub struct HookOgRank2CurRank(pub OgRank2CurRank);
 pub struct OutOgRank2CurRank(pub OgRank2CurRank);
 
 pub struct Orderings<'a> {
-    pub before_and_afters: &'a [HashSet<OgRank>],
+    before_and_afters: &'a [HashSet<OgRank>],
+    more_before_and_afters: Option<&'a [HashSet<OgRank>]>,
+}
+pub struct OrderingsIterator<'a, 'b>(&'b Orderings<'a>, usize);
+impl<'a> Orderings<'a> {
+    pub fn iter<'b>(&'b self) -> OrderingsIterator<'a, 'b> {
+        OrderingsIterator(self, 0)
+    }
+}
+impl<'a, 'b> Iterator for OrderingsIterator<'a, 'b> {
+    type Item = HashSet<OgRank>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let idx = self.1;
+        self.1 += 1;
+        if idx == self.0.before_and_afters.len() {
+            None
+        } else {
+            let mut ret = self.0.before_and_afters[idx].clone();
+            if let Some(more_before_and_afters) = self.0.more_before_and_afters {
+                for x in more_before_and_afters[idx].iter() {
+                    ret.insert(*x);
+                }
+            }
+            Some(ret)
+        }
+    }
 }
 fn fmt_ogrank_set(f: &mut std::fmt::Formatter<'_>, set: &HashSet<OgRank>) -> std::fmt::Result {
     write!(f, "{{")?;
@@ -58,17 +83,15 @@ impl<'a> Display for Orderings<'a> {
         Ok(())
     }
 }
-type RelatedOgranksGiver<'a> = dyn Fn(Orderings<'a>) -> &'a [HashSet<OgRank>];
-impl<'a> Orderings<'a> {
-    pub fn projections<'b>() -> Vec<(&'static str, Box<RelatedOgranksGiver<'b>>)> {
-        vec![
-            // ("Before", Box::new(|it: Orderings<'_>| it.befores)),
-            ("Before and After", Box::new(|it| it.before_and_afters)),
-        ]
-    }
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// pub struct CumsumsIterator<'a>(&'a [(NTraces, CumSum)], &'a [()], usize);
+#[derive(Debug, Clone)]
 pub struct StreamingTranspositions {
+    inner: StreamingTranspositionsDelta,
+    all_ancestors: Option<Box<StreamingTranspositions>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamingTranspositionsDelta {
     og_trace_length: usize,
     search_radius: i32,
     traces_recorded: NTraces,
@@ -77,6 +100,40 @@ pub struct StreamingTranspositions {
     cumsums: Vec<(NTraces, CumSum)>,
     before_and_afters: Vec<HashSet<OgRank>>,
 }
+impl StreamingTranspositionsDelta {
+    fn add_permutable(&mut self, ogrank: &OgRank, other_idx: &OgRank) {
+        if !self.before_and_afters[ogrank.idx()].contains(other_idx) {
+            self.before_and_afters[ogrank.idx()].insert(*other_idx);
+            self.before_and_afters[other_idx.idx()].insert(*ogrank);
+            self.cumsum.0 += 1;
+        }
+    }
+    pub fn merge(&mut self, other: &Self) {
+        for (idx, other_before_and_after) in other.before_and_afters.iter().enumerate() {
+            for other in other_before_and_after.iter() {
+                self.add_permutable(&OgRank(idx as u32), other);
+            }
+        }
+        self.traces_recorded.0 += other.traces_recorded.0;
+        self.update_cumsums_if_needed();
+    }
+    fn update_cumsums_if_needed(&mut self) {
+        let last_n_cumsums = self.cumsums.last().map(|it| it.1 .0).unwrap_or(0);
+        if self.cumsum.0 - last_n_cumsums
+            >= (self.save_cumsum_when_cumsum_increases_by * (last_n_cumsums as f32)) as u32
+        {
+            self.cumsums.push((self.traces_recorded, self.cumsum));
+        }
+    }
+}
+impl From<StreamingTranspositionsDelta> for StreamingTranspositions {
+    fn from(delta: StreamingTranspositionsDelta) -> Self {
+        Self {
+            inner: delta,
+            all_ancestors: None,
+        }
+    }
+}
 
 impl StreamingTranspositions {
     pub fn new(
@@ -84,48 +141,82 @@ impl StreamingTranspositions {
         search_radius: i32,
         save_cumsum_when_cumsum_increases_by: f32,
     ) -> Self {
-        let mut before_and_afters = Vec::with_capacity(og_trace_length);
-
-        for _ in 0..og_trace_length {
-            before_and_afters.push(HashSet::new());
-        }
-
         Self {
-            og_trace_length,
-            search_radius,
-            traces_recorded: NTraces(0),
-            save_cumsum_when_cumsum_increases_by,
-            cumsum: CumSum(0),
-            cumsums: Vec::new(),
-            before_and_afters,
+            inner: StreamingTranspositionsDelta {
+                og_trace_length,
+                search_radius,
+                traces_recorded: NTraces(0),
+                save_cumsum_when_cumsum_increases_by,
+                cumsum: CumSum(0),
+                cumsums: Vec::new(),
+                before_and_afters: Self::empty_before_and_afters(og_trace_length),
+            },
+            all_ancestors: None,
         }
     }
+    pub fn as_delta(&self) -> &'_ StreamingTranspositionsDelta {
+        &self.inner
+    }
+    pub fn from_deltas<'a>(
+        mut deltas: impl Iterator<Item = &'a StreamingTranspositionsDelta>,
+    ) -> Self {
+        let mut start: StreamingTranspositions = deltas.next().unwrap().clone().into();
+        for delta in deltas {
+            start.inner.merge(delta);
+        }
+        Self {
+            inner: StreamingTranspositionsDelta {
+                og_trace_length: start.inner.og_trace_length,
+                search_radius: start.inner.search_radius,
+                traces_recorded: start.inner.traces_recorded,
+                save_cumsum_when_cumsum_increases_by: start
+                    .inner
+                    .save_cumsum_when_cumsum_increases_by,
+                cumsum: start.inner.cumsum,
+                cumsums: vec![],
+                before_and_afters: Self::empty_before_and_afters(start.inner.og_trace_length),
+            },
+            all_ancestors: Some(Box::new(start)),
+        }
+    }
+    fn empty_before_and_afters(size: usize) -> Vec<HashSet<OgRank>> {
+        let mut before_and_afters = Vec::with_capacity(size);
+        for _ in 0..size {
+            before_and_afters.push(HashSet::new());
+        }
+        before_and_afters
+    }
     pub fn record(&mut self, trace: OgRank2CurRank) {
-        if trace.0.len() != self.og_trace_length {
+        if trace.0.len() != self.inner.og_trace_length {
             panic!(
                 "trace length {} does not match og_trace_length {}",
                 trace.0.len(),
-                self.og_trace_length
+                self.inner.og_trace_length
             );
         }
         let mut ogrank_currank_pairs = trace.unpack();
         ogrank_currank_pairs.sort_by_key(|it| it.1);
-        for idx in 0..self.og_trace_length {
+        for idx in 0..self.inner.og_trace_length {
             let ogrank = ogrank_currank_pairs[idx].0;
-            let left_bound = (idx as i32 - self.search_radius).max(0) as usize;
-            for (other_idx, _currank) in ogrank_currank_pairs[left_bound..idx]
+            let left_bound = (idx as i32 - self.inner.search_radius).max(0) as usize;
+            let og_trace_length = self.inner.og_trace_length as u32;
+            let iterator = ogrank_currank_pairs[left_bound..idx]
                 .iter()
                 .filter(|(other_idx, _currank)| other_idx > &ogrank)
-                .filter(|(_other_idx, currank)| currank.0 != self.og_trace_length as u32)
+                .filter(|(_other_idx, currank)| currank.0 != og_trace_length);
             // the trace length is used as a placeholder when the hookinvocation of the ogrank is not observed
-            {
-                self.before_and_afters[ogrank.idx()].insert(*other_idx);
-                self.before_and_afters[other_idx.idx()].insert(ogrank);
-                self.cumsum.0 += 1;
+            if self.all_ancestors.is_some() {
+                for (other_idx, _currank) in iterator {
+                    self.add_permutable(&ogrank, other_idx);
+                }
+            } else {
+                for (other_idx, _currank) in iterator {
+                    self.inner.add_permutable(&ogrank, other_idx);
+                }
             }
         }
-        self.traces_recorded.0 += 1;
-        self.update_cumsums_if_needed();
+        self.inner.traces_recorded.0 += 1;
+        self.inner.update_cumsums_if_needed();
     }
     pub fn record_all(&mut self, traces: impl Iterator<Item = OgRank2CurRank>) {
         for trace in traces {
@@ -147,34 +238,46 @@ impl StreamingTranspositions {
         mapped.push(self);
         mapped.into_par_iter().reduce(
             || empty.clone(),
-            |mut a, mut b| {
-                if a.before_and_afters.len() < b.before_and_afters.len() {
-                    b.merge(a);
-                    b
+            |a, b| {
+                let (mut target, source) = if a.inner.cumsum < b.inner.cumsum {
+                    (b, a)
                 } else {
-                    a.merge(b);
-                    a
+                    (a, b)
+                };
+                if let Some(all_ancestors) = source.all_ancestors {
+                    target.inner.merge(&all_ancestors.inner);
                 }
+                target.inner.merge(&source.inner);
+                target
             },
         )
     }
     fn empty(&self) -> Self {
         Self::new(
-            self.og_trace_length,
-            self.search_radius,
-            self.save_cumsum_when_cumsum_increases_by,
+            self.inner.og_trace_length,
+            self.inner.search_radius,
+            self.inner.save_cumsum_when_cumsum_increases_by,
         )
     }
     pub fn orderings(&self) -> Orderings {
         Orderings {
-            before_and_afters: &self.before_and_afters,
+            before_and_afters: &self.inner.before_and_afters,
+            more_before_and_afters: self
+                .all_ancestors
+                .as_ref()
+                .map(|it| &it.inner.before_and_afters[..]),
         }
     }
-    pub fn cumsums(&self) -> &[(NTraces, CumSum)] {
-        &self.cumsums
+    pub fn cumsums(&self) -> impl Iterator<Item = (NTraces, CumSum)> + '_ + Clone {
+        self.all_ancestors
+            .as_ref()
+            .map(|it| it.inner.cumsums.iter())
+            .unwrap_or_else(|| [].iter())
+            .chain(self.inner.cumsums.iter())
+            .map(|(n_traces, cumsum)| (*n_traces, *cumsum))
     }
     pub fn traces_recorded(&self) -> NTraces {
-        self.traces_recorded
+        self.inner.traces_recorded
     }
     /// Goes into an infinite loop if all pairs have been observed.
     pub fn random_unobserved_ordering(
@@ -185,20 +288,22 @@ impl StreamingTranspositions {
         let mut rng = rand::thread_rng();
         let d = rand::distributions::Bernoulli::new(r).unwrap();
         loop {
-            let i = rng.gen_range(0..self.og_trace_length);
-            for j in ((i + 1)..self.og_trace_length)
+            let i = rng.gen_range(0..self.inner.og_trace_length);
+            for j in ((i + 1)..self.inner.og_trace_length)
                 .filter(|&it| filter(OgRank(it as u32), OgRank(i as u32)))
             {
-                if d.sample(&mut rng) && !self.before_and_afters[i].contains(&OgRank(j as u32)) {
+                if d.sample(&mut rng)
+                    && !self.inner.before_and_afters[i].contains(&OgRank(j as u32))
+                {
                     return (OgRank(j as u32), OgRank(i as u32));
                 }
             }
         }
     }
     pub fn check_invariants_expensive(&self) {
-        for (idx, before_and_after) in self.before_and_afters.iter().enumerate() {
+        for (idx, before_and_after) in self.inner.before_and_afters.iter().enumerate() {
             for other in before_and_after.iter() {
-                if !self.before_and_afters[other.idx()].contains(&OgRank(idx as u32)) {
+                if !self.inner.before_and_afters[other.idx()].contains(&OgRank(idx as u32)) {
                     panic!(
                         "before_and_after[{}] contains {} but before_and_after[{}] does not contain {}",
                         idx, other.idx(), other.idx(), idx
@@ -207,24 +312,16 @@ impl StreamingTranspositions {
             }
         }
     }
-    pub fn merge(&mut self, other: Self) {
-        for (idx, other_before_and_after) in other.before_and_afters.iter().enumerate() {
-            for other in other_before_and_after.iter() {
-                if !self.before_and_afters[idx].contains(other) {
-                    self.cumsum.0 += 1;
-                    self.before_and_afters[idx].insert(*other);
-                }
-            }
-        }
-        self.traces_recorded.0 += other.traces_recorded.0;
-        self.update_cumsums_if_needed();
-    }
-    fn update_cumsums_if_needed(&mut self) {
-        let last_n_cumsums = self.cumsums.last().map(|it| it.1 .0).unwrap_or(0);
-        if self.cumsum.0 - last_n_cumsums
-            >= (self.save_cumsum_when_cumsum_increases_by * (last_n_cumsums as f32)) as u32
+    fn add_permutable(&mut self, idx: &OgRank, other: &OgRank) {
+        if !self.inner.before_and_afters[idx.idx()].contains(other)
+            && !self
+                .all_ancestors
+                .as_ref()
+                .map(|it| it.inner.before_and_afters[idx.idx()].contains(other))
+                .unwrap_or(false)
         {
-            self.cumsums.push((self.traces_recorded, self.cumsum));
+            self.inner.cumsum.0 += 1;
+            self.inner.before_and_afters[idx.idx()].insert(*other);
         }
     }
 }
@@ -294,7 +391,7 @@ pub mod tests {
                         3,
                     ),
                     CumSum(
-                        3,
+                        2,
                     ),
                 ),
                 (
@@ -302,7 +399,7 @@ pub mod tests {
                         4,
                     ),
                     CumSum(
-                        4,
+                        2,
                     ),
                 ),
             ]
@@ -310,7 +407,7 @@ pub mod tests {
         let mut st = StreamingTranspositions::new(4, 1, 0.1);
         st.record_all(traces.into_iter().map(OgRank2CurRank));
         expected_before_and_after.assert_eq(&st.orderings().to_string());
-        expected_cumsums.assert_debug_eq(&st.cumsums());
+        expected_cumsums.assert_debug_eq(&st.cumsums().collect::<Vec<_>>());
     }
 
     #[test]

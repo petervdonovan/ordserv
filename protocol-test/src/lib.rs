@@ -33,11 +33,9 @@ pub struct HookInvocationCounts {
 pub mod exec {
   use std::{
     fmt::{Display, Formatter},
-    io::{BufRead, BufReader},
     path::PathBuf,
-    process::{Command, Stdio},
+    process::Stdio,
     sync::mpsc,
-    thread,
     time::Duration,
   };
 
@@ -146,27 +144,41 @@ pub mod exec {
       cwd: &TempDir,
       output_filter: Box<impl Fn(&str) -> bool + std::marker::Send + 'static>,
     ) -> ExecResult {
-      let mut child = tokio::process::Command::new(
-        self
-          .0
-          .canonicalize()
-          .expect("failed to resolve executable path")
-          .as_os_str(),
-      )
-      .envs(env.get_evars())
-      .current_dir(&cwd.0)
-      .stdout(Stdio::piped())
-      .stderr(Stdio::piped())
-      .spawn()
-      .expect("failed to execute program");
-      let (tselected_output, rselected_output) = mpsc::channel();
+      let mut child;
+      loop {
+        child = tokio::process::Command::new(
+          self
+            .0
+            .canonicalize()
+            .expect("failed to resolve executable path")
+            .as_os_str(),
+        )
+        .envs(env.get_evars())
+        .current_dir(&cwd.0.canonicalize().unwrap())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_or_else(
+          |e| {
+            error!("Process spawning error:\n  {:?}", e);
+            None
+          },
+          Some,
+        );
+        if child.is_some() {
+          break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+      }
+      let mut child = child.unwrap();
+      let (tselected_output, mut rselected_output) = tokio::sync::mpsc::unbounded_channel();
       let stdout = child.stdout.take();
       let stderr = child.stderr.take();
       let pid = child
         .id()
         .expect("the child has not been polled, so it cannot have been reaped");
       let mut out_lines = tokio::io::BufReader::new(stdout.unwrap()).lines();
-      tokio::task::spawn(async move {
+      let output_task = tokio::task::spawn(async move {
         let mut out: Vec<String> = vec![];
         while let Some(line) = out_lines.next_line().await.transpose() {
           if let Err(e) = line {
@@ -175,7 +187,9 @@ pub mod exec {
           } else {
             let s = line.unwrap();
             // debug!("DEBUG: {}: {}", pid, s);
-            out.push(s);
+            if output_filter(&s) {
+              out.push(s);
+            }
             if out.len() > MAX_ERROR_LINES {
               out.push("...".to_string());
               break;
@@ -183,12 +197,12 @@ pub mod exec {
           }
         }
         if let Err(e) = tselected_output.send(out) {
-          debug!("failed to send stderr of child process {pid}: {:?}", e);
+          debug!("failed to send stdout of child process {pid}: {:?}", e);
         }
       });
-      let (terr, rerr) = mpsc::channel();
+      let (terr, mut rerr) = tokio::sync::mpsc::unbounded_channel();
       let mut err_lines = tokio::io::BufReader::new(stderr.unwrap()).lines();
-      tokio::task::spawn(async move {
+      let err_task = tokio::task::spawn(async move {
         let mut err = vec![];
         while let Some(line) = err_lines.next_line().await.transpose() {
           if let Err(e) = line {
@@ -241,18 +255,12 @@ pub mod exec {
           .await
           .expect("failed to wait for child process");
       }
+      output_task.await.unwrap();
+      err_task.await.unwrap();
       ExecResult {
         status: Status::from_result(result),
-        selected_output: rselected_output
-          .recv_timeout(Duration::from_secs(3))
-          .map_err(|e| {
-            error!("failed to read output of child process {pid}: {:?}", e);
-            e
-          })
-          .unwrap_or_default(),
-        stderr: rerr
-          .recv_timeout(Duration::from_secs(3))
-          .unwrap_or_default(),
+        selected_output: rselected_output.recv().await.unwrap_or_default(),
+        stderr: rerr.recv().await.unwrap_or_default(),
       }
     }
   }
@@ -413,9 +421,18 @@ impl Traces {
   pub fn hooks_and_outs(&mut self) -> (Vec<TraceRecord>, Vec<TraceRecord>) {
     let mut raw_traces: Vec<TraceRecord> = self
       .0
-      .values_mut()
-      .flat_map(|reader| reader.deserialize())
-      .map(|r| r.expect("could not read record"))
+      .iter_mut()
+      .flat_map(|(file_name, reader)| {
+        reader.deserialize().map(|r| {
+          r.unwrap_or_else(|e| {
+            panic!(
+              "failed to deserialize trace record; error: {:?}; file name: {:?}",
+              e,
+              file_name.clone()
+            );
+          })
+        })
+      })
       .collect();
     raw_traces.sort_by_key(|tr| tr.elapsed_physical_time);
     let raw_traces_rti_only: Vec<_> = raw_traces
