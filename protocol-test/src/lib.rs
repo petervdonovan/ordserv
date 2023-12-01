@@ -6,6 +6,7 @@ pub mod testing;
 
 use std::{collections::HashMap, fs::File};
 
+use log::{debug, error};
 use ordering_server::{HookId, HookInvocation};
 
 use csv::Reader;
@@ -14,10 +15,11 @@ use once_cell::sync::OnceCell;
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use streaming_transpositions::OgRank;
+use tokio::io::{AsyncBufReadExt, AsyncRead};
 
 pub static CONCURRENCY_LIMIT: OnceCell<usize> = OnceCell::new();
 
-const TEST_TIMEOUT_SECS: u64 = 5;
+const TEST_TIMEOUT_SECS: u64 = 1;
 const MAX_ERROR_LINES: usize = 20;
 
 #[derive(Debug, Clone, Copy)]
@@ -35,15 +37,14 @@ pub mod exec {
     fmt::{Display, Formatter},
     path::PathBuf,
     process::Stdio,
-    sync::mpsc,
-    time::Duration,
   };
 
   use log::{debug, error, warn};
   use serde::{Deserialize, Serialize};
-  use tokio::io::AsyncBufReadExt;
+  use tokio::io::{AsyncBufReadExt, AsyncRead};
 
   use crate::{env::EnvironmentUpdate, io::TempDir, MAX_ERROR_LINES, TEST_TIMEOUT_SECS};
+  use tokio::sync::mpsc::UnboundedSender;
 
   #[derive(Debug, Serialize, Deserialize, Clone)]
   pub struct Executable(PathBuf);
@@ -245,10 +246,7 @@ pub mod exec {
                   .args([
                     "-s",
                     "TERM",
-                    &child
-                      .id()
-                      .expect("not reaped because the latest try_wait() failed")
-                      .to_string(),
+                    &pid.to_string(),
                   ])
                   .kill_on_drop(true)
                   .spawn()
@@ -264,16 +262,7 @@ pub mod exec {
             _ = recv_kill3.recv() => {
               error!("making third attempt to kill subprocess");
               child.start_kill().expect("kill failed");
-              let mut kill = tokio::process::Command::new("pkill")
-                  .args([
-                    "-9",
-                    "-f",
-                    "fed-gen",
-                  ])
-                  .kill_on_drop(true)
-                  .spawn()
-                  .unwrap();
-                kill.wait().await.unwrap();
+              crate::kill_everything().await;
             },
         }
       }
@@ -292,7 +281,16 @@ pub mod exec {
     }
   }
 }
-
+pub async fn kill_everything() {
+  let mut kill = tokio::process::Command::new("pkill")
+    .args([
+      "-9", "-f", "fed-gen", // Kill everything, not just this test's processes
+    ])
+    .kill_on_drop(true)
+    .spawn()
+    .unwrap();
+  kill.wait().await.unwrap();
+}
 pub mod env {
   use std::sync::Mutex;
   use std::{collections::HashMap, ffi::OsString};

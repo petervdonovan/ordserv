@@ -4,7 +4,7 @@ use std::{
 };
 
 use bytes::BufMut;
-use log::{debug, info};
+use log::{debug, error, info};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, BufWriter},
     net::{unix, UnixStream},
@@ -182,7 +182,11 @@ pub const UNIX_CONNECTION_MANAGEMENT: ConnectionManagement<
             .stream
             .reunite(w.stream.into_inner())
             .expect("Failed to reunite connection");
-        reunited.into_std().unwrap().into_raw_fd();
+        if let Ok(std) = reunited.into_std() {
+            let _ = std.into_raw_fd();
+        } else {
+            error!("Failed to reunite connection");
+        }
     },
 };
 

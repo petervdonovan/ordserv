@@ -28,7 +28,7 @@ use crate::{
   outputvector::{OutputVector, OutputVectorRegistry, OvrDelta, OvrReg, VectorfyStatus},
   state::{InitialState, KnownCountsState, State, TestId},
   ConstraintList, ConstraintListIndex, ConstraintListRegistry, ThreadId, TraceRecord,
-  CONCURRENCY_LIMIT,
+  CONCURRENCY_LIMIT, TEST_TIMEOUT_SECS,
 };
 #[derive(Debug)]
 pub struct AccumulatingTracesState {
@@ -491,6 +491,7 @@ impl AccumulatingTracesState {
                 ));
                 if spawned.await.is_err() {
                   error!("Thread {} panicked.", tidx);
+                  crate::kill_everything().await;  // shotgun-style error handling. Ok cuz children are already assumed unreliable
                   continue;  // Catch panics in spawned thread and keep looping.
                 }
                 break;

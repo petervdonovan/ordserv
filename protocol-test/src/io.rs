@@ -209,6 +209,9 @@ impl TempDir {
 
 impl Drop for TempDir {
   fn drop(&mut self) {
+    if std::thread::panicking() {
+      return; // It is too dangerous to work on the file system while panicking because it may cause a double panic. It is OK to leak the directory.
+    }
     std::fs::remove_dir_all(&self.0).expect("failed to remove random subdir");
   }
 }
@@ -270,7 +273,7 @@ pub async fn get_traces(
           &tmp.0,
           e
         );
-        std::thread::sleep(Duration::from_millis(10)); // FIXME: horrible hack
+        tokio::time::sleep(Duration::from_millis(10)).await; // FIXME: horrible hack
       } else {
         break;
       }
