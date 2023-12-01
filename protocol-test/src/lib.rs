@@ -138,7 +138,6 @@ pub mod exec {
     }
 
     pub async fn run(
-      // TODO: make this async
       &self,
       env: EnvironmentUpdate<'_>,
       cwd: &TempDir,
@@ -155,6 +154,7 @@ pub mod exec {
         )
         .envs(env.get_evars())
         .current_dir(&cwd.0.canonicalize().unwrap())
+        .kill_on_drop(true)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -222,41 +222,68 @@ pub mod exec {
           debug!("failed to send stderr of child process {pid}: {:?}", e);
         }
       });
-      let mut result = None;
-      for _ in 0..(TEST_TIMEOUT_SECS * 100) {
-        if let Some(status) = child
-          .try_wait()
-          .expect("unexpected error occurred while checking if child process has terminated")
-        {
-          result = Some(status);
-          break;
+      let result;
+      let (send_kill, mut recv_kill) = tokio::sync::mpsc::channel::<()>(1);
+      let (send_kill2, mut recv_kill2) = tokio::sync::mpsc::channel::<()>(1);
+      let (send_kill3, mut recv_kill3) = tokio::sync::mpsc::channel::<()>(1);
+      let killer = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(TEST_TIMEOUT_SECS)).await;
+        send_kill.send(()).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_secs(TEST_TIMEOUT_SECS)).await;
+        send_kill2.send(()).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_secs(TEST_TIMEOUT_SECS)).await;
+        send_kill3.send(()).await.unwrap();
+      });
+      loop {
+        tokio::select! {
+            status = child.wait() => {
+              result = status.map(Some).unwrap_or(None);
+              break;
+            },
+            _ = recv_kill.recv() => {
+              let mut kill = tokio::process::Command::new("kill")
+                  .args([
+                    "-s",
+                    "TERM",
+                    &child
+                      .id()
+                      .expect("not reaped because the latest try_wait() failed")
+                      .to_string(),
+                  ])
+                  .kill_on_drop(true)
+                  .spawn()
+                  .unwrap();
+                kill.wait().await.unwrap();
+            },
+            _ = recv_kill2.recv() => {
+              error!("making second attempt to kill subprocess");
+              child.start_kill().expect("kill failed");
+              output_task.abort();  // This will cause recoverable errors
+              err_task.abort();     // This will cause recoverable errors
+            },
+            _ = recv_kill3.recv() => {
+              error!("making third attempt to kill subprocess");
+              child.start_kill().expect("kill failed");
+              let mut kill = tokio::process::Command::new("pkill")
+                  .args([
+                    "-9",
+                    "-f",
+                    "fed-gen",
+                  ])
+                  .kill_on_drop(true)
+                  .spawn()
+                  .unwrap();
+                kill.wait().await.unwrap();
+            },
         }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
       }
-      if result.is_none() {
-        warn!(
-          "killing child process {:?} in {:?} due to timeout",
-          pid, cwd.0
-        );
-        let mut kill = tokio::process::Command::new("kill")
-          .args([
-            "-s",
-            "TERM",
-            &child
-              .id()
-              .expect("not reaped because the latest try_wait() failed")
-              .to_string(),
-          ])
-          .spawn()
-          .unwrap();
-        kill.wait().await.unwrap();
-        child
-          .wait()
-          .await
-          .expect("failed to wait for child process");
-      }
-      output_task.await.unwrap();
-      err_task.await.unwrap();
+      killer.abort();
+      let _ = killer.await; // do not care whether it was cancelled
+      drop(recv_kill);
+      drop(recv_kill2);
+      drop(recv_kill3);
+      let _ = output_task.await; // do not care if these tasks were cancelled. If they were cancelled then recv() should return None
+      let _ = err_task.await;
       ExecResult {
         status: Status::from_result(result),
         selected_output: rselected_output.recv().await.unwrap_or_default(),
@@ -418,29 +445,21 @@ impl ConstraintList {
 }
 
 impl Traces {
-  pub fn hooks_and_outs(&mut self) -> (Vec<TraceRecord>, Vec<TraceRecord>) {
-    let mut raw_traces: Vec<TraceRecord> = self
-      .0
-      .iter_mut()
-      .flat_map(|(file_name, reader)| {
-        reader.deserialize().map(|r| {
-          r.unwrap_or_else(|e| {
-            panic!(
-              "failed to deserialize trace record; error: {:?}; file name: {:?}",
-              e,
-              file_name.clone()
-            );
-          })
-        })
-      })
-      .collect();
+  pub fn hooks_and_outs(&mut self) -> Result<(Vec<TraceRecord>, Vec<TraceRecord>), csv::Error> {
+    let mut raw_traces: Vec<TraceRecord> = Vec::new();
+    for (file_name, reader) in self.0.iter_mut() {
+      for result in reader.deserialize() {
+        let record: TraceRecord = result?;
+        raw_traces.push(record);
+      }
+    }
     raw_traces.sort_by_key(|tr| tr.elapsed_physical_time);
     let raw_traces_rti_only: Vec<_> = raw_traces
       .iter()
       .filter(|tr| tr.source == -1)
       .cloned()
       .collect();
-    (raw_traces, raw_traces_rti_only)
+    Ok((raw_traces, raw_traces_rti_only))
   }
 }
 

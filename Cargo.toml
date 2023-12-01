@@ -9,9 +9,9 @@ members = [
 ]
 
 [profile.dev]
-panic = 'abort'
+# panic = 'abort'
 incremental = false
 
 [profile.release]
-panic = 'abort'
+# panic = 'abort'
 incremental = false

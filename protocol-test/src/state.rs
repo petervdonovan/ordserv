@@ -332,12 +332,18 @@ impl CompiledState {
       .executables
       .par_iter()
       .map(|(id, exe)| {
-        let (_, mut traces_map) = CompiledState::get_traces_attempts(
-          exe,
-          &self.initial.scratch_dir,
-          ThreadId(rayon::current_thread_index().unwrap()),
-        );
-        let (hook_trace, out_trace) = traces_map.hooks_and_outs();
+        let (mut hook_trace, mut out_trace);
+        loop {
+          let (_, mut traces_map) = CompiledState::get_traces_attempts(
+            exe,
+            &self.initial.scratch_dir,
+            ThreadId(rayon::current_thread_index().unwrap()),
+          );
+          if let Ok((hook_trace_ok, out_trace_ok)) = traces_map.hooks_and_outs() {
+            (hook_trace, out_trace) = (hook_trace_ok, out_trace_ok);
+            break;
+          }
+        }
         let ic = get_counts(&hook_trace);
         let hook_ovkey =
           OutputVectorKey::new(hook_trace.into_iter().map(|tr| TracePointId::new(&tr)), 1);

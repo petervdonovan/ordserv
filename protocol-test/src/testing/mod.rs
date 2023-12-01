@@ -7,7 +7,7 @@ use std::{
 };
 
 use colored::Colorize;
-use log::{info, warn};
+use log::{error, info};
 use priority_queue::DoublePriorityQueue;
 use rand::{seq::SliceRandom, SeedableRng};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
@@ -390,10 +390,22 @@ impl AccumulatingTracesState {
     ),
     ExecResult,
   > {
-    let (_, traces_map) =
-      run_with_parameters(exe, &self.kcs.metadata(id).hic, conl, clr, rctx).await;
-    let mut traces_map = traces_map?;
-    let (raw_traces, raw_traces_rti_only) = traces_map.hooks_and_outs();
+    let (raw_traces, raw_traces_rti_only);
+    loop {
+      let (_, traces_map) = run_with_parameters(
+        exe,
+        &self.kcs.metadata(id).hic,
+        conl,
+        Arc::clone(&clr),
+        rctx,
+      )
+      .await;
+      let mut traces_map = traces_map?;
+      if let Ok(result) = traces_map.hooks_and_outs() {
+        (raw_traces, raw_traces_rti_only) = result;
+        break;
+      }
+    }
     let (hook_orcr, _th, _status) = self
       .kcs
       .metadata(id)
@@ -454,6 +466,7 @@ impl AccumulatingTracesState {
         let self_immut = SendableAts(self as *const AccumulatingTracesState);
         let mut jhs = Vec::with_capacity(*CONCURRENCY_LIMIT.wait());
         for tidx in 0..*CONCURRENCY_LIMIT.wait() {
+          info!("Spawning thread {}.", tidx);
           let my_ovr = Arc::clone(&self.ovr);
           let port = get_valid_port(); // FIXME: not needed
           let scratch = scratch.clone();
@@ -461,7 +474,8 @@ impl AccumulatingTracesState {
             loop {
               let my_ovr = Arc::clone(&my_ovr);
               // The following is unsafe because we are dereferencing raw pointers. It is OK because
-              // the thread that uses the pointers is being joined.
+              // the thread that uses the pointers is being joined, but tokio doesn't know that and
+              // wants them to have static lifetimes.
               unsafe {
                 let self_immut = self_immut.get();
                 let executables_immut = executables_immut.get();
@@ -476,6 +490,7 @@ impl AccumulatingTracesState {
                   my_ovr,
                 ));
                 if spawned.await.is_err() {
+                  error!("Thread {} panicked.", tidx);
                   continue;  // Catch panics in spawned thread and keep looping.
                 }
                 break;
