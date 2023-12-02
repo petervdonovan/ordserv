@@ -2383,6 +2383,7 @@ dependencies = [
  "protocol-test",
  "rayon",
  "rmp-serde",
+ "simple_logger",
  "statrs",
  "streaming-transpositions",
 ]

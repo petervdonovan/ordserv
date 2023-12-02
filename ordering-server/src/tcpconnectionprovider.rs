@@ -65,8 +65,6 @@ async fn forward_tcp_connections(
     }
 }
 
-static CREATING_CONNECTIONS_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 pub fn reusing(
     n_connection_streams: usize,
     max_n_simultaneous_connections: usize,
@@ -76,7 +74,6 @@ pub fn reusing(
     Vec<mpsc::Receiver<UnixConnectionElt>>,
     Vec<tokio::task::JoinHandle<()>>,
 ) {
-    let _lock = CREATING_CONNECTIONS_MUTEX.lock().unwrap();
     let (senders, receivers) = channel_vec(n_connection_streams);
     let mut connection_table: Vec<Vec<(RawFd, RawFd)>> = Vec::with_capacity(n_connection_streams);
     for _ in 0..n_connection_streams {

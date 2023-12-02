@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use viz264::{describe_permutable_sets, get_latest_ats};
 
 fn main() {
+    simple_logger::SimpleLogger::new().init().unwrap();
     std::env::set_current_dir("..").unwrap();
     let scratch = &PathBuf::from("scratch");
     let latest = get_latest_ats(scratch);
