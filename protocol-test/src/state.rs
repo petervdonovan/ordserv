@@ -311,7 +311,7 @@ impl CompiledState {
     tid: ThreadId,
   ) -> (TempDir, Traces) {
     for _ in 0..Self::ATTEMPTS {
-      let tmp = TempDir::new(scratch_dir);
+      let tmp = TempDir::new_sync(scratch_dir);
       let ret = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

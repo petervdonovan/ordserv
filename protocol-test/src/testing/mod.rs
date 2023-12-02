@@ -455,7 +455,7 @@ impl AccumulatingTracesState {
       "Spawning {} threads to gather execution traces.",
       *CONCURRENCY_LIMIT.wait()
     );
-    let rt = tokio::runtime::Builder::new_current_thread()
+    let rt = tokio::runtime::Builder::new_multi_thread()
       .enable_all()
       .build()
       .unwrap();
@@ -468,7 +468,6 @@ impl AccumulatingTracesState {
         for tidx in 0..*CONCURRENCY_LIMIT.wait() {
           info!("Spawning thread {}.", tidx);
           let my_ovr = Arc::clone(&self.ovr);
-          let port = get_valid_port(); // FIXME: not needed
           let scratch = scratch.clone();
           jhs.push(tokio::task::spawn(async move {
             loop {
@@ -482,7 +481,6 @@ impl AccumulatingTracesState {
                 let spawned = tokio::task::spawn(Self::main(
                   scratch.clone(),
                   tidx,
-                  port,
                   time_seconds,
                   t0,
                   self_immut,
@@ -499,8 +497,12 @@ impl AccumulatingTracesState {
             }
           }));
         }
-        for jh in jhs {
-          jh.await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_secs(time_seconds as u64)).await;
+        println!("Waiting for threads to join...");
+        for (tid, jh) in jhs.iter_mut().enumerate() {
+          println!("Thread {} aborting...", tid);
+          jh.abort();  // FIXME: This hack is an alternative to shutting them down "the right way"
+          println!("Thread {} aborted.", tid);
         }
       } //)
       ;
@@ -520,12 +522,12 @@ impl AccumulatingTracesState {
     .bold()
     .on_green();
     println!("{}", msg);
+    crate::io::clean(self.kcs.scratch_dir());
   }
   #[allow(clippy::too_many_arguments)] // FIXME: refactor. sry clippy don't have time for u
   async fn main(
     scratch: PathBuf,
     tidx: usize,
-    port: u16,
     time_seconds: u32,
     t0: std::time::Instant,
     self_immut: &AccumulatingTracesState,
@@ -539,7 +541,6 @@ impl AccumulatingTracesState {
       scratch: &scratch,
       tid: ThreadId(tidx),
       ordserv,
-      ordserv_port: port,
       run_id: 0,
     };
     let mut successes = 0;

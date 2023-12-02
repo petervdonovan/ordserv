@@ -108,7 +108,7 @@ async fn process_precedence_stream<R, W>(
     let mut n_attempted_connections = 0;
     'outer: while let Some(precedence) = outer_precedence.take() {
         debug!("Received precedence");
-        acks.send(environment_variables_for_clients(&precedence, precid))
+        acks.send(environment_variables_for_clients(&precedence, precid).await)
             .await
             .unwrap();
         debug!("Expecting {} connections", precedence.n_connections);
@@ -262,12 +262,14 @@ async fn process_precedence_stream<R, W>(
     debug!("Received None from precedence stream");
 }
 
-fn environment_variables_for_clients(
+async fn environment_variables_for_clients(
     precedence: &Precedence,
     id: PrecedenceId,
 ) -> EnvironmentVariables {
     let f = precedence.scratch_dir.join("precedences.ord");
-    std::fs::write(&f, rmp_serde::to_vec(&precedence).unwrap()).unwrap();
+    tokio::fs::write(&f, rmp_serde::to_vec(&precedence).unwrap())
+        .await
+        .unwrap();
     EnvironmentVariables(vec![
         (PRECEDENCE_FILE_NAME.into(), f.as_os_str().into()),
         (PRECEDENCE_ID_NAME.into(), id.0.to_string().into()),
@@ -319,7 +321,7 @@ async fn run_server_reusing_connections(
         channel_vec(updates_acks.len());
     let (granted_connections_senders, granted_connections_receivers) =
         channel_vec(updates_acks.len());
-    let connection_receivers = reusing(
+    let (connection_receivers, abort_handles) = reusing(
         updates_acks.len(),
         max_n_simultaneous_connections,
         connection_requests_receivers,
@@ -339,6 +341,14 @@ async fn run_server_reusing_connections(
         .enumerate()
     {
         let (evars_sender, mut evars_receiver) = mpsc::channel::<EnvironmentVariables>(1);
+        handles.push(tokio::spawn(process_precedence_stream(
+            update_receiver,
+            evars_sender,
+            connection_receiver,
+            PrecedenceId(precid as u32),
+            Some(connection_requests_sender),
+            UNIX_CONNECTION_MANAGEMENT,
+        )));
         handles.push(tokio::spawn(async move {
             let mut evars_option = evars_receiver.recv().await;
             while let Some(mut evars) = evars_option.take() {
@@ -366,18 +376,18 @@ async fn run_server_reusing_connections(
                 }
             }
         }));
-        handles.push(tokio::spawn(process_precedence_stream(
-            update_receiver,
-            evars_sender,
-            connection_receiver,
-            PrecedenceId(precid as u32),
-            Some(connection_requests_sender),
-            UNIX_CONNECTION_MANAGEMENT,
-        )));
     }
     tokio::spawn(async move {
-        for handle in handles {
+        let id = rand::random::<u32>();
+        for (k, handle) in handles.into_iter().enumerate() {
+            info!("Waiting for handle {} ({})", k, id);
             handle.await.unwrap();
+            info!("Handle {} done ({})", k, id);
+        }
+        for (k, handle) in abort_handles.into_iter().enumerate() {
+            info!("Waiting for abort handle {} ({})", k, id);
+            handle.abort();
+            info!("Abort handle {} done ({})", k, id);
         }
     })
 }

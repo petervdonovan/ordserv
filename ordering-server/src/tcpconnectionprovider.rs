@@ -72,7 +72,10 @@ pub fn reusing(
     max_n_simultaneous_connections: usize,
     connection_requests: Vec<mpsc::Receiver<usize>>,
     granted_connections: Vec<mpsc::Sender<Vec<RawFd>>>,
-) -> Vec<mpsc::Receiver<UnixConnectionElt>> {
+) -> (
+    Vec<mpsc::Receiver<UnixConnectionElt>>,
+    Vec<tokio::task::JoinHandle<()>>,
+) {
     let _lock = CREATING_CONNECTIONS_MUTEX.lock().unwrap();
     let (senders, receivers) = channel_vec(n_connection_streams);
     let mut connection_table: Vec<Vec<(RawFd, RawFd)>> = Vec::with_capacity(n_connection_streams);
@@ -84,6 +87,7 @@ pub fn reusing(
         }
         connection_table.push(connections);
     }
+    let mut abort_handles = Vec::with_capacity(n_connection_streams);
     for (((connection_requestor, connection_list), connection_sender), granted_connection_sender) in
         connection_requests
             .into_iter()
@@ -91,17 +95,20 @@ pub fn reusing(
             .zip(senders.into_iter())
             .zip(granted_connections.into_iter())
     {
-        let _drop_me = tokio::spawn(reuse_tcp_connections(
+        abort_handles.push(tokio::spawn(reuse_tcp_connections(
             connection_list,
             connection_sender,
             connection_requestor,
             granted_connection_sender,
-        ));
+        )));
     }
-    receivers
+    (receivers, abort_handles)
 }
 
+static FCNTL_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn make_server_and_client_connection_pair() -> (RawFd, RawFd) {
+    let _lock = FCNTL_MUTEX.lock().unwrap();
     let (server_connection, client_connection) = std::os::unix::net::UnixStream::pair().unwrap();
     let client_connection = client_connection.into_raw_fd();
     let server_connection = server_connection.into_raw_fd();

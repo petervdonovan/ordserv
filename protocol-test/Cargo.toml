@@ -27,5 +27,5 @@ serde = { version = "1.0.189", features = [
 sha2 = "0.10.8"
 simple_logger = "4.3.0"
 streaming-transpositions = { version = "0.1.0", path = "../streaming-transpositions" }
-tokio = { version = "=1.21.0", features = ["process", "tracing"] }
+tokio = { version = "=1.21.0", features = ["process", "tracing", "fs"] }
 wait-timeout = "0.2.0"

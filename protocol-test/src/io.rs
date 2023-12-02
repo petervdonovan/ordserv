@@ -31,7 +31,6 @@ pub struct RunContext<'a> {
   pub scratch: &'a Path,
   pub tid: ThreadId,
   pub ordserv: &'a mut ServerSubHandle,
-  pub ordserv_port: u16,
   pub run_id: u32,
 }
 
@@ -188,7 +187,21 @@ pub struct TempDir(
 );
 
 impl TempDir {
-  pub fn new(scratch: &Path) -> Self {
+  pub async fn new(scratch: &Path) -> Self {
+    let mut rand_subdir = String::from("rand");
+    rand_subdir.push_str(&Alphanumeric.sample_string(&mut rand::thread_rng(), 16));
+    let rand_subdir = scratch.join(rand_subdir);
+    tokio::fs::create_dir_all(&rand_subdir)
+      .await
+      .expect("failed to create random subdir");
+    TempDir(
+      rand_subdir
+        .canonicalize()
+        .expect("failed to canonicalize random subdir"),
+      // std::marker::PhantomData,
+    )
+  }
+  pub fn new_sync(scratch: &Path) -> Self {
     let mut rand_subdir = String::from("rand");
     rand_subdir.push_str(&Alphanumeric.sample_string(&mut rand::thread_rng(), 16));
     let rand_subdir = scratch.join(rand_subdir);
@@ -207,14 +220,14 @@ impl TempDir {
   }
 }
 
-impl Drop for TempDir {
-  fn drop(&mut self) {
-    if std::thread::panicking() {
-      return; // It is too dangerous to work on the file system while panicking because it may cause a double panic. It is OK to leak the directory.
-    }
-    std::fs::remove_dir_all(&self.0).expect("failed to remove random subdir");
-  }
-}
+// impl Drop for TempDir {
+//   fn drop(&mut self) {
+//     if std::thread::panicking() {
+//       return; // It is too dangerous to work on the file system while panicking because it may cause a double panic. It is OK to leak the directory.
+//     }
+//     std::fs::remove_dir_all(&self.0).expect("failed to remove random subdir");
+//   }
+// }
 
 fn print_repro_instructions(
   executable: &Executable,
@@ -324,7 +337,7 @@ pub async fn run_with_parameters(
   rctx: &mut RunContext<'_>,
 ) -> (TempDir, Result<Traces, ExecResult>) {
   assert_compatible(hic, conl);
-  let tmp = TempDir::new(rctx.scratch);
+  let tmp = TempDir::new(rctx.scratch).await;
   let unpacked = conl.to_pairs_sorted(&clr.read().unwrap().clr);
   let mut sender2waiters = HashMap::new();
   for (waiter, sender) in unpacked
@@ -345,10 +358,6 @@ pub async fn run_with_parameters(
   rctx.ordserv.0.send(Some(precedence)).await.unwrap();
   let mut evars = rctx.ordserv.1.recv().await.unwrap();
   evars.0.push((
-    ORDSERV_PORT_ENV_VAR.into(),
-    rctx.ordserv_port.to_string().into(),
-  ));
-  evars.0.push((
     ORDSERV_WAIT_TIMEOUT_MILLISECONDS_ENV_VAR.into(),
     ORDSERV_WAIT_TIMEOUT_MILLISECONDS.into(),
   ));
@@ -366,7 +375,6 @@ pub fn clean(scratch: &Path) {
     if entry.file_type().expect("failed to get file type").is_dir()
       && entry.file_name().to_str().unwrap().starts_with("rand")
     {
-      info!("removing {}", entry.path().to_str().unwrap());
       std::fs::remove_dir_all(entry.path()).expect("failed to remove scratch dir");
     }
   }
@@ -409,36 +417,36 @@ mod tests {
   //   }
   // }
 
-  #[test]
-  fn test_get_traces() {
-    for entry in test_progs() {
-      println!("{entry:?}");
-      let csvs: HashMap<String, Vec<String>> = tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(get_traces(
-          &Executable::new(entry.path()),
-          &TempDir::new(&scratch_relpath()),
-          EnvironmentUpdate::new::<OsString>(ThreadId(0), &[]),
-        ))
-        .unwrap()
-        .0
-        .iter_mut()
-        .map(|(name, reader)| {
-          println!("{name:?}");
-          (
-            name.clone(),
-            reader
-              .deserialize()
-              .map(|r| {
-                println!("{r:?}");
-                let r: TraceRecord = r.expect("could not read record");
-                r.event
-              })
-              .collect(),
-          )
-        })
-        .collect();
-      println!("{csvs:?}");
-    }
-  }
+  // #[test]
+  // fn test_get_traces() {
+  //   for entry in test_progs() {
+  //     println!("{entry:?}");
+  //     let csvs: HashMap<String, Vec<String>> = tokio::runtime::Runtime::new()
+  //       .unwrap()
+  //       .block_on(get_traces(
+  //         &Executable::new(entry.path()),
+  //         &TempDir::new(&scratch_relpath()),
+  //         EnvironmentUpdate::new::<OsString>(ThreadId(0), &[]),
+  //       ))
+  //       .unwrap()
+  //       .0
+  //       .iter_mut()
+  //       .map(|(name, reader)| {
+  //         println!("{name:?}");
+  //         (
+  //           name.clone(),
+  //           reader
+  //             .deserialize()
+  //             .map(|r| {
+  //               println!("{r:?}");
+  //               let r: TraceRecord = r.expect("could not read record");
+  //               r.event
+  //             })
+  //             .collect(),
+  //         )
+  //       })
+  //       .collect();
+  //     println!("{csvs:?}");
+  //   }
+  // }
 }

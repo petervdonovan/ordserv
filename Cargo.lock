@@ -1459,6 +1459,7 @@ dependencies = [
  "bytes",
  "libc",
  "log",
+ "rand",
  "rmp-serde",
  "serde",
  "simple_logger",
