@@ -305,10 +305,10 @@ pub mod exec {
         if output_filter(&s) {
           out.push(s);
         }
-        if out.len() > MAX_ERROR_LINES {
-          out.push("...".to_string());
-          break;
-        }
+      }
+      if out.len() > MAX_ERROR_LINES {
+        out.push("...".to_string());
+        break;
       }
     }
     if let Err(e) = tselected_output.send(out) {
@@ -317,14 +317,18 @@ pub mod exec {
   }
 }
 pub async fn kill_everything() {
-  let mut kill = tokio::process::Command::new("pkill")
-    .args([
-      "-9", "-f", "fed-gen", // Kill everything, not just this test's processes
-    ])
+  let mut kill_federates = tokio::process::Command::new("pkill")
+    .args(["-9", "-f", "fed-gen"])
     .kill_on_drop(true)
     .spawn()
     .unwrap();
-  kill.wait().await.unwrap();
+  let mut kill_rti = tokio::process::Command::new("pkill")
+    .args(["-9", "-f", "RTI "])
+    .kill_on_drop(true)
+    .spawn()
+    .unwrap();
+  kill_rti.wait().await.unwrap();
+  kill_federates.wait().await.unwrap();
 }
 pub mod env {
   use std::sync::Mutex;

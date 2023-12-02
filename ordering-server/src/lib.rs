@@ -29,7 +29,7 @@ pub struct Precedence {
     pub sender2waiters: HashMap<HookInvocation, Vec<HookInvocation>>,
     pub n_connections: usize,
     pub scratch_dir: PathBuf,
-    pub run_id: u32, // to avoid getting mucked up by stragglers from previous runs
+    pub run_id: RunId, // to avoid getting mucked up by stragglers from previous runs
 }
 pub type HookInvocationShort<'a> = (&'a str, i32, u32);
 pub type PrecedenceElement<'a> = (HookInvocationShort<'a>, &'a [HookInvocationShort<'a>]);
@@ -52,7 +52,7 @@ impl Precedence {
                 .collect(),
             n_connections,
             scratch_dir,
-            run_id,
+            run_id: RunId(run_id),
         }
     }
 }

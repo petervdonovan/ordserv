@@ -230,7 +230,7 @@ impl BlockingClient {
             precid: Self::load_precid(),
             fedid: federate_id,
             wait_timeout,
-            run_id,
+            run_id: run_id.0,
             halt: halt_send,
         };
         info!("BlockingClient sending initial frame");
@@ -295,10 +295,10 @@ impl BlockingClient {
         let (mut client, jh) = Client::start_from_socket(
             socket,
             Box::new(move |frame| {
-                if frame.run_id != precedence.run_id {
+                if frame.run_id != precedence.run_id.0 {
                     warn!(
                         "Received notification for run id {} but expected {}. Ignoring it. The server sometimes forwards messages from stragglers from previous runs, which is probably not the ideal behavior but is not currently considered an error condition.",
-                        frame.run_id, precedence.run_id);
+                        frame.run_id, precedence.run_id.0);
                     return;
                 }
                 debug!("Inside callback on frame: {:?}", frame);
@@ -313,7 +313,7 @@ impl BlockingClient {
                             frame.hook_invocation(),
                             frame.run_id,
                             precedence.sender2waiters,
-                            precedence.run_id,
+                            precedence.run_id.0,
                         )
                     })
                 {

@@ -70,7 +70,7 @@ static CREATING_CONNECTIONS_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(
 pub fn reusing(
     n_connection_streams: usize,
     max_n_simultaneous_connections: usize,
-    connection_requests: Vec<mpsc::Receiver<usize>>,
+    connection_requests: Vec<mpsc::Receiver<(usize, RunId)>>,
     granted_connections: Vec<mpsc::Sender<Vec<RawFd>>>,
 ) -> (
     Vec<mpsc::Receiver<UnixConnectionElt>>,
@@ -127,18 +127,32 @@ fn make_server_and_client_connection_pair() -> (RawFd, RawFd) {
 async fn reuse_tcp_connections(
     mut connection_list: Vec<(RawFd, RawFd)>,
     connection_sender: mpsc::Sender<UnixConnectionElt>,
-    mut n_connections_receiver: mpsc::Receiver<usize>,
+    mut n_connections_receiver: mpsc::Receiver<(usize, RunId)>,
     granted_connection_sender: mpsc::Sender<Vec<RawFd>>,
 ) {
     let mut n_connections_option = n_connections_receiver.recv().await;
-    'outer_outer: while let Some(n_connections) = n_connections_option {
+    'outer_outer: while let Some((n_connections, run_id)) = n_connections_option {
         let mut server_connections_borrowed = Vec::with_capacity(n_connections);
         for (server_connection, client_connection) in connection_list.iter_mut().take(n_connections)
         {
             let mut server_connection_borrowed =
                 unsafe { (UNIX_CONNECTION_MANAGEMENT.borrow)(*server_connection) };
             while let Err(e) = server_connection_borrowed {
-                warn!("Failed to borrow connection: {:?}", e);
+                let (success_server, err_server, success_client, err_client) = unsafe {
+                    (
+                        libc::close(*server_connection),
+                        std::io::Error::last_os_error(),
+                        libc::close(*client_connection),
+                        std::io::Error::last_os_error(),
+                    )
+                };
+                warn!(
+                    "Failed to borrow connection: {:?}. Closed the file descriptor with code {} on server side and {} on client side (errors {:?} and {:?}).",
+                    e, success_server, success_client, err_server, err_client
+                );
+                if success_server != 0 || success_client != 0 {
+                    panic!("Failed to close file descriptor");
+                }
                 (*server_connection, *client_connection) = make_server_and_client_connection_pair();
                 server_connection_borrowed =
                     unsafe { (UNIX_CONNECTION_MANAGEMENT.borrow)(*server_connection) };
@@ -179,6 +193,10 @@ async fn reuse_tcp_connections(
                                     "Expected initial frame to have hook_id 'S', but got {:?}. This is not strictly an error condition because it is possible for frames from prior runs to be received by the server.",
                                     frame.hook_id
                                 );
+                                    continue;
+                                }
+                                if frame.run_id != run_id.0 {
+                                    warn!("Received frame with run_id {} but expected {}", frame.run_id, run_id.0);
                                     continue;
                                 }
                                 unsafe {

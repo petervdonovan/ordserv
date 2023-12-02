@@ -9,8 +9,8 @@ use std::{
 use csv::ReaderBuilder;
 use log::{error, info, warn};
 use ordering_server::{
-  server::ServerSubHandle, FederateId, HookInvocation, Precedence, SequenceNumberByFileAndLine,
-  ORDSERV_PORT_ENV_VAR, ORDSERV_WAIT_TIMEOUT_MILLISECONDS_ENV_VAR,
+  server::ServerSubHandle, FederateId, HookInvocation, Precedence, RunId,
+  SequenceNumberByFileAndLine, ORDSERV_PORT_ENV_VAR, ORDSERV_WAIT_TIMEOUT_MILLISECONDS_ENV_VAR,
 };
 use rand::distributions::{Alphanumeric, DistString};
 
@@ -353,7 +353,7 @@ pub async fn run_with_parameters(
     sender2waiters,
     n_connections: hic.n_processes,
     scratch_dir: tmp.0.clone(),
-    run_id: rctx.run_id,
+    run_id: RunId(rctx.run_id),
   };
   rctx.ordserv.0.send(Some(precedence)).await.unwrap();
   let mut evars = rctx.ordserv.1.recv().await.unwrap();

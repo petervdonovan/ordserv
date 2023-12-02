@@ -408,7 +408,7 @@ impl KnownCountsState {
     StreamingTranspositions::new(
       self.metadata.get(tid).unwrap().og_ov_length_rounded_up(),
       64,
-      0.0025,
+      0.001,
     )
   }
   pub fn empty_streaming_transpositions_hook(&self, tid: &TestId) -> StreamingTranspositions {

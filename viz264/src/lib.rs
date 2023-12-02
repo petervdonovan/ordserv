@@ -285,7 +285,7 @@ fn compute_permutable_sets(
     ovr: &OutputVectorRegistry,
 ) -> StreamingTranspositions {
     let stride = 128; // Relevant to performance
-    StreamingTranspositions::new(metadata.og_ov_length_rounded_up(), 128, 0.01).par_record_all(
+    StreamingTranspositions::new(metadata.og_ov_length_rounded_up(), 128, 0.000001).par_record_all(
         (0..(runs.raw_traces.len() / stride).max(1))
             .into_par_iter()
             .map(|start| {
@@ -363,8 +363,15 @@ pub fn describe_permutable_sets(ats: &AccumulatingTracesState) {
     let time_series = int2id.iter().map(|tid| {
         let st = permutable_sets_by_testid.get(tid).unwrap();
         let max = maxes_by_testid.get(&tid).unwrap().0 as f64;
-        st.cumsums()
-            .map(move |(ntraces, cumsum)| (ntraces.0, cumsum.0 as f64 / max))
+        st.cumsums().map(move |(ntraces, cumsum)| {
+            let remaining = (max - (cumsum.0 as f64)) / max;
+            let logged = if remaining.abs() < 1e-6 {
+                -6.0
+            } else {
+                remaining.log10()
+            };
+            (ntraces.0, logged)
+        })
     });
     let xmax = permutable_sets_by_testid
         .values()
@@ -385,7 +392,7 @@ pub fn describe_permutable_sets(ats: &AccumulatingTracesState) {
             x_desc: "Number of traces",
             x_spec: 0..xmax,
             y_desc: "Cumulative sum",
-            y_spec: 0.0..1.05,
+            y_spec: -5.05..0.05,
         },
         &trep,
     );

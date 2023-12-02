@@ -97,7 +97,7 @@ async fn process_precedence_stream<R, W>(
     acks: mpsc::Sender<EnvironmentVariables>,
     mut connection_receiver: mpsc::Receiver<(RawFd, FederateId, RunId)>,
     precid: PrecedenceId,
-    connection_requests: Option<mpsc::Sender<usize>>,
+    connection_requests: Option<mpsc::Sender<(usize, RunId)>>,
     connection_management: ConnectionManagement<R, W>,
 ) where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
@@ -114,7 +114,7 @@ async fn process_precedence_stream<R, W>(
         debug!("Expecting {} connections", precedence.n_connections);
         if let Some(connection_requests) = &connection_requests {
             connection_requests
-                .send(precedence.n_connections)
+                .send((precedence.n_connections, RunId(precedence.run_id.0)))
                 .await
                 .unwrap();
         }
@@ -127,8 +127,8 @@ async fn process_precedence_stream<R, W>(
                 new_connection = connection_receiver.recv() => {
                     let (raw_connection, fedid, run_id) = new_connection.unwrap();
                     let connection = unsafe {(connection_management.borrow)(raw_connection)};
-                    if run_id.0 != precedence.run_id {
-                        error!("Received connection with run_id {} but precedence has run_id {}. This indicates a bug in the test framework, but I am not failing fast now due to lack of time.", run_id.0, precedence.run_id);
+                    if run_id.0 != precedence.run_id.0 {
+                        error!("Received connection with run_id {} but precedence has run_id {}. This indicates a bug in the test framework, but I am not failing fast now due to lack of time.", run_id.0, precedence.run_id.0);
                     } else if let Ok(connection) = connection {
                         debug!("Received connection from {:?}", fedid);
                         let (reader, writer) = connection.into_split();
@@ -175,7 +175,7 @@ async fn process_precedence_stream<R, W>(
                                     Some(frame) => {
                                         debug!("Received frame: {:?} from {:?}", frame, fedid);
                                         assert!(fedid.0 == frame.federate_id);
-                                        assert!(precedence.run_id == frame.run_id);
+                                        assert!(precedence.run_id.0 == frame.run_id);
                                         send_frames.send(frame).await.unwrap_or_else(|_| {
                                             warn!("Failed to send frame. This is not strictly an error condition because the two halt receivers (in the frame sender and receiver) are racing with each other, but it should be unusual because it should be uncommon for programs to finish while frames are in flight. Because of the timeout when waiting for in-flight frames, it can happen under 'normal' conditions, however.");
                                         });
