@@ -7,10 +7,10 @@ use std::{
 };
 
 use csv::ReaderBuilder;
-use log::{error, info, warn};
+use log::{error, warn};
 use ordering_server::{
   server::ServerSubHandle, FederateId, HookInvocation, Precedence, RunId,
-  SequenceNumberByFileAndLine, ORDSERV_PORT_ENV_VAR, ORDSERV_WAIT_TIMEOUT_MILLISECONDS_ENV_VAR,
+  SequenceNumberByFileAndLine, ORDSERV_WAIT_TIMEOUT_MILLISECONDS_ENV_VAR,
 };
 use rand::distributions::{Alphanumeric, DistString};
 
@@ -383,10 +383,14 @@ pub fn clean(scratch: &Path) {
 #[cfg(test)]
 mod tests {
 
-  use crate::TraceRecord;
+  // use crate::TraceRecord;
 
-  use super::*;
-  use std::{ffi::OsString, fs::DirEntry, path::PathBuf};
+  // use super::*;
+  use std::{
+    //ffi::OsString,
+    fs::DirEntry,
+    path::PathBuf,
+  };
 
   fn tests_relpath() -> PathBuf {
     PathBuf::from("../lf-264/test/C/bin")

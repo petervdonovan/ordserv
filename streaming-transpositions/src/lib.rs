@@ -259,6 +259,9 @@ impl StreamingTranspositions {
             self.inner.save_cumsum_when_cumsum_increases_by,
         )
     }
+    pub fn contains(&self, idx: OgRank, other_idx: OgRank) -> bool {
+        self.inner.before_and_afters[idx.idx()].contains(&other_idx)
+    }
     pub fn orderings(&self) -> Orderings {
         Orderings {
             before_and_afters: &self.inner.before_and_afters,
@@ -322,6 +325,66 @@ impl StreamingTranspositions {
         {
             self.inner.cumsum.0 += 1;
             self.inner.before_and_afters[idx.idx()].insert(*other);
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BigSmallIterator {
+    max_ogrank_strict: i32,
+    power: u32, // loop variable
+    diffmaxstrict: i32,
+    diffmin: i32,
+    start_minus_diff: i32, // loop variable
+    diff: i32,             // loop variable
+}
+
+impl BigSmallIterator {
+    pub fn from_strans(strans: &StreamingTranspositions) -> Self {
+        Self::new(OgRank(strans.inner.og_trace_length as u32))
+    }
+    pub fn new(max_ogrank: OgRank) -> Self {
+        let diffmaxstrict = 2.min(max_ogrank.0 as i32);
+        Self {
+            max_ogrank_strict: max_ogrank.0 as i32,
+            power: 0,
+            diffmaxstrict,
+            diffmin: 1,
+            start_minus_diff: 1 - diffmaxstrict,
+            diff: 1,
+        }
+    }
+}
+
+impl Iterator for BigSmallIterator {
+    type Item = (OgRank, OgRank);
+    /// Postcondition: The returned pair is in ascending order.
+    fn next(&mut self) -> Option<(OgRank, OgRank)> {
+        if self.diff < self.diffmaxstrict
+            && self.diff <= (self.max_ogrank_strict - self.start_minus_diff) / 2
+        {
+            let start = self.start_minus_diff + self.diff;
+            let other = start + self.diff;
+            self.diff += 1;
+            if other < self.max_ogrank_strict {
+                Some((OgRank(start as u32), OgRank(other as u32)))
+            } else {
+                self.next()
+            }
+        } else if self.start_minus_diff < self.max_ogrank_strict - self.diffmin {
+            self.start_minus_diff += 1;
+            self.diff = self.diffmin.max(-self.start_minus_diff);
+            self.diffmaxstrict = (1 << (self.power + 1)).min(self.max_ogrank_strict);
+            self.next()
+        } else if self.power <= self.max_ogrank_strict.ilog2() {
+            self.power += 1;
+            self.diffmin = 1 << self.power;
+            self.diffmaxstrict = (1 << (self.power + 1)).min(self.max_ogrank_strict);
+            self.start_minus_diff = 0 - self.diffmaxstrict + 1;
+            self.diff = self.diffmin.max(-self.start_minus_diff);
+            self.next()
+        } else {
+            None
         }
     }
 }

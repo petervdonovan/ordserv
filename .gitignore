@@ -1,6 +1,6 @@
 .vscode/
 todo.md
-**/scratch
+**/scratch*
 libbytehound.so
 .ipynb_checkpoints/
 *.zst

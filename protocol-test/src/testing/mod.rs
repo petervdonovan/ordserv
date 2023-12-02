@@ -13,8 +13,8 @@ use rand::{seq::SliceRandom, SeedableRng};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use serde::{ser::SerializeStruct, Deserialize, Serialize};
 use streaming_transpositions::{
-  HookOgRank2CurRank, OgRank2CurRank, OutOgRank2CurRank, StreamingTranspositions,
-  StreamingTranspositionsDelta,
+  BigSmallIterator, HookOgRank2CurRank, OgRank, OgRank2CurRank, OutOgRank2CurRank,
+  StreamingTranspositions, StreamingTranspositionsDelta,
 };
 
 const RANDOM_ORDERING_GEOMETRIC_R: f64 = 0.5;
@@ -22,7 +22,6 @@ const MAX_NUM_FEDERATES_PER_TEST: usize = 48;
 const HEALTH_CHECK_FREQUENCY: u32 = 200;
 
 use crate::{
-  env::get_valid_port,
   exec::{ExecResult, Executable},
   io::{run_with_parameters, RunContext},
   outputvector::{OutputVector, OutputVectorRegistry, OvrDelta, OvrReg, VectorfyStatus},
@@ -175,6 +174,7 @@ fn reconstruct_test_runs(
     .iter()
     .map(|(idx, int)| (*idx, *int))
     .collect();
+  let pair_iterator = trdeltas.last().unwrap().pair_iterator.clone();
   for trdelta in trdeltas {
     for dvrd in trdelta.clr_delta {
       clr.push(dvrd);
@@ -196,6 +196,7 @@ fn reconstruct_test_runs(
     strans_out,
     strans_hook,
     interesting,
+    pair_iterator,
   }
 }
 
@@ -213,13 +214,14 @@ pub struct TestRuns {
   pub strans_out: StreamingTranspositions,
   pub strans_hook: StreamingTranspositions,
   pub interesting: DoublePriorityQueue<ConstraintListIndex, Interestingness>,
+  pub pair_iterator: BigSmallIterator,
 }
 impl Serialize for TestRuns {
   fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
   where
     S: serde::Serializer,
   {
-    let mut ret = serializer.serialize_struct("TestRunsDelta", 4)?;
+    let mut ret = serializer.serialize_struct("TestRunsDelta", 5)?;
     ret
       .serialize_field("clr_delta", &self.clr[self.clr_saved_up_to.0 as usize..])
       .unwrap();
@@ -231,6 +233,9 @@ impl Serialize for TestRuns {
       .unwrap();
     ret
       .serialize_field("strans_hook", self.strans_hook.as_delta())
+      .unwrap();
+    ret
+      .serialize_field("pair_iterator", &self.pair_iterator)
       .unwrap();
     ret.end()
   }
@@ -248,6 +253,7 @@ struct TestRunsDelta {
   raws_delta: Vec<RawElement>,
   interesting: Vec<(ConstraintListIndex, Interestingness)>,
   strans_hook: StreamingTranspositionsDelta, // FIXME: This is not incremental! It is aggregated, not a delta.
+  pair_iterator: BigSmallIterator,
 }
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct CoarseTraceHash(pub u64);
@@ -332,6 +338,7 @@ impl AccumulatingTracesState {
             strans_out: kcs.empty_streaming_transpositions_out(id),
             strans_hook: kcs.empty_streaming_transpositions_hook(id),
             interesting: DoublePriorityQueue::new(),
+            pair_iterator: BigSmallIterator::new(OgRank(kcs.metadata(id).hic.len() as u32)),
           })),
         )
       })
@@ -363,15 +370,28 @@ impl AccumulatingTracesState {
     self.dt
   }
   fn get_constraint_vector(&self, id: &TestId) -> ConstraintList {
-    let (before, after) = self.runs[id]
-      .read()
-      .unwrap()
-      .strans_hook
-      .random_unobserved_ordering(RANDOM_ORDERING_GEOMETRIC_R, |before, after| {
-        let before_hinvoc = &self.kcs.metadata(id).hic.ogrank2hinvoc[before.idx()];
-        let after_hinvoc = &self.kcs.metadata(id).hic.ogrank2hinvoc[after.idx()];
-        before_hinvoc.hid.1 != after_hinvoc.hid.1
-      });
+    let mut guard = self.runs[id].write().unwrap();
+    let filter = |before: OgRank, after: OgRank| {
+      let before_hinvoc = &self.kcs.metadata(id).hic.ogrank2hinvoc[before.idx()];
+      let after_hinvoc = &self.kcs.metadata(id).hic.ogrank2hinvoc[after.idx()];
+      before_hinvoc.hid.1 != after_hinvoc.hid.1
+    };
+    let (before, after);
+    loop {
+      if let Some((i_after, i_before)) = guard.pair_iterator.next() {
+        if guard.strans_hook.contains(i_before, i_after) || !filter(i_before, i_after) {
+          continue;
+        }
+        (before, after) = (i_before, i_after);
+        break;
+      } else {
+        (before, after) = guard
+          .strans_hook
+          .random_unobserved_ordering(RANDOM_ORDERING_GEOMETRIC_R, filter);
+        break;
+      };
+    }
+    assert!(before > after);
     ConstraintList::singleton(after, before, self.kcs.metadata(id).hic.len() as u32)
   }
   async fn get_run(

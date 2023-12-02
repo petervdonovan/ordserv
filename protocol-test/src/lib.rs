@@ -6,7 +6,6 @@ pub mod testing;
 
 use std::{collections::HashMap, fs::File};
 
-use log::{debug, error};
 use ordering_server::{HookId, HookInvocation};
 
 use csv::Reader;
@@ -15,7 +14,6 @@ use once_cell::sync::OnceCell;
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use streaming_transpositions::OgRank;
-use tokio::io::{AsyncBufReadExt, AsyncRead};
 
 pub static CONCURRENCY_LIMIT: OnceCell<usize> = OnceCell::new();
 
@@ -178,8 +176,8 @@ pub mod exec {
       let pid = child
         .id()
         .expect("the child has not been polled, so it cannot have been reaped");
-      let (stop_collecting_sender, mut stop_collecting_receiver) = tokio::sync::watch::channel(());
-      let mut out_subscription = stop_collecting_sender.subscribe();
+      let (stop_collecting_sender, stop_collecting_receiver) = tokio::sync::watch::channel(());
+      let out_subscription = stop_collecting_sender.subscribe();
       let output_task = tokio::task::spawn(async move {
         output_collector(
           stdout,
@@ -484,7 +482,7 @@ impl ConstraintList {
 impl Traces {
   pub fn hooks_and_outs(&mut self) -> Result<(Vec<TraceRecord>, Vec<TraceRecord>), csv::Error> {
     let mut raw_traces: Vec<TraceRecord> = Vec::new();
-    for (file_name, reader) in self.0.iter_mut() {
+    for reader in self.0.values_mut() {
       for result in reader.deserialize() {
         let record: TraceRecord = result?;
         raw_traces.push(record);

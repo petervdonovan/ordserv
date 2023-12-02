@@ -332,7 +332,7 @@ impl CompiledState {
       .executables
       .par_iter()
       .map(|(id, exe)| {
-        let (mut hook_trace, mut out_trace);
+        let (hook_trace, out_trace);
         loop {
           let (_, mut traces_map) = CompiledState::get_traces_attempts(
             exe,
