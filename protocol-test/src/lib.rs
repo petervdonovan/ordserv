@@ -453,6 +453,24 @@ impl ConstraintList {
       length,
     }
   }
+  pub fn new_from_block(
+    waiters_and_notifiers: &[(OgRank, OgRank); DELAY_VECTOR_CHUNK_SIZE],
+    length: u32,
+  ) -> Self {
+    let mut waiter_idxs = [0; DELAY_VECTOR_CHUNK_SIZE];
+    let mut notifier_delta_idxs = [0; DELAY_VECTOR_CHUNK_SIZE];
+    for i in 0..DELAY_VECTOR_CHUNK_SIZE {
+      waiter_idxs[i] = waiters_and_notifiers[i].0 .0;
+      notifier_delta_idxs[i] =
+        (waiters_and_notifiers[i].1 .0 as i32 - waiters_and_notifiers[i].0 .0 as i32) as i16;
+    }
+    Self {
+      waiter_idxs,
+      notifier_delta_idxs,
+      parent: None,
+      length,
+    }
+  }
   pub fn num_of_pairs(&self, clr: &ConstraintListRegistry) -> usize {
     let mut current = Some(self);
     let mut ret = 0;

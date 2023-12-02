@@ -27,7 +27,7 @@ use crate::{
   outputvector::{OutputVector, OutputVectorRegistry, OvrDelta, OvrReg, VectorfyStatus},
   state::{InitialState, KnownCountsState, State, TestId},
   ConstraintList, ConstraintListIndex, ConstraintListRegistry, ThreadId, TraceRecord,
-  CONCURRENCY_LIMIT, TEST_TIMEOUT_SECS,
+  CONCURRENCY_LIMIT, DELAY_VECTOR_CHUNK_SIZE, TEST_TIMEOUT_SECS,
 };
 #[derive(Debug)]
 pub struct AccumulatingTracesState {
@@ -376,23 +376,30 @@ impl AccumulatingTracesState {
       let after_hinvoc = &self.kcs.metadata(id).hic.ogrank2hinvoc[after.idx()];
       before_hinvoc.hid.1 != after_hinvoc.hid.1
     };
-    let (before, after);
-    loop {
-      if let Some((i_after, i_before)) = guard.pair_iterator.next() {
-        if guard.strans_hook.contains(i_before, i_after) || !filter(i_before, i_after) {
-          continue;
-        }
-        (before, after) = (i_before, i_after);
-        break;
-      } else {
-        (before, after) = guard
-          .strans_hook
-          .random_unobserved_ordering(RANDOM_ORDERING_GEOMETRIC_R, filter);
-        break;
-      };
+    // let (before, after);
+    // loop {
+    //   if let Some((i_after, i_before)) = guard.pair_iterator.next() {
+    //     if guard.strans_hook.contains(i_before, i_after) || !filter(i_before, i_after) {
+    //       continue;
+    //     }
+    //     (before, after) = (i_before, i_after);
+    //     break;
+    //   } else {
+    //     (before, after) = guard
+    //       .strans_hook
+    //       .random_unobserved_ordering(RANDOM_ORDERING_GEOMETRIC_R, filter);
+    //     break;
+    //   };
+    // }
+    // assert!(before > after);
+    // ConstraintList::singleton(after, before, self.kcs.metadata(id).hic.len() as u32)
+    let mut befores_and_afters = [(OgRank(0), OgRank(0)); DELAY_VECTOR_CHUNK_SIZE];
+    for ptr in befores_and_afters.iter_mut() {
+      *ptr = guard
+        .strans_hook
+        .random_unobserved_ordering(RANDOM_ORDERING_GEOMETRIC_R, filter);
     }
-    assert!(before > after);
-    ConstraintList::singleton(after, before, self.kcs.metadata(id).hic.len() as u32)
+    ConstraintList::new_from_block(&befores_and_afters, self.kcs.metadata(id).hic.len() as u32)
   }
   async fn get_run(
     &self,
