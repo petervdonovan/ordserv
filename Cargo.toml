@@ -6,6 +6,7 @@ members = [
     "protocol-test",
     "streaming-transpositions",
     "viz264",
+    "trace-ord",
 ]
 
 [profile.dev]
