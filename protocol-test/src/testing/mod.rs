@@ -531,6 +531,7 @@ impl AccumulatingTracesState {
           jh.abort();  // FIXME: This hack is an alternative to shutting them down "the right way"
           println!("Thread {} aborted.", tid);
         }
+        crate::kill_everything().await;
       } //)
       ;
     });

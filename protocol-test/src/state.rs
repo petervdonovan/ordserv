@@ -345,8 +345,7 @@ impl CompiledState {
           }
         }
         let ic = get_counts(&hook_trace);
-        let hook_ovkey =
-          OutputVectorKey::new(hook_trace.into_iter().map(|tr| TracePointId::new(&tr)), 1);
+        let hook_ovkey = OutputVectorKey::new(hook_trace, 1);
         if hook_ovkey.len() != ic.len() {
           panic!(
             "hook_ovkey.len() != ic.len(): {} != {}",
@@ -358,10 +357,7 @@ impl CompiledState {
           *id,
           TestMetadata {
             hic: ic,
-            out_ovkey: OutputVectorKey::new(
-              out_trace.into_iter().map(|tr| TracePointId::new(&tr)),
-              OUTPUT_VECTOR_CHUNK_SIZE,
-            ),
+            out_ovkey: OutputVectorKey::new(out_trace, OUTPUT_VECTOR_CHUNK_SIZE),
             hook_ovkey,
           },
         )

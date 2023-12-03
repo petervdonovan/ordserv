@@ -57,6 +57,7 @@ struct OutputVectorNodePair {
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OutputVectorKey {
+  pub records: Vec<TraceRecord>,
   pub map: HashMap<TracePointId, Vec<OgRank>>,
   pub n_tracepoints: usize,
 }
@@ -118,14 +119,15 @@ impl OvrReg {
 pub type OutputVectorRegistry = Arc<RwLock<OvrReg>>;
 
 impl OutputVectorKey {
-  pub fn new(tpis: impl Iterator<Item = TracePointId>, round_up_to_zero_mod: usize) -> Self {
+  pub fn new(tpis: Vec<TraceRecord>, round_up_to_zero_mod: usize) -> Self {
     let mut ret = HashMap::new();
     let mut idx = 0;
-    for tpi in tpis {
+    for tpi in tpis.iter().map(TracePointId::new) {
       ret.entry(tpi).or_insert(vec![]).push(OgRank(idx));
       idx += 1;
     }
     Self {
+      records: tpis,
       map: ret,
       n_tracepoints: (idx as usize - 1) / round_up_to_zero_mod * round_up_to_zero_mod
         + round_up_to_zero_mod,
@@ -292,7 +294,7 @@ mod tests {
       let end = rand::random::<usize>() % 14;
       new_trace[start..end.max(length)].shuffle(&mut rand::thread_rng());
     }
-    let ovk = OutputVectorKey::new(og_trace.into_iter().map(|it| TracePointId::new(&it)), 1);
+    let ovk = OutputVectorKey::new(og_trace, 1);
     let (ov, _, _) = ovk.vectorfy(new_trace.clone().into_iter());
     let ov = OutputVector::new(ov, Arc::clone(&ovr));
     let ov = ov.unpack(&ovr);
