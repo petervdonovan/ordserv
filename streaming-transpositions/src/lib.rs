@@ -179,6 +179,17 @@ impl StreamingTranspositions {
             all_ancestors: Some(Box::new(start)),
         }
     }
+    pub fn update_ancestors(&mut self) {
+        if self.all_ancestors.is_none() {
+            self.all_ancestors = Some(Box::new(self.empty()));
+        }
+        self.all_ancestors
+            .as_mut()
+            .unwrap()
+            .inner
+            .merge(&self.inner);
+        self.inner = self.empty().inner;
+    }
     fn empty_before_and_afters(size: usize) -> Vec<HashSet<OgRank>> {
         let mut before_and_afters = Vec::with_capacity(size);
         for _ in 0..size {
@@ -353,6 +364,12 @@ impl BigSmallIterator {
             start_minus_diff: 1 - diffmaxstrict,
             diff: 1,
         }
+    }
+    pub fn power(&self) -> u32 {
+        self.power
+    }
+    pub fn max_ogrank_strict(&self) -> OgRank {
+        OgRank(self.max_ogrank_strict as u32)
     }
 }
 

@@ -7,6 +7,7 @@ members = [
     "streaming-transpositions",
     "viz264",
     "trace-ord",
+    "lf-trace-reader",
 ]
 
 [profile.dev]

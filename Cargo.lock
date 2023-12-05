@@ -1211,6 +1211,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
+name = "lf-trace-reader"
+version = "0.1.0"
+dependencies = [
+ "csv",
+ "rand",
+ "serde",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.150"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1673,6 +1682,7 @@ dependencies = [
  "colored",
  "console-subscriber",
  "csv",
+ "lf-trace-reader",
  "log",
  "ndarray",
  "once_cell",
@@ -2289,6 +2299,9 @@ checksum = "b6bc1c9ce2b5135ac7f93c72918fc37feb872bdc6a5533a8b85eb4b86bfdae52"
 [[package]]
 name = "trace-ord"
 version = "0.1.0"
+dependencies = [
+ "lf-trace-reader",
+]
 
 [[package]]
 name = "tracing"

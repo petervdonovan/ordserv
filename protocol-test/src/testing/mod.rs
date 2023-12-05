@@ -9,7 +9,10 @@ use std::{
 use colored::Colorize;
 use log::{error, info};
 use priority_queue::DoublePriorityQueue;
-use rand::{seq::SliceRandom, SeedableRng};
+use rand::{
+  seq::{IteratorRandom, SliceRandom},
+  SeedableRng,
+};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use serde::{ser::SerializeStruct, Deserialize, Serialize};
 use streaming_transpositions::{
@@ -17,12 +20,13 @@ use streaming_transpositions::{
   StreamingTranspositions, StreamingTranspositionsDelta,
 };
 
-const RANDOM_ORDERING_GEOMETRIC_R: f64 = 0.5;
+// const RANDOM_ORDERING_GEOMETRIC_R: f64 = 0.5;
 const MAX_NUM_FEDERATES_PER_TEST: usize = 48;
 const HEALTH_CHECK_FREQUENCY: u32 = 200;
+const MAX_N_RUNS_BEFORE_STOPPING: usize = 5000;
 
 use crate::{
-  exec::{ExecResult, Executable},
+  exec::{self, ExecResult, Executable},
   io::{run_with_parameters, RunContext},
   outputvector::{OutputVector, OutputVectorRegistry, OvrDelta, OvrReg, VectorfyStatus},
   state::{InitialState, KnownCountsState, State, TestId},
@@ -57,13 +61,13 @@ impl Serialize for AccumulatingTracesState {
       self.total_runs(),
       self.kcs.src_commit()
     ));
+    std::fs::create_dir_all(&runs_dir).unwrap();
     let runs = self
       .runs
-      .iter()
+      .par_iter()
       .map(|(id, runs)| {
         let runs = runs.read().unwrap();
         let path = runs_dir.join(format!("{}.mpk", id));
-        std::fs::create_dir_all(&runs_dir).unwrap();
         let mut file = std::fs::File::create(&path).unwrap();
         rmp_serde::encode::write(&mut file, &*runs).unwrap();
         (*id, path)
@@ -175,6 +179,7 @@ fn reconstruct_test_runs(
     .map(|(idx, int)| (*idx, *int))
     .collect();
   let pair_iterator = trdeltas.last().unwrap().pair_iterator.clone();
+  let done = trdeltas.last().unwrap().done;
   for trdelta in trdeltas {
     for dvrd in trdelta.clr_delta {
       clr.push(dvrd);
@@ -197,6 +202,7 @@ fn reconstruct_test_runs(
     strans_hook,
     interesting,
     pair_iterator,
+    done,
   }
 }
 
@@ -215,28 +221,36 @@ pub struct TestRuns {
   pub strans_hook: StreamingTranspositions,
   pub interesting: DoublePriorityQueue<ConstraintListIndex, Interestingness>,
   pub pair_iterator: BigSmallIterator,
+  pub done: bool,
 }
 impl Serialize for TestRuns {
   fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
   where
     S: serde::Serializer,
   {
-    let mut ret = serializer.serialize_struct("TestRunsDelta", 5)?;
+    let mut ret = serializer.serialize_struct("TestRunsDelta", 6)?;
+    println!("Serializing clr_delta.");
     ret
       .serialize_field("clr_delta", &self.clr[self.clr_saved_up_to.0 as usize..])
       .unwrap();
+    println!("Serializing raws_delta.");
     ret
       .serialize_field("raws_delta", &self.raw_traces[self.raws_saved_up_to..])
       .unwrap();
+    println!("Serializing interesting.");
     ret
       .serialize_field("interesting", &self.interesting.iter().collect::<Vec<_>>())
       .unwrap();
+    println!("Serializing strans_hook.");
     ret
       .serialize_field("strans_hook", self.strans_hook.as_delta())
       .unwrap();
+    println!("Serializing pair_iterator.");
     ret
       .serialize_field("pair_iterator", &self.pair_iterator)
       .unwrap();
+    println!("Serializing done.");
+    ret.serialize_field("done", &self.done).unwrap();
     ret.end()
   }
 }
@@ -244,6 +258,8 @@ impl TestRuns {
   pub fn update_saved_up_to_for_saving_deltas(&mut self) {
     self.clr_saved_up_to = ConstraintListIndex(self.clr.len() as u32);
     self.raws_saved_up_to = self.raw_traces.len();
+    self.strans_hook.update_ancestors();
+    self.strans_out.update_ancestors();
   }
 }
 #[derive(Deserialize)]
@@ -254,6 +270,7 @@ struct TestRunsDelta {
   interesting: Vec<(ConstraintListIndex, Interestingness)>,
   strans_hook: StreamingTranspositionsDelta, // FIXME: This is not incremental! It is aggregated, not a delta.
   pair_iterator: BigSmallIterator,
+  done: bool,
 }
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct CoarseTraceHash(pub u64);
@@ -339,6 +356,7 @@ impl AccumulatingTracesState {
             strans_hook: kcs.empty_streaming_transpositions_hook(id),
             interesting: DoublePriorityQueue::new(),
             pair_iterator: BigSmallIterator::new(OgRank(kcs.metadata(id).hic.len() as u32)),
+            done: false,
           })),
         )
       })
@@ -376,30 +394,44 @@ impl AccumulatingTracesState {
       let after_hinvoc = &self.kcs.metadata(id).hic.ogrank2hinvoc[after.idx()];
       before_hinvoc.hid.1 != after_hinvoc.hid.1
     };
-    // let (before, after);
-    // loop {
-    //   if let Some((i_after, i_before)) = guard.pair_iterator.next() {
-    //     if guard.strans_hook.contains(i_before, i_after) || !filter(i_before, i_after) {
-    //       continue;
-    //     }
-    //     (before, after) = (i_before, i_after);
-    //     break;
-    //   } else {
-    //     (before, after) = guard
-    //       .strans_hook
-    //       .random_unobserved_ordering(RANDOM_ORDERING_GEOMETRIC_R, filter);
-    //     break;
-    //   };
-    // }
-    // assert!(before > after);
-    // ConstraintList::singleton(after, before, self.kcs.metadata(id).hic.len() as u32)
-    let mut befores_and_afters = [(OgRank(0), OgRank(0)); DELAY_VECTOR_CHUNK_SIZE];
-    for ptr in befores_and_afters.iter_mut() {
-      *ptr = guard
-        .strans_hook
-        .random_unobserved_ordering(RANDOM_ORDERING_GEOMETRIC_R, filter);
+    let (before, after);
+    loop {
+      let power = guard.pair_iterator.power();
+      if let Some((i_after, i_before)) = guard.pair_iterator.next() {
+        if guard.strans_hook.contains(i_before, i_after) || !filter(i_before, i_after) {
+          continue;
+        }
+        if guard.pair_iterator.power() != power {
+          info!(
+            "Max difference: {}. Current difference: 2^{}.",
+            guard.pair_iterator.max_ogrank_strict().0,
+            guard.pair_iterator.power()
+          );
+        }
+        (before, after) = (i_before, i_after);
+        if guard.raw_traces.len() > MAX_N_RUNS_BEFORE_STOPPING {
+          guard.done = true;
+        }
+        break;
+      } else {
+        info!("Marking test {} as fully explored.", id);
+        guard.done = true;
+        (before, after) = (OgRank(1), OgRank(0)); // Placeholder. This should only happen once because the test is now marked as done.
+                                                  // (before, after) = guard
+                                                  //   .strans_hook
+                                                  //   .random_unobserved_ordering(RANDOM_ORDERING_GEOMETRIC_R, filter);
+        break;
+      };
     }
-    ConstraintList::new_from_block(&befores_and_afters, self.kcs.metadata(id).hic.len() as u32)
+    assert!(before > after);
+    ConstraintList::singleton(after, before, self.kcs.metadata(id).hic.len() as u32)
+    // let mut befores_and_afters = [(OgRank(0), OgRank(0)); DELAY_VECTOR_CHUNK_SIZE];
+    // for ptr in befores_and_afters.iter_mut() {
+    //   *ptr = guard
+    //     .strans_hook
+    //     .random_unobserved_ordering(RANDOM_ORDERING_GEOMETRIC_R, filter);
+    // }
+    // ConstraintList::new_from_block(&befores_and_afters, self.kcs.metadata(id).hic.len() as u32)
   }
   async fn get_run(
     &self,
@@ -550,7 +582,43 @@ impl AccumulatingTracesState {
     .bold()
     .on_green();
     println!("{}", msg);
+    self.print_tests_not_done();
     crate::io::clean(self.kcs.scratch_dir());
+  }
+  fn get_executable(
+    tidx: usize,
+    testruns: &HashMap<TestId, Arc<RwLock<TestRuns>>>,
+    executables: &Vec<(TestId, Executable)>,
+  ) -> Option<(TestId, Executable)> {
+    let mut rng = rand::rngs::StdRng::seed_from_u64(tidx as u64);
+    let start_at = (0..executables.len()).choose(&mut rng).unwrap();
+    let mut current = start_at;
+    loop {
+      let (id, exe) = &executables[current];
+      let testruns_read = testruns.get(id).unwrap().read().unwrap();
+      if !testruns_read.done {
+        return Some((*id, exe.clone()));
+      }
+      current = (current + 1) % executables.len();
+      if current == start_at {
+        return None;
+      }
+    }
+  }
+  fn print_tests_not_done(&self) {
+    let mut not_done = vec![];
+    for (id, runs) in &self.runs {
+      let runs = runs.read().unwrap();
+      if !runs.done {
+        not_done.push(id);
+      }
+    }
+    if !not_done.is_empty() {
+      println!("Tests not done:");
+      for id in not_done {
+        println!("  {}", self.kcs.executables().get(id).unwrap());
+      }
+    }
   }
   #[allow(clippy::too_many_arguments)] // FIXME: refactor. sry clippy don't have time for u
   async fn main(
@@ -573,45 +641,48 @@ impl AccumulatingTracesState {
     };
     let mut successes = 0;
     while std::time::Instant::now() - t0 < std::time::Duration::from_secs(time_seconds as u64) {
-      let mut rng = rand::rngs::StdRng::seed_from_u64(tidx as u64);
-      let (id, exe) = executables.choose(&mut rng).unwrap();
-      let conl = self_immut.get_constraint_vector(id);
-      let clr = Arc::clone(&self_immut.runs[id]);
-      let run = self_immut.get_run(id, exe, &conl, clr, &mut rctx).await;
-      rctx.run_id += 1;
-      if run.is_ok() {
-        successes += 1;
-      }
-      if rctx.run_id % HEALTH_CHECK_FREQUENCY == 0 || run.is_err() {
-        info!(
-          "Thread {} health check. Success rate: {} / {} ({}). Speed: {} runs/second.",
-          tidx,
-          successes,
-          rctx.run_id,
-          (successes as f64) / (rctx.run_id as f64),
-          rctx.run_id as f64 / (std::time::Instant::now() - t0).as_secs_f64()
-        );
-      }
-      let mut entry = self_immut.runs.get(id).unwrap().write().unwrap();
-      entry.clr.push(conl);
-      let idx = ConstraintListIndex(entry.clr.len() as u32 - 1);
-      match run {
-        Ok((hook_orcr, out_orcr, trhash, status)) => {
-          entry.strans_hook.record(hook_orcr.0.clone());
-          entry.strans_out.record(out_orcr.0.clone());
-          let ov = OutputVector::new(out_orcr.0, Arc::clone(&my_ovr));
-          entry
-            .iomats
-            .entry(trhash.0)
-            .or_insert(HashMap::new())
-            .entry(trhash.1)
-            .or_insert(vec![])
-            .push(ov);
-          entry.raw_traces.push((idx, Ok((ov, trhash, status))));
+      if let Some((id, exe)) = Self::get_executable(tidx, &self_immut.runs, executables) {
+        let conl = self_immut.get_constraint_vector(&id);
+        let clr = Arc::clone(&self_immut.runs[&id]);
+        let run = self_immut.get_run(&id, &exe, &conl, clr, &mut rctx).await;
+        rctx.run_id += 1;
+        if run.is_ok() {
+          successes += 1;
         }
-        Err(err) => {
-          entry.raw_traces.push((idx, Err(err)));
+        if rctx.run_id % HEALTH_CHECK_FREQUENCY == 0 || run.is_err() {
+          info!(
+            "Thread {} health check. Success rate: {} / {} ({}). Speed: {} runs/second.",
+            tidx,
+            successes,
+            rctx.run_id,
+            (successes as f64) / (rctx.run_id as f64),
+            rctx.run_id as f64 / (std::time::Instant::now() - t0).as_secs_f64()
+          );
         }
+        let mut entry = self_immut.runs.get(&id).unwrap().write().unwrap();
+        entry.clr.push(conl);
+        let idx = ConstraintListIndex(entry.clr.len() as u32 - 1);
+        match run {
+          Ok((hook_orcr, out_orcr, trhash, status)) => {
+            entry.strans_hook.record(hook_orcr.0.clone());
+            entry.strans_out.record(out_orcr.0.clone());
+            let ov = OutputVector::new(out_orcr.0, Arc::clone(&my_ovr));
+            entry
+              .iomats
+              .entry(trhash.0)
+              .or_insert(HashMap::new())
+              .entry(trhash.1)
+              .or_insert(vec![])
+              .push(ov);
+            entry.raw_traces.push((idx, Ok((ov, trhash, status))));
+          }
+          Err(err) => {
+            entry.raw_traces.push((idx, Err(err)));
+          }
+        }
+      } else {
+        info!("Done.");
+        break;
       }
     }
     ordserv_handle.updates_acks[0].0.send(None).await.unwrap();

@@ -105,10 +105,10 @@ pub fn reusing(
 static FCNTL_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn make_server_and_client_connection_pair() -> (RawFd, RawFd) {
-    let _lock = FCNTL_MUTEX.lock().unwrap();
     let (server_connection, client_connection) = std::os::unix::net::UnixStream::pair().unwrap();
     let client_connection = client_connection.into_raw_fd();
     let server_connection = server_connection.into_raw_fd();
+    let lock = FCNTL_MUTEX.lock().unwrap();
     unsafe {
         // magic snippet I don't understand dug up from the depths of the web
         // https://stackoverflow.com/questions/55540577/how-to-communicate-a-rust-and-a-ruby-process-using-a-unix-socket-pair
@@ -118,6 +118,7 @@ fn make_server_and_client_connection_pair() -> (RawFd, RawFd) {
         let flags = libc::fcntl(server_connection, libc::F_GETFD);
         libc::fcntl(server_connection, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
     }
+    drop(lock);
     (server_connection, client_connection)
 }
 

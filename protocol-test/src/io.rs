@@ -131,18 +131,6 @@ pub fn get_commit_hash(src_dir: &Path) -> CommitHash {
   CommitHash::new(s.trim()[..32].to_string())
 }
 
-fn trace_by_physical_time(trace_path: &PathBuf) -> Vec<TraceRecord> {
-  let mut records: Vec<_> = ReaderBuilder::new()
-    .trim(csv::Trim::All)
-    .from_path(trace_path)
-    .expect("failed to open CSV reader")
-    .deserialize::<TraceRecord>()
-    .map(|r| r.expect("failed to read record"))
-    .collect();
-  records.sort_by_key(|it| it.elapsed_physical_time);
-  records
-}
-
 pub fn get_counts(hook_trace: &[TraceRecord]) -> HookInvocationCounts {
   let mut hid2ic = HashMap::new();
   let mut ogrank2hinvoc = Vec::new();

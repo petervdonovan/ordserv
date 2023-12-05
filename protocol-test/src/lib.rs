@@ -6,6 +6,7 @@ pub mod testing;
 
 use std::{collections::HashMap, fs::File};
 
+use lf_trace_reader::TraceRecord;
 use ordering_server::{HookId, HookInvocation};
 
 use csv::Reader;
@@ -199,27 +200,6 @@ pub mod exec {
         )
         .await;
       });
-      // let mut err_lines = tokio::io::BufReader::new(stderr).lines();
-      // let err_task = tokio::task::spawn(async move {
-      //   let mut err = vec![];
-      //   while let Some(line) = err_lines.next_line().await.transpose() {
-      //     if let Err(e) = line {
-      //       error!("failed to read line of stderr: {:?}", e);
-      //       err.push("???".to_string());
-      //     } else {
-      //       let s = line.unwrap();
-      //       // debug!("DEBUG: {}: {}", pid, s);
-      //       err.push(s.to_string());
-      //       if err.len() > MAX_ERROR_LINES {
-      //         err.push("...".to_string());
-      //         break;
-      //       }
-      //     }
-      //   }
-      //   if let Err(e) = terr.send(err.join("\n")) {
-      //     debug!("failed to send stderr of child process {pid}: {:?}", e);
-      //   }
-      // });
       let result;
       let (send_kill, mut recv_kill) = tokio::sync::mpsc::unbounded_channel::<()>();
       let (send_kill2, mut recv_kill2) = tokio::sync::mpsc::unbounded_channel::<()>();
@@ -513,53 +493,5 @@ impl Traces {
       .cloned()
       .collect();
     Ok((raw_traces, raw_traces_rti_only))
-  }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct TraceRecord {
-  #[serde(rename = "Event")]
-  event: String,
-  #[serde(rename = "Reactor")]
-  reactor: String,
-  #[serde(rename = "Source")]
-  source: i32,
-  #[serde(rename = "Destination")]
-  destination: i32,
-  #[serde(rename = "Elapsed Logical Time")]
-  elapsed_logical_time: i64,
-  #[serde(rename = "Microstep")]
-  microstep: i64,
-  #[serde(rename = "Elapsed Physical Time")]
-  elapsed_physical_time: i64,
-  #[serde(rename = "Trigger")]
-  trigger: String,
-  #[serde(rename = "Extra Delay")]
-  extra_delay: u64,
-  #[serde(rename = "File Index")]
-  file_index: u32,
-  #[serde(rename = "Line Number")]
-  line_number: u32,
-  #[serde(rename = "Sequence Number for File and Line")]
-  sequence_number_for_file_and_line: u32,
-}
-#[cfg(test)]
-impl TraceRecord {
-  pub fn mock() -> Self {
-    let rng = &mut rand::thread_rng();
-    Self {
-      event: vec!["A", "B", "C", "D"].choose(rng).unwrap().to_string(),
-      reactor: vec!["R", "S", "T", "U"].choose(rng).unwrap().to_string(),
-      source: rand::random(),
-      destination: rand::random(),
-      elapsed_logical_time: rand::random(),
-      microstep: rand::random(),
-      elapsed_physical_time: rand::random(),
-      trigger: vec!["W", "X", "Y", "Z"].choose(rng).unwrap().to_string(),
-      extra_delay: rand::random(),
-      file_index: rand::random::<u32>() % 10,
-      line_number: rand::random::<u32>() % 10,
-      sequence_number_for_file_and_line: rand::random::<u32>() % 100,
-    }
   }
 }

@@ -1,24 +1,18 @@
-use std::{collections::HashSet, str::FromStr};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::{Display, Formatter},
+    str::FromStr,
+};
 
-// pub enum EventType {
-//     FED_ID,
-//     ACK,
-//     TIMESTAMP,
-//     NET,
-//     PTAG,
-//     TAGGED_MSG,
-//     TAG,
-//     STOP_REQ,
-//     STOP_REQ_REP,
-//     STOP_GRN,
-//     LTC,
-// }
+pub mod axioms;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventType {
     FedId,
     Ack,
     Timestamp,
     Net,
+    PortAbs,
     Ptag,
     TaggedMsg,
     Tag,
@@ -26,6 +20,9 @@ pub enum EventType {
     StopReqRep,
     StopGrn,
     Ltc,
+    FirstTagOrPtag,
+    FirstPortAbsOrTaggedMsg,
+    FirstNet,
 }
 
 impl FromStr for EventType {
@@ -43,6 +40,7 @@ impl FromStr for EventType {
             "STOP_REQ_REP" => Ok(EventType::StopReqRep),
             "STOP_GRN" => Ok(EventType::StopGrn),
             "LTC" => Ok(EventType::Ltc),
+            "PORT_ABS" => Ok(EventType::PortAbs),
             _ => Err(()),
         }
     }
@@ -77,8 +75,8 @@ pub enum Event {
 /// (with the preceding event occurring first in all non-error traces).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Rule {
-    pub event: Event,
     pub preceding_event: Event,
+    pub event: Event,
     pub relations: Vec<Relation>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -86,25 +84,108 @@ pub enum Relation {
     TagEqual,
     TagLessThan,
     TagLessThanOrEqual,
+    TagFinite,
     FederateEqual,
 }
 
+pub fn preceding_permutables_by_ogrank(
+    trace: &[TraceRecord],
+    axioms: &[Rule],
+    always_occurring: HashSet<OgRank>,
+) -> Vec<HashSet<OgRank>> {
+    let unpermutables = Unpermutables::from_realizable_trace(trace, axioms, always_occurring);
+    unpermutables.preceding_permutables_by_ogrank()
+}
+
 pub struct Unpermutables {
-    pub ogrank2predecessors: Vec<PredecessorSet>,
+    pub ogrank2immediatepredecessors: Vec<HashSet<OgRank>>,
     pub always_occurring: HashSet<OgRank>,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct OgRank(u32);
-
-pub struct PredecessorSet {
-    largest_predecessor: Option<OgRank>,
-    delta: HashSet<OgRank>,
-}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct OgRank(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TraceRecord {
     pub event: Event,
     pub tag: (i64, i64),
-    pub source: i32,
+    pub fedid: i32,
+}
+
+impl Display for TraceRecord {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{:?} ({}, {}) @ {:?}",
+            self.event, self.tag.0, self.tag.1, self.fedid
+        )
+    }
+}
+
+impl TraceRecord {
+    pub fn from_lf_trace_record(lf_trace_record: &lf_trace_reader::TraceRecord) -> Self {
+        let event = Event::from_str(&lf_trace_record.event).unwrap();
+        let tag = (
+            lf_trace_record.elapsed_logical_time,
+            lf_trace_record.microstep,
+        );
+        let source = lf_trace_record.destination;
+        Self {
+            event,
+            tag,
+            fedid: source,
+        }
+    }
+}
+
+pub struct Elaborated2Og(pub HashMap<OgRank, OgRank>);
+
+pub fn elaborated_from_lf_trace_records(
+    lf_trace_records: Vec<lf_trace_reader::TraceRecord>,
+) -> (Vec<TraceRecord>, Elaborated2Og) {
+    let mut ret = Vec::new();
+    let mut elaborated2og = HashMap::new();
+    let mut firsts = HashSet::new();
+    for (ogidx, record) in lf_trace_records.iter().enumerate() {
+        let tr = TraceRecord::from_lf_trace_record(record);
+        match tr.event {
+            Event::Send(EventType::Ptag) | Event::Send(EventType::Tag) => {
+                let elaborated = TraceRecord {
+                    event: Event::Send(EventType::FirstTagOrPtag),
+                    tag: tr.tag,
+                    fedid: tr.fedid,
+                };
+                if !firsts.contains(&elaborated) {
+                    firsts.insert(elaborated);
+                    ret.push(elaborated);
+                }
+            }
+            Event::Recv(EventType::TaggedMsg) | Event::Recv(EventType::PortAbs) => {
+                let elaborated = TraceRecord {
+                    event: Event::Recv(EventType::FirstPortAbsOrTaggedMsg),
+                    tag: tr.tag,
+                    fedid: tr.fedid,
+                };
+                if !firsts.contains(&elaborated) {
+                    firsts.insert(elaborated);
+                    ret.push(elaborated);
+                }
+            }
+            Event::Recv(EventType::Net) => {
+                let elaborated = TraceRecord {
+                    event: Event::Recv(EventType::FirstNet),
+                    tag: tr.tag,
+                    fedid: tr.fedid,
+                };
+                if !firsts.contains(&elaborated) {
+                    firsts.insert(elaborated);
+                    ret.push(elaborated);
+                }
+            }
+            _ => {}
+        }
+        elaborated2og.insert(OgRank(ret.len() as u32), OgRank(ogidx as u32));
+        ret.push(tr);
+    }
+    (ret, Elaborated2Og(elaborated2og))
 }
 
 impl Rule {
@@ -120,31 +201,20 @@ impl Rule {
 
 impl Relation {
     fn holds(&self, tr_before: &TraceRecord, tr_after: &TraceRecord) -> bool {
+        fn finite(a: i64) -> bool {
+            a.abs() < 1_000_000_000_000
+        }
         match self {
             Relation::TagEqual => tr_before.tag == tr_after.tag,
             Relation::TagLessThan => tr_before.tag < tr_after.tag,
             Relation::TagLessThanOrEqual => tr_before.tag <= tr_after.tag,
-            Relation::FederateEqual => tr_before.source == tr_after.source,
+            Relation::FederateEqual => tr_before.fedid == tr_after.fedid,
+            Relation::TagFinite => finite(tr_before.tag.0) && finite(tr_after.tag.0),
         }
     }
 }
 
 impl OgRank {
-    fn all_predecessors_and_self<'a>(
-        &self,
-        ogrank2predecessors: &'a [PredecessorSet],
-        empty: &'a HashSet<OgRank>,
-    ) -> impl Iterator<Item = OgRank> + 'a {
-        std::iter::once(*self)
-            .chain(
-                if let Some(pred) = ogrank2predecessors[self.0 as usize].largest_predecessor {
-                    ogrank2predecessors[pred.0 as usize].delta.iter().copied()
-                } else {
-                    empty.iter().copied()
-                },
-            )
-            .chain(ogrank2predecessors[self.0 as usize].delta.iter().copied())
-    }
     fn idx(&self) -> usize {
         self.0 as usize
     }
@@ -152,77 +222,103 @@ impl OgRank {
 
 impl Unpermutables {
     pub fn from_realizable_trace(
-        trace: Vec<TraceRecord>,
-        axioms: Vec<Rule>,
+        trace: &[TraceRecord],
+        axioms: &[Rule],
         always_occurring: HashSet<OgRank>,
     ) -> Self {
-        let mut ogrank2predecessors = Vec::new();
-        for rule in axioms {
-            for (ogrank, tr) in trace.iter().enumerate() {
-                ogrank2predecessors.push(PredecessorSet {
-                    largest_predecessor: None,
-                    delta: Self::apply_rule(&rule, tr, &trace[..ogrank], &trace[ogrank + 1..]),
-                });
+        let mut ogrank2immediatepredecessors = Vec::new();
+        for (ogrank, tr) in trace.iter().enumerate() {
+            let mut immediate_predecessors = HashSet::new();
+            for rule in axioms {
+                immediate_predecessors.extend(Self::apply_rule(
+                    rule,
+                    tr,
+                    &trace[..ogrank],
+                    &trace[ogrank + 1..],
+                ));
             }
+            ogrank2immediatepredecessors.push(immediate_predecessors);
         }
         Self {
-            ogrank2predecessors,
+            ogrank2immediatepredecessors,
             always_occurring,
         }
     }
-    pub fn apply_transitivity(&mut self) {
-        let empty = HashSet::new();
-        let possible_transitive_predecessors =
-            |ogrank: usize, ogrank2predecessors: &[PredecessorSet]| {
-                ogrank2predecessors[ogrank]
-                    .delta
-                    .iter()
-                    .filter(|&pred| self.always_occurring.contains(pred))
-                    .flat_map(|&pred| pred.all_predecessors_and_self(&ogrank2predecessors, &empty))
-                    .chain(ogrank2predecessors[ogrank].delta.iter().copied())
+    /// An ogrank A is _preceding_ an ogrank B iff A is numerically less than B, having occurred
+    /// first in the OG trace.
+    ///
+    /// An ogrank is a _predecessor_ of an ogrank B if it precedes B in _all_ non-error traces.
+    ///
+    /// Preceding is transitive; predecessor is only transitive when restricted to events that
+    /// always occur.
+    ///
+    /// Preceding is easy to represent compactly because it is a total order. Predecessor is harder.
+    ///
+    /// The OG trace is a non-error trace, so the relation _preceding_ is a superset of the relation
+    /// _predecessor_.
+    ///
+    /// A preceding ogrank is a predecessor of the current ogrank iff it is in the union of the sets
+    /// of predecessors of the immediate and always occurring predecessors of the current ogrank.
+    /// That is, it is a preceding non-predecessor of the current ogrank iff it is in the
+    /// intersection of the sets of (preceding or non-preceding) non-predecessors of the immediate
+    /// and always occurring predecessors of the current ogrank. The utility of this demorganish
+    /// restatement is that the sets of preceding non-predecessors is presumed to be smaller than
+    ///
+    /// This function implements a dynamic programming algorithm to compute the sets of preceding
+    /// non-predecessors.
+    pub fn preceding_permutables_by_ogrank(&self) -> Vec<HashSet<OgRank>> {
+        let mut ret: Vec<HashSet<OgRank>> = Vec::new();
+        for ogrank in 0..self.ogrank2immediatepredecessors.len() {
+            let immediate_predecessors = &self.ogrank2immediatepredecessors[ogrank];
+            let candidate_non_predecessors_size = |other: OgRank| {
+                ret[other.idx()].len() as u32 + (ogrank as u32) - other.0
+                // the non-predecessors of `other` that precede `ogrank` are partitioned into the
+                // preceding non-predecessors of `other` and the ogranks that are preceding of
+                // `ogrank` but not preceding of `other`
             };
-        let len = self.ogrank2predecessors.len();
-        for ogrank in 0..len {
-            let largest_predecessor =
-                possible_transitive_predecessors(ogrank, &self.ogrank2predecessors).max_by_key(
-                    |&before_ogrank| {
-                        self.ogrank2predecessors[before_ogrank.0 as usize]
-                            .delta
-                            .len()
-                    },
-                );
-            self.ogrank2predecessors[ogrank].largest_predecessor = largest_predecessor;
-            let mut new_delta = HashSet::new();
-            for predecessor in possible_transitive_predecessors(ogrank, &self.ogrank2predecessors)
-                .filter(|it| {
-                    largest_predecessor.is_none()
-                        || !self.ogrank2predecessors[largest_predecessor.unwrap().0 as usize]
-                            .delta
-                            .contains(it)
-                })
-            {
-                new_delta.extend(
-                    predecessor.all_predecessors_and_self(&self.ogrank2predecessors, &empty),
-                );
-            }
-            if let Some(largest_predecessor) = largest_predecessor {
-                if new_delta.len()
-                    > self.ogrank2predecessors[largest_predecessor.idx()]
-                        .delta
-                        .len()
-                        / 8
-                {
-                    self.ogrank2predecessors[largest_predecessor.idx()].largest_predecessor = None;
-                    new_delta.extend(
-                        self.ogrank2predecessors[largest_predecessor.idx()]
-                            .delta
-                            .iter()
-                            .copied(),
+            // start with the smallest for efficiency since we're going to be intersecting
+            let (ipred0, smallest_non_predecessor_set) = immediate_predecessors
+                .iter()
+                .filter(|ogrank| self.always_occurring.contains(ogrank))
+                .min_by_key(|ogrank| candidate_non_predecessors_size(**ogrank))
+                .map(|ogrank| (Some(*ogrank), ret[ogrank.idx()].clone()))
+                .unwrap_or_default();
+            if let Some(ipred0) = ipred0 {
+                let mut running_intersection = smallest_non_predecessor_set;
+                // the sets implicitly contain everything greater than to `ipred0`
+                running_intersection.extend((ipred0.0 + 1..ogrank as u32).map(OgRank));
+                if ogrank == 17 {
+                    for ipred in immediate_predecessors.iter().filter(|ogrank| {
+                        self.always_occurring.contains(ogrank) && **ogrank != ipred0
+                    }) {
+                        let mut remove_list = Vec::new();
+                        for ogrank in running_intersection.iter() {
+                            // the sets implicitly contain everything greater than `ipred`
+                            if !(ret[ipred.idx()].contains(ogrank) || ogrank > ipred) {
+                                remove_list.push(*ogrank);
+                            }
+                        }
+                        for ogrank in remove_list {
+                            running_intersection.remove(&ogrank);
+                        }
+                    }
+                    println!(
+                        "immediate_predecessors: {:?} at # 17",
+                        immediate_predecessors
+                    );
+                    println!(
+                        "smallest_non_predecessor_set: {:?} and ipred0: {} and ret length: {}",
+                        running_intersection,
+                        ipred0.0,
+                        ret.len()
                     );
                 }
+                ret.push(running_intersection);
+            } else {
+                ret.push((0..ogrank as u32).map(OgRank).collect());
             }
-            self.ogrank2predecessors[ogrank].delta = new_delta;
         }
+        ret
     }
     fn apply_rule(
         rule: &Rule,
@@ -233,7 +329,7 @@ impl Unpermutables {
         let mut immediate_predecessors = HashSet::new();
         if after.iter().any(|tr_after| rule.matches(tr_after, tr)) {
             panic!(
-                "Tracepoint {:?} followed by {:?} is a counterexample to the axiom {:?}",
+                "Tracepoint:\n    {:?}\nfollowed by:\n    {:?} is a counterexample to the axiom:\n{:?}",
                 tr, after, rule
             );
         }

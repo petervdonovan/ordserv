@@ -277,6 +277,7 @@ impl OutputVector {
 
 #[cfg(test)]
 mod tests {
+
   use rand::seq::SliceRandom;
 
   use super::*;
