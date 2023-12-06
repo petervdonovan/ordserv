@@ -110,8 +110,12 @@ pub fn file_name_with_total_runs(
   prefix: &str,
   src_commit: &CommitHash,
   total_runs: usize,
+  seqnum: usize,
 ) -> PathBuf {
-  scratch.join(format!("{}-{}-{}.mpk", prefix, src_commit, total_runs))
+  scratch.join(format!(
+    "{}-{}-{}-{}.mpk",
+    prefix, src_commit, total_runs, seqnum
+  ))
 }
 
 impl State {
@@ -206,6 +210,7 @@ impl State {
           Self::ACCUMULATING_TRACES_NAME,
           src_commit,
           ats.total_runs(),
+          ats.seqnum,
         )
       }
     };
@@ -231,14 +236,14 @@ impl State {
       .expect("could not write to file");
     self.update_saved_up_to_for_saving_deltas();
   }
-  pub fn run(self, time_seconds: u32) -> Self {
+  pub fn run(self, time_seconds: u32) -> (Self, bool) {
     match self {
-      Self::Initial(is) => Self::Compiled(is.compile()),
-      Self::Compiled(cs) => Self::KnownCounts(cs.known_counts()),
-      Self::KnownCounts(kcs) => Self::AccumulatingTraces(kcs.advance()),
+      Self::Initial(is) => (Self::Compiled(is.compile()), false),
+      Self::Compiled(cs) => (Self::KnownCounts(cs.known_counts()), false),
+      Self::KnownCounts(kcs) => (Self::AccumulatingTraces(kcs.advance()), false),
       Self::AccumulatingTraces(mut ats) => {
-        ats.accumulate_traces(time_seconds);
-        Self::AccumulatingTraces(ats)
+        let n_tests_not_done = ats.accumulate_traces(time_seconds);
+        (Self::AccumulatingTraces(ats), n_tests_not_done == 0)
       }
     }
   }

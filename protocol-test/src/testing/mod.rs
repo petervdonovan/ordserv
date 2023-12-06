@@ -40,6 +40,7 @@ pub struct AccumulatingTracesState {
   pub runs: HashMap<TestId, Arc<RwLock<TestRuns>>>, // TODO: consider using a rwlock
   pub ovr: OutputVectorRegistry,
   pub dt: std::time::Duration,
+  pub seqnum: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -101,6 +102,7 @@ impl<'de> Deserialize<'de> for AccumulatingTracesState {
       .collect();
     let parent = ancestors.last().unwrap().parent.clone();
     let dt = ancestors.last().unwrap().dt;
+    let seqnum = ancestors.len();
     let trdelta_by_id = trdelta_by_id(ancestors);
     let ovr = Arc::new(RwLock::new(OvrReg::rebuild(ovrd.into_iter())));
     let runs = trdelta_by_id
@@ -120,6 +122,7 @@ impl<'de> Deserialize<'de> for AccumulatingTracesState {
       ovr,
       runs,
       dt,
+      seqnum,
     })
   }
 }
@@ -229,27 +232,21 @@ impl Serialize for TestRuns {
     S: serde::Serializer,
   {
     let mut ret = serializer.serialize_struct("TestRunsDelta", 6)?;
-    println!("Serializing clr_delta.");
     ret
       .serialize_field("clr_delta", &self.clr[self.clr_saved_up_to.0 as usize..])
       .unwrap();
-    println!("Serializing raws_delta.");
     ret
       .serialize_field("raws_delta", &self.raw_traces[self.raws_saved_up_to..])
       .unwrap();
-    println!("Serializing interesting.");
     ret
       .serialize_field("interesting", &self.interesting.iter().collect::<Vec<_>>())
       .unwrap();
-    println!("Serializing strans_hook.");
     ret
       .serialize_field("strans_hook", self.strans_hook.as_delta())
       .unwrap();
-    println!("Serializing pair_iterator.");
     ret
       .serialize_field("pair_iterator", &self.pair_iterator)
       .unwrap();
-    println!("Serializing done.");
     ret.serialize_field("done", &self.done).unwrap();
     ret.end()
   }
@@ -372,6 +369,7 @@ impl AccumulatingTracesState {
       runs,
       ovr: Arc::new(RwLock::new(Default::default())),
       dt: std::time::Duration::from_secs(0),
+      seqnum: 0,
     }
   }
   pub fn total_runs(&self) -> usize {
@@ -492,14 +490,16 @@ impl AccumulatingTracesState {
       .write()
       .unwrap()
       .update_saved_up_to_for_saving_deltas();
+    self.seqnum += 1;
   }
 
-  pub fn accumulate_traces(&mut self, time_seconds: u32) {
+  pub fn accumulate_traces(&mut self, time_seconds: u32) -> u32 {
     self.parent = crate::state::file_name_with_total_runs(
       self.kcs.scratch_dir(),
       State::ACCUMULATING_TRACES_NAME,
       self.kcs.src_commit(),
       self.total_runs(),
+      self.seqnum - 1,
     );
     let t0 = std::time::Instant::now();
     let initial_total_runs = self.total_runs();
@@ -582,8 +582,8 @@ impl AccumulatingTracesState {
     .bold()
     .on_green();
     println!("{}", msg);
-    self.print_tests_not_done();
     crate::io::clean(self.kcs.scratch_dir());
+    self.print_tests_not_done()
   }
   fn get_executable(
     tidx: usize,
@@ -605,7 +605,7 @@ impl AccumulatingTracesState {
       }
     }
   }
-  fn print_tests_not_done(&self) {
+  fn print_tests_not_done(&self) -> u32 {
     let mut not_done = vec![];
     for (id, runs) in &self.runs {
       let runs = runs.read().unwrap();
@@ -615,10 +615,11 @@ impl AccumulatingTracesState {
     }
     if !not_done.is_empty() {
       println!("Tests not done:");
-      for id in not_done {
+      for id in not_done.iter() {
         println!("  {}", self.kcs.executables().get(id).unwrap());
       }
     }
+    not_done.len() as u32
   }
   #[allow(clippy::too_many_arguments)] // FIXME: refactor. sry clippy don't have time for u
   async fn main(
@@ -682,7 +683,7 @@ impl AccumulatingTracesState {
         }
       } else {
         info!("Done.");
-        break;
+        tokio::time::sleep(std::time::Duration::from_secs(time_seconds as u64)).await;
       }
     }
     ordserv_handle.updates_acks[0].0.send(None).await.unwrap();

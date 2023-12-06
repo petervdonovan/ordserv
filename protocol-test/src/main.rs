@@ -43,9 +43,10 @@ fn main() {
     .frequency_of_save_in_seconds
     .unwrap_or(DEFAULT_SAVE_INTERVAL_SECONDS);
   loop {
-    state = state.run(save_interval);
+    let (new_state, done) = state.run(save_interval);
+    state = new_state;
     state.save_to_scratch_dir();
-    if args.once {
+    if args.once || done {
       break;
     }
   }
