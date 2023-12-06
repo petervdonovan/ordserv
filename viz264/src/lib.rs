@@ -141,27 +141,33 @@ impl ValueFormatter<SegmentValue<u32>> for TestFormatter {
 }
 
 pub fn runs_over_time_chart(atses: &[AtsDelta], throughput_file_name: &str) {
-    let data = get_n_runs_over_time(atses);
+    let data: Vec<_> = get_n_runs_over_time(atses)
+        .into_iter()
+        .map(|(dt, n_runs)| (dt / 60.0, n_runs as f64 / 1000.0))
+        .collect();
     println!("{:?}", data);
-    let root = BitMapBackend::new(throughput_file_name, (1024, 768)).into_drawing_area();
+    let root = BitMapBackend::new(throughput_file_name, (2048, 2048)).into_drawing_area();
     root.fill(&WHITE).unwrap();
     let (max_x, max_y) = data.iter().max_by_key(|it| it.0 as i64).unwrap();
     let mut chart = ChartBuilder::on(&root)
-        .set_label_area_size(LabelAreaPosition::Left, 60)
-        .set_label_area_size(LabelAreaPosition::Bottom, 60)
-        .caption("Runs over time", ("sans-serif", 40))
-        .build_cartesian_2d(0.0..*max_x, 0..*max_y)
+        .set_label_area_size(LabelAreaPosition::Left, 120)
+        .set_label_area_size(LabelAreaPosition::Bottom, 120)
+        .caption("Runs over time", ("serif", 80))
+        .build_cartesian_2d(0.0..*max_x * 1.1, 0.0..*max_y * 1.1)
         .unwrap();
 
     chart
         .configure_mesh()
-        .x_desc("Time (s)")
-        .y_desc("Number of runs")
+        .label_style(TextStyle::from(("serif", 28)).color(&BLACK))
+        .x_desc("Time (minutes)")
+        .y_desc("Number of Runs in Thousands")
         .draw()
         .unwrap();
 
     chart
-        .draw_series(plotters::series::LineSeries::new(data, RED.mix(0.2)).point_size(20))
+        .draw_series(
+            plotters::series::LineSeries::new(data, BLACK.mix(0.8).filled()).point_size(10),
+        )
         .unwrap();
     root.present().unwrap();
 }
