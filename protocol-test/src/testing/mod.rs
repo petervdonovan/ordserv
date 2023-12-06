@@ -416,15 +416,14 @@ impl AccumulatingTracesState {
         }
         (before, after) = (i_before, i_after);
         if guard.raw_traces.len() > MAX_N_RUNS_BEFORE_STOPPING {
-          if guard.initial_cumsum_in_current_pass != guard.strans_out.cumsum() {
-            guard.pair_iterator =
-              BigSmallIterator::new(OgRank(guard.pair_iterator.max_ogrank_strict().0));
-            guard.initial_cumsum_in_current_pass = guard.strans_out.cumsum();
-          } else {
-            guard.done = true;
-          }
+          guard.done = true;
         }
         break;
+      } else if guard.initial_cumsum_in_current_pass != guard.strans_out.cumsum() {
+        guard.pair_iterator =
+          BigSmallIterator::new(OgRank(guard.pair_iterator.max_ogrank_strict().0));
+        guard.initial_cumsum_in_current_pass = guard.strans_out.cumsum();
+        continue;
       } else {
         info!("Marking test {} as fully explored.", id);
         guard.done = true;
@@ -433,7 +432,7 @@ impl AccumulatingTracesState {
                                                   //   .strans_hook
                                                   //   .random_unobserved_ordering(RANDOM_ORDERING_GEOMETRIC_R, filter);
         break;
-      };
+      }
     }
     assert!(before > after);
     ConstraintList::singleton(after, before, self.kcs.metadata(id).hic.len() as u32)
