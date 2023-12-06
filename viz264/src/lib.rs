@@ -182,21 +182,21 @@ pub fn histogram_by_test<X, XValue>(
     <X as plotters::coord::ranged1d::AsRangedCoord>::Value: std::fmt::Debug,
 {
     std::fs::create_dir_all(PathBuf::from(file_name).parent().unwrap()).unwrap();
-    let root = BitMapBackend::new(file_name, (1024, 1024)).into_drawing_area();
+    let root = BitMapBackend::new(file_name, (2048, 2048)).into_drawing_area();
     root.fill(&WHITE).unwrap();
     // let (range, int2id, formatter) = TestFormatter::make(ats.kcs.executables());
     let mut chart = ChartBuilder::on(&root)
-        .set_label_area_size(LabelAreaPosition::Left, 300)
-        .set_label_area_size(LabelAreaPosition::Bottom, 40)
-        .caption(title, ("serif", 40))
+        .set_label_area_size(LabelAreaPosition::Left, 640)
+        .set_label_area_size(LabelAreaPosition::Bottom, 100)
+        .caption(title, ("serif", 80))
         .build_cartesian_2d(x_spec, trep.0.clone().into_segmented())
         .unwrap();
     chart
         .configure_mesh()
-        .max_light_lines(5)
-        .disable_y_mesh()
-        .bold_line_style(WHITE.mix(0.3))
-        .label_style(TextStyle::from(("serif", 14)).color(&BLACK))
+        .max_light_lines(1)
+        // .disable_y_mesh()
+        .bold_line_style(WHITE.mix(0.1))
+        .label_style(TextStyle::from(("serif", 28)).color(&BLACK))
         .x_desc(x_desc)
         .y_desc("Test")
         .y_label_formatter(&|i| trep.1.format_ext(i))
