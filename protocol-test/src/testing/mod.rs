@@ -435,7 +435,7 @@ impl AccumulatingTracesState {
       }
     }
     assert!(before > after);
-    ConstraintList::singleton(after, before, self.kcs.metadata(id).hic.len() as u32)
+    ConstraintList::singleton(OgRank(0), OgRank(0), self.kcs.metadata(id).hic.len() as u32)
     // let mut befores_and_afters = [(OgRank(0), OgRank(0)); DELAY_VECTOR_CHUNK_SIZE];
     // for ptr in befores_and_afters.iter_mut() {
     //   *ptr = guard
