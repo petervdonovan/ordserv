@@ -5,6 +5,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+const MAX_RUNS_TO_CONSIDER: usize = 5000;
+
 pub mod stats;
 
 use plotters::{
@@ -300,7 +302,7 @@ fn compute_permutable_sets(
 ) -> StreamingTranspositions {
     let stride = 128; // Relevant to performance
     StreamingTranspositions::new(metadata.og_ov_length_rounded_up(), 128, 0.000001).par_record_all(
-        (0..(runs.raw_traces.len() / stride).max(1))
+        (0..(runs.raw_traces.len().min(MAX_RUNS_TO_CONSIDER) / stride).max(1))
             .into_par_iter()
             .map(|start| {
                 runs.raw_traces
