@@ -1,11 +1,6 @@
-use std::{
-    cmp::Ordering,
-    collections::HashMap,
-    fs::File,
-    path::{Path, PathBuf},
-};
+use std::{cmp::Ordering, collections::HashMap, fs::File, path::PathBuf};
 
-const MAX_RUNS_TO_CONSIDER: usize = 50;
+const MAX_RUNS_TO_CONSIDER: usize = 5000;
 
 pub mod stats;
 
@@ -27,7 +22,7 @@ use protocol_test::{
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use statrs::statistics::Statistics;
 use stats::BasicStats;
-use streaming_transpositions::{OgRank2CurRank, Orderings, StreamingTranspositions};
+use streaming_transpositions::{OgRank2CurRank, StreamingTranspositions};
 
 pub fn get_atses(scratch: &PathBuf) -> Vec<AtsDelta> {
     let mut atses = Vec::new();
@@ -376,7 +371,11 @@ fn get_comparison_stats(
                                 .orderings()
                                 .iter(),
                         )
-                        .map(|(a, b)| (a.len() as f64).log10() - (b.len() as f64).log10()),
+                        .map(|(a, b)| {
+                            let ret = (a.len() as f64).log2() - (b.len() as f64).log2();
+                            print!("# {} / {} -> {}   ", a.len(), b.len(), ret);
+                            ret
+                        }),
                 ),
             )
         })
@@ -392,21 +391,25 @@ pub fn compare_permutable_sets(ats_a: &AccumulatingTracesState, ats_b: &Accumula
         comparison_stats.get(tid).unwrap().mean
     });
     for projection in BasicStats::projections() {
+        let iterator = || {
+            int2id
+                .iter()
+                .map(|tid| projection.1(&comparison_stats[tid]))
+        };
+        let width = iterator().abs_max();
         println!("plotting {}", projection.0);
         histogram_by_test(
             ats_a,
-            int2id
-                .iter()
-                .map(|tid| (tid, projection.1(&comparison_stats[tid]).log10()))
+            iterator()
                 .enumerate()
-                .map(|(idx, (tid, value))| (idx as u32, value)),
+                .map(|(idx, value)| (idx as u32, value)),
             &format!("plots/permutable_pairs_{}.png", projection.0),
             &format!(
-                "{} Log Ratio of Number of Pairs Shown to be Unordered by Test",
+                "{} Log2 Ratio of Number of Known Unordered Pairs",
                 projection.0
             ),
             &projection.0,
-            -1.0..1.0,
+            -width..width,
             &trep,
         );
         println!("done");
@@ -465,8 +468,11 @@ pub fn describe_permutable_sets(ats: &AccumulatingTracesState) {
                 .map(|tid| projected_stats[tid])
                 .enumerate()
                 .map(|(idx, stats)| (idx as u32, projection.1(&stats))),
-            &format!("plots/permutable_pairs_{}.png", projection.0),
-            &format!("{} Number of Permutable Pairs", projection.0),
+            &format!(
+                "plots/permutable_pairs_{}.png",
+                projection.0.replace(' ', "")
+            ),
+            &format!("{} Number of Unordered Pairs", projection.0),
             &projection.0,
             0.0..Statistics::max(projected_stats.values().map(|it| projection.1(it))),
             &trep,
