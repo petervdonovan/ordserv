@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const MAX_RUNS_TO_CONSIDER: usize = 5000;
+const MAX_RUNS_TO_CONSIDER: usize = 50;
 
 pub mod stats;
 
@@ -301,23 +301,20 @@ fn compute_permutable_sets(
     ovr: &OutputVectorRegistry,
 ) -> StreamingTranspositions {
     let stride = 128; // Relevant to performance
-    StreamingTranspositions::new(metadata.og_ov_length_rounded_up(), 128, 0.000001).par_record_all(
-        (0..(runs.raw_traces.len().min(MAX_RUNS_TO_CONSIDER) / stride).max(1))
-            .into_par_iter()
-            .map(|start| {
-                runs.raw_traces
-                    [(start * stride)..(start * stride + stride).min(runs.raw_traces.len())]
-                    .iter()
-                    .filter_map(|(_, result)| {
-                        if let Ok((trace, _, _)) = result {
-                            Some(trace)
-                        } else {
-                            None
-                        }
-                    })
-                    .map(|trace| OgRank2CurRank(trace.unpack(ovr)))
-            }),
-    )
+    let stop_at = runs.raw_traces.len().min(MAX_RUNS_TO_CONSIDER);
+    StreamingTranspositions::new(metadata.og_ov_length_rounded_up(), 10000, 0.000001)
+        .par_record_all((0..(stop_at / stride).max(1)).into_par_iter().map(|start| {
+            runs.raw_traces[(start * stride)..(start * stride + stride).min(stop_at)]
+                .iter()
+                .filter_map(|(_, result)| {
+                    if let Ok((trace, _, _)) = result {
+                        Some(trace)
+                    } else {
+                        None
+                    }
+                })
+                .map(|trace| OgRank2CurRank(trace.unpack(ovr)))
+        }))
 }
 
 fn get_permutable_sets_by_testid(
