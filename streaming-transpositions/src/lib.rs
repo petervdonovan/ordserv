@@ -188,7 +188,15 @@ impl StreamingTranspositions {
             .unwrap()
             .inner
             .merge(&self.inner);
-        self.inner = self.empty().inner;
+        self.inner = StreamingTranspositionsDelta {
+            og_trace_length: self.inner.og_trace_length,
+            search_radius: self.inner.search_radius,
+            traces_recorded: self.inner.traces_recorded,
+            save_cumsum_when_cumsum_increases_by: self.inner.save_cumsum_when_cumsum_increases_by,
+            cumsum: self.inner.cumsum,
+            cumsums: vec![],
+            before_and_afters: Self::empty_before_and_afters(self.inner.og_trace_length),
+        };
     }
     fn empty_before_and_afters(size: usize) -> Vec<HashSet<OgRank>> {
         let mut before_and_afters = Vec::with_capacity(size);
@@ -338,6 +346,9 @@ impl StreamingTranspositions {
             self.inner.before_and_afters[idx.idx()].insert(*other);
         }
     }
+    pub fn cumsum(&self) -> CumSum {
+        self.inner.cumsum
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -354,10 +365,10 @@ impl BigSmallIterator {
     pub fn from_strans(strans: &StreamingTranspositions) -> Self {
         Self::new(OgRank(strans.inner.og_trace_length as u32))
     }
-    pub fn new(max_ogrank: OgRank) -> Self {
-        let diffmaxstrict = 2.min(max_ogrank.0 as i32);
+    pub fn new(max_ogrank_strict: OgRank) -> Self {
+        let diffmaxstrict = 2.min(max_ogrank_strict.0 as i32);
         Self {
-            max_ogrank_strict: max_ogrank.0 as i32,
+            max_ogrank_strict: max_ogrank_strict.0 as i32,
             power: 0,
             diffmaxstrict,
             diffmin: 1,

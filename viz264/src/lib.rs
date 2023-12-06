@@ -406,7 +406,7 @@ pub fn compare_permutable_sets(ats_a: &AccumulatingTracesState, ats_b: &Accumula
             &format!("plots/permutable_pairs_{}.png", projection.0),
             &format!(
                 "{} Log2 Ratio of Number of Known Unordered Pairs",
-                projection.0
+                projection.0.replace(' ', "")
             ),
             &projection.0,
             -width..width,

@@ -9,14 +9,11 @@ use std::{
 use colored::Colorize;
 use log::{error, info};
 use priority_queue::DoublePriorityQueue;
-use rand::{
-  seq::{IteratorRandom, SliceRandom},
-  SeedableRng,
-};
+use rand::{seq::IteratorRandom, SeedableRng};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use serde::{ser::SerializeStruct, Deserialize, Serialize};
 use streaming_transpositions::{
-  BigSmallIterator, HookOgRank2CurRank, OgRank, OgRank2CurRank, OutOgRank2CurRank,
+  BigSmallIterator, CumSum, HookOgRank2CurRank, OgRank, OgRank2CurRank, OutOgRank2CurRank,
   StreamingTranspositions, StreamingTranspositionsDelta,
 };
 
@@ -26,12 +23,12 @@ const HEALTH_CHECK_FREQUENCY: u32 = 200;
 const MAX_N_RUNS_BEFORE_STOPPING: usize = 5000;
 
 use crate::{
-  exec::{self, ExecResult, Executable},
+  exec::{ExecResult, Executable},
   io::{run_with_parameters, RunContext},
   outputvector::{OutputVector, OutputVectorRegistry, OvrDelta, OvrReg, VectorfyStatus},
   state::{InitialState, KnownCountsState, State, TestId},
   ConstraintList, ConstraintListIndex, ConstraintListRegistry, ThreadId, TraceRecord,
-  CONCURRENCY_LIMIT, DELAY_VECTOR_CHUNK_SIZE, TEST_TIMEOUT_SECS,
+  CONCURRENCY_LIMIT, TEST_TIMEOUT_SECS,
 };
 #[derive(Debug)]
 pub struct AccumulatingTracesState {
@@ -183,6 +180,7 @@ fn reconstruct_test_runs(
     .collect();
   let pair_iterator = trdeltas.last().unwrap().pair_iterator.clone();
   let done = trdeltas.last().unwrap().done;
+  let initial_cumsum_in_current_pass = trdeltas.last().unwrap().initial_cumsum_in_current_pass;
   for trdelta in trdeltas {
     for dvrd in trdelta.clr_delta {
       clr.push(dvrd);
@@ -206,6 +204,7 @@ fn reconstruct_test_runs(
     interesting,
     pair_iterator,
     done,
+    initial_cumsum_in_current_pass,
   }
 }
 
@@ -225,13 +224,14 @@ pub struct TestRuns {
   pub interesting: DoublePriorityQueue<ConstraintListIndex, Interestingness>,
   pub pair_iterator: BigSmallIterator,
   pub done: bool,
+  pub initial_cumsum_in_current_pass: CumSum,
 }
 impl Serialize for TestRuns {
   fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
   where
     S: serde::Serializer,
   {
-    let mut ret = serializer.serialize_struct("TestRunsDelta", 6)?;
+    let mut ret = serializer.serialize_struct("TestRunsDelta", 7)?;
     ret
       .serialize_field("clr_delta", &self.clr[self.clr_saved_up_to.0 as usize..])
       .unwrap();
@@ -248,6 +248,12 @@ impl Serialize for TestRuns {
       .serialize_field("pair_iterator", &self.pair_iterator)
       .unwrap();
     ret.serialize_field("done", &self.done).unwrap();
+    ret
+      .serialize_field(
+        "initial_cumsum_in_current_pass",
+        &self.initial_cumsum_in_current_pass,
+      )
+      .unwrap();
     ret.end()
   }
 }
@@ -268,6 +274,7 @@ struct TestRunsDelta {
   strans_hook: StreamingTranspositionsDelta, // FIXME: This is not incremental! It is aggregated, not a delta.
   pair_iterator: BigSmallIterator,
   done: bool,
+  initial_cumsum_in_current_pass: CumSum,
 }
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct CoarseTraceHash(pub u64);
@@ -354,6 +361,7 @@ impl AccumulatingTracesState {
             interesting: DoublePriorityQueue::new(),
             pair_iterator: BigSmallIterator::new(OgRank(kcs.metadata(id).hic.len() as u32)),
             done: false,
+            initial_cumsum_in_current_pass: CumSum(0),
           })),
         )
       })
@@ -408,7 +416,13 @@ impl AccumulatingTracesState {
         }
         (before, after) = (i_before, i_after);
         if guard.raw_traces.len() > MAX_N_RUNS_BEFORE_STOPPING {
-          guard.done = true;
+          if guard.initial_cumsum_in_current_pass != guard.strans_out.cumsum() {
+            guard.pair_iterator =
+              BigSmallIterator::new(OgRank(guard.pair_iterator.max_ogrank_strict().0));
+            guard.initial_cumsum_in_current_pass = guard.strans_out.cumsum();
+          } else {
+            guard.done = true;
+          }
         }
         break;
       } else {
