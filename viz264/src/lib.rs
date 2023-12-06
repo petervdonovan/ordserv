@@ -1,4 +1,9 @@
-use std::{cmp::Ordering, collections::HashMap, fs::File, path::PathBuf};
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    fs::File,
+    path::{Path, PathBuf},
+};
 
 pub mod stats;
 
@@ -65,9 +70,18 @@ fn get_latest_ats_file(scratch: &PathBuf) -> PathBuf {
 }
 
 pub fn get_latest_ats(scratch: &PathBuf) -> AccumulatingTracesState {
-    let path = get_latest_ats_file(scratch);
+    let target = PathBuf::from("scratch");
+    if !scratch.ends_with("scratch") {
+        assert!(!target.exists());
+        std::fs::rename(scratch, &target).unwrap();
+    }
+    let path = get_latest_ats_file(&target);
     println!("reading {:?}...", path);
-    rmp_serde::from_read(File::open(path).unwrap()).unwrap()
+    let ret = rmp_serde::from_read(File::open(path).unwrap()).unwrap();
+    if !scratch.ends_with("scratch") {
+        std::fs::rename(target, scratch).unwrap();
+    }
+    ret
 }
 
 pub fn get_n_runs_over_time(atses: &[AtsDelta]) -> Vec<(f64, usize)> {
@@ -182,7 +196,8 @@ pub fn histogram_by_test<X, XValue>(
         .unwrap();
     chart
         .configure_mesh()
-        .disable_x_mesh()
+        .max_light_lines(5)
+        .disable_y_mesh()
         .bold_line_style(WHITE.mix(0.3))
         .label_style(TextStyle::from(("serif", 14)).color(&BLACK))
         .x_desc(x_desc)
@@ -237,7 +252,6 @@ pub fn plot_by_test<X, XValue: Clone + 'static, Y, YValue: Clone + 'static>(
         .unwrap();
     chart
         .configure_mesh()
-        .disable_x_mesh()
         .bold_line_style(WHITE.mix(0.3))
         .label_style(TextStyle::from(("serif", 14)).color(&BLACK))
         .y_desc(ad.y_desc)
@@ -304,26 +318,28 @@ fn compute_permutable_sets(
     )
 }
 
-pub fn describe_permutable_sets(ats: &AccumulatingTracesState) {
-    let permutable_sets_by_testid: HashMap<_, _> = ats
-        .runs
+fn get_permutable_sets_by_testid(
+    ats: &AccumulatingTracesState,
+) -> HashMap<TestId, StreamingTranspositions> {
+    ats.runs
         .par_iter()
         .map(|(testid, runs)| {
             let metadata = ats.kcs.metadata(testid);
             let orderings = compute_permutable_sets(runs.read().unwrap(), metadata, &ats.ovr);
-            (testid, orderings)
+            (*testid, orderings)
         })
-        .collect();
-    let maxes_by_testid = permutable_sets_by_testid
-        .iter()
-        .map(|(testid, st)| (testid, st.cumsums().last().unwrap().1))
-        .collect::<HashMap<_, _>>();
-    let projected_stats: HashMap<_, _> = ats
-        .runs
+        .collect()
+}
+
+fn get_projected_stats(
+    ats: &AccumulatingTracesState,
+    permutable_sets_by_testid: &HashMap<TestId, StreamingTranspositions>,
+) -> HashMap<TestId, BasicStats> {
+    ats.runs
         .keys()
         .map(|tid| {
             (
-                tid,
+                *tid,
                 BasicStats::new(
                     permutable_sets_by_testid
                         .get(tid)
@@ -336,7 +352,108 @@ pub fn describe_permutable_sets(ats: &AccumulatingTracesState) {
                 ),
             )
         })
-        .collect();
+        .collect()
+}
+
+fn get_comparison_stats(
+    permutable_sets_by_testid_a: &HashMap<TestId, StreamingTranspositions>,
+    permutable_sets_by_testid_b: &HashMap<TestId, StreamingTranspositions>,
+) -> HashMap<TestId, BasicStats> {
+    permutable_sets_by_testid_a
+        .keys()
+        .map(|tid| {
+            (
+                *tid,
+                BasicStats::new(
+                    permutable_sets_by_testid_a
+                        .get(tid)
+                        .unwrap()
+                        .orderings()
+                        .iter()
+                        .zip(
+                            permutable_sets_by_testid_b
+                                .get(tid)
+                                .unwrap()
+                                .orderings()
+                                .iter(),
+                        )
+                        .map(|(a, b)| (a.len() as f64).log10() - (b.len() as f64).log10()),
+                ),
+            )
+        })
+        .collect()
+}
+
+pub fn compare_permutable_sets(ats_a: &AccumulatingTracesState, ats_b: &AccumulatingTracesState) {
+    let permutable_sets_by_testid_a = get_permutable_sets_by_testid(ats_a);
+    let permutable_sets_by_testid_b = get_permutable_sets_by_testid(ats_b);
+    let comparison_stats =
+        get_comparison_stats(&permutable_sets_by_testid_a, &permutable_sets_by_testid_b);
+    let (int2id, trep) = TestFormatter::make_with_sort(ats_a.kcs.executables(), |(tid, _)| {
+        comparison_stats.get(tid).unwrap().mean
+    });
+    for projection in BasicStats::projections() {
+        println!("plotting {}", projection.0);
+        histogram_by_test(
+            ats_a,
+            int2id
+                .iter()
+                .map(|tid| (tid, projection.1(&comparison_stats[tid]).log10()))
+                .enumerate()
+                .map(|(idx, (tid, value))| (idx as u32, value)),
+            &format!("plots/permutable_pairs_{}.png", projection.0),
+            &format!(
+                "{} Log Ratio of Number of Pairs Shown to be Unordered by Test",
+                projection.0
+            ),
+            &projection.0,
+            -1.0..1.0,
+            &trep,
+        );
+        println!("done");
+    }
+}
+
+// pub fn compare_permutable_sets(ats_a: &AccumulatingTracesState, ats_b: &AccumulatingTracesState) {
+//     let permutable_sets_by_testid_a = get_permutable_sets_by_testid(ats_a);
+//     let permutable_sets_by_testid_b = get_permutable_sets_by_testid(ats_b);
+//     let projected_stats_a = get_projected_stats(ats_a, &permutable_sets_by_testid_a);
+//     let projected_stats_b = get_projected_stats(ats_b, &permutable_sets_by_testid_b);
+//     let (int2id, trep) = TestFormatter::make_with_sort(ats_a.kcs.executables(), |(tid, _)| {
+//         projected_stats_a.get(tid).unwrap().mean - projected_stats_b.get(tid).unwrap().mean
+//     });
+//     for projection in BasicStats::projections() {
+//         println!("plotting {}", projection.0);
+//         histogram_by_test(
+//             ats_a,
+//             int2id
+//                 .iter()
+//                 .map(|tid| {
+//                     (
+//                         tid,
+//                         projection.1(&projected_stats_a[tid]).log10()
+//                             - projection.1(&projected_stats_b[tid]).log10(),
+//                     )
+//                 })
+//                 .enumerate()
+//                 .map(|(idx, (tid, value))| (idx as u32, value)),
+//             &format!("plots/permutable_pairs_{}.png", projection.0),
+//             &format!("{} Number of Permutable Pairs", projection.0),
+//             &projection.0,
+//             -1.0..1.0,
+//             &trep,
+//         );
+//         println!("done");
+//     }
+// }
+
+pub fn describe_permutable_sets(ats: &AccumulatingTracesState) {
+    let permutable_sets_by_testid = get_permutable_sets_by_testid(ats);
+    let maxes_by_testid = permutable_sets_by_testid
+        .iter()
+        .map(|(testid, st)| (testid, st.cumsums().last().unwrap().1))
+        .collect::<HashMap<_, _>>();
+    let projected_stats = get_projected_stats(ats, &permutable_sets_by_testid);
     let (int2id, trep) = TestFormatter::make_with_sort(ats.kcs.executables(), |(tid, _)| {
         -projected_stats.get(tid).unwrap().mean
     });
@@ -387,11 +504,11 @@ pub fn describe_permutable_sets(ats: &AccumulatingTracesState) {
     plot_by_test(
         time_series,
         "plots/cumsums.png",
-        "Cumulative Sum",
+        "Number of Pairs Shown to be Unordered by Test",
         AxesDescriptions {
-            x_desc: "Number of traces",
+            x_desc: "Number of Traces",
             x_spec: 0..xmax,
-            y_desc: "Cumulative sum",
+            y_desc: "Number of Pairs",
             y_spec: -5.05..0.05,
         },
         &trep,
