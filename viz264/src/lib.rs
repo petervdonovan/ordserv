@@ -188,14 +188,14 @@ pub fn histogram_by_test<X, XValue>(
     let mut chart = ChartBuilder::on(&root)
         .set_label_area_size(LabelAreaPosition::Left, 640)
         .set_label_area_size(LabelAreaPosition::Bottom, 100)
-        .caption(title, ("serif", 80))
+        .caption(title, ("serif", 72))
         .build_cartesian_2d(x_spec, trep.0.clone().into_segmented())
         .unwrap();
     chart
         .configure_mesh()
-        .max_light_lines(1)
+        .max_light_lines(5)
         // .disable_y_mesh()
-        .bold_line_style(WHITE.mix(0.1))
+        .bold_line_style(BLACK.mix(0.5))
         .label_style(TextStyle::from(("serif", 28)).color(&BLACK))
         .x_desc(x_desc)
         .y_desc("Test")
@@ -396,7 +396,7 @@ pub fn compare_permutable_sets(ats_a: &AccumulatingTracesState, ats_b: &Accumula
                 .iter()
                 .map(|tid| projection.1(&comparison_stats[tid]))
         };
-        let width = iterator().abs_max();
+        let width = iterator().abs_max() * 1.1;
         println!("plotting {}", projection.0);
         histogram_by_test(
             ats_a,
