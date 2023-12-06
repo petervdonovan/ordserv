@@ -17,7 +17,7 @@ use streaming_transpositions::{
   StreamingTranspositions, StreamingTranspositionsDelta,
 };
 
-// const RANDOM_ORDERING_GEOMETRIC_R: f64 = 0.5;
+const RANDOM_ORDERING_GEOMETRIC_R: f64 = 0.5;
 const MAX_NUM_FEDERATES_PER_TEST: usize = 48;
 const HEALTH_CHECK_FREQUENCY: u32 = 200;
 const MAX_N_RUNS_BEFORE_STOPPING: usize = 5000;
@@ -401,39 +401,39 @@ impl AccumulatingTracesState {
       before_hinvoc.hid.1 != after_hinvoc.hid.1
     };
     let (before, after);
-    loop {
-      let power = guard.pair_iterator.power();
-      if let Some((i_after, i_before)) = guard.pair_iterator.next() {
-        if guard.strans_hook.contains(i_before, i_after) || !filter(i_before, i_after) {
-          continue;
-        }
-        if guard.pair_iterator.power() != power {
-          info!(
-            "Max difference: {}. Current difference: 2^{}.",
-            guard.pair_iterator.max_ogrank_strict().0,
-            guard.pair_iterator.power()
-          );
-        }
-        (before, after) = (i_before, i_after);
-        if guard.raw_traces.len() > MAX_N_RUNS_BEFORE_STOPPING {
-          guard.done = true;
-        }
-        break;
-      } else if guard.initial_cumsum_in_current_pass != guard.strans_out.cumsum() {
-        guard.pair_iterator =
-          BigSmallIterator::new(OgRank(guard.pair_iterator.max_ogrank_strict().0));
-        guard.initial_cumsum_in_current_pass = guard.strans_out.cumsum();
-        continue;
-      } else {
-        info!("Marking test {} as fully explored.", id);
-        guard.done = true;
-        (before, after) = (OgRank(1), OgRank(0)); // Placeholder. This should only happen once because the test is now marked as done.
-                                                  // (before, after) = guard
-                                                  //   .strans_hook
-                                                  //   .random_unobserved_ordering(RANDOM_ORDERING_GEOMETRIC_R, filter);
-        break;
-      }
+    // loop {
+    // let power = guard.pair_iterator.power();
+    // if let Some((i_after, i_before)) = guard.pair_iterator.next() {
+    //   if guard.strans_hook.contains(i_before, i_after) || !filter(i_before, i_after) {
+    //     continue;
+    //   }
+    //   if guard.pair_iterator.power() != power {
+    //     info!(
+    //       "Max difference: {}. Current difference: 2^{}.",
+    //       guard.pair_iterator.max_ogrank_strict().0,
+    //       guard.pair_iterator.power()
+    //     );
+    //   }
+
+    (before, after) = guard
+      .strans_hook
+      .random_unobserved_ordering(RANDOM_ORDERING_GEOMETRIC_R, filter);
+    if guard.raw_traces.len() > MAX_N_RUNS_BEFORE_STOPPING {
+      guard.done = true;
     }
+    // break;
+    // } else if guard.initial_cumsum_in_current_pass != guard.strans_out.cumsum() {
+    //   guard.pair_iterator =
+    //     BigSmallIterator::new(OgRank(guard.pair_iterator.max_ogrank_strict().0));
+    //   guard.initial_cumsum_in_current_pass = guard.strans_out.cumsum();
+    //   continue;
+    // } else {
+    //   info!("Marking test {} as fully explored.", id);
+    //   guard.done = true;
+    //   (before, after) = (OgRank(1), OgRank(0)); // Placeholder. This should only happen once because the test is now marked as done.
+    //   break;
+    // }
+    // }
     assert!(before > after);
     ConstraintList::singleton(after, before, self.kcs.metadata(id).hic.len() as u32)
     // let mut befores_and_afters = [(OgRank(0), OgRank(0)); DELAY_VECTOR_CHUNK_SIZE];
