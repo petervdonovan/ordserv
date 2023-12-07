@@ -517,9 +517,9 @@ pub fn describe_permutable_sets(ats: &AccumulatingTracesState) {
         "plots/cumsums.png",
         "Number of Pairs Shown to be Unordered by Test",
         AxesDescriptions {
-            x_desc: "Number of Traces",
+            x_desc: "Number of Test Runs",
             x_spec: 0..xmax,
-            y_desc: "Number of Pairs",
+            y_desc: "Log10 of Number of Pairs Not Yet Observed",
             y_spec: -5.05..0.05,
         },
         &trep,
