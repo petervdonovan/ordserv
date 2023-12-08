@@ -11,3 +11,4 @@ perf.data.old
 xdgremote.sh
 target/
 temp*
+*.lft

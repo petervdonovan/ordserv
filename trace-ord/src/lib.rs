@@ -1,74 +1,61 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt::{Display, Formatter},
+    path::Path,
     str::FromStr,
 };
 
+use conninfo::{ConnInfo, FedId, Tag};
+
 pub mod axioms;
+pub mod conninfo;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum EventType {
-    FedId,
-    Ack,
-    Timestamp,
-    Net,
-    PortAbs,
-    Ptag,
-    TaggedMsg,
-    Tag,
-    StopReq,
-    StopReqRep,
-    StopGrn,
-    Ltc,
-    FirstTagOrPtag,
-    FirstPortAbsOrTaggedMsg,
-    FirstNet,
-}
-
-impl FromStr for EventType {
-    type Err = ();
-    fn from_str(event: &str) -> Result<Self, Self::Err> {
-        match event {
-            "FED_ID" => Ok(EventType::FedId),
-            "ACK" => Ok(EventType::Ack),
-            "TIMESTAMP" => Ok(EventType::Timestamp),
-            "NET" => Ok(EventType::Net),
-            "PTAG" => Ok(EventType::Ptag),
-            "TAGGED_MSG" => Ok(EventType::TaggedMsg),
-            "TAG" => Ok(EventType::Tag),
-            "STOP_REQ" => Ok(EventType::StopReq),
-            "STOP_REQ_REP" => Ok(EventType::StopReqRep),
-            "STOP_GRN" => Ok(EventType::StopGrn),
-            "LTC" => Ok(EventType::Ltc),
-            "PORT_ABS" => Ok(EventType::PortAbs),
-            _ => Err(()),
-        }
-    }
+pub enum Event {
+    RecvFedId,
+    SendAck,
+    SendTimestamp,
+    RecvTimestamp,
+    RecvNet,
+    SendPortAbs,
+    RecvPortAbs,
+    SendPtag,
+    SendTaggedMsg,
+    RecvTaggedMsg,
+    SendTag,
+    RecvStopReq,
+    SendStopReq,
+    RecvStopReqRep,
+    SendStopGrn,
+    RecvLtc,
+    SendFirstTagOrPtag,
+    RecvFirstPortAbsOrTaggedMsg,
+    FirstRecvNetOrSendStopGrnOrRecvLtc, // events that lead to sending a TAG
 }
 
 impl FromStr for Event {
     type Err = ();
-    fn from_str(event: &str) -> Result<Self, ()> {
-        let mut iter = event.split_whitespace();
-        if let (Some(event_direction), Some(event_type)) = (iter.next(), iter.next()) {
-            if iter.next().is_some() {
-                return Err(());
-            }
-            let event_type = EventType::from_str(event_type)?;
-            match event_direction {
-                "Sending" => Ok(Event::Send(event_type)),
-                "Receiving" => Ok(Event::Recv(event_type)),
-                _ => Err(()),
-            }
-        } else {
-            Err(())
+    fn from_str(event: &str) -> Result<Self, Self::Err> {
+        match event {
+            "Receiving FED_ID" => Ok(Event::RecvFedId),
+            "Sending ACK" => Ok(Event::SendAck),
+            "Sending TIMESTAMP" => Ok(Event::SendTimestamp),
+            "Receiving TIMESTAMP" => Ok(Event::RecvTimestamp),
+            "Receiving NET" => Ok(Event::RecvNet),
+            "Sending PTAG" => Ok(Event::SendPtag),
+            "Sending TAGGED_MSG" => Ok(Event::SendTaggedMsg),
+            "Receiving TAGGED_MSG" => Ok(Event::RecvTaggedMsg),
+            "Sending TAG" => Ok(Event::SendTag),
+            "Receiving STOP_REQ" => Ok(Event::RecvStopReq),
+            "Sending STOP_REQ" => Ok(Event::SendStopReq),
+            "Receiving STOP_REQ_REP" => Ok(Event::RecvStopReqRep),
+            "Sending STOP_GRN" => Ok(Event::SendStopGrn),
+            "Receiving LTC" => Ok(Event::RecvLtc),
+            "Sending PORT_ABS" => Ok(Event::SendPortAbs),
+            "Receiving PORT_ABS" => Ok(Event::RecvPortAbs),
+            _ => Err(()),
         }
     }
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Event {
-    Send(EventType),
-    Recv(EventType),
 }
 
 /// If two events match a rule, then the rule says that there is a precedence relation between them
@@ -81,20 +68,39 @@ pub struct Rule {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Relation {
-    TagEqual,
-    TagLessThan,
-    TagLessThanOrEqual,
+    TagPlusDelayEqual,
+    TagPlusDelayLessThan,
+    TagPlusDelayLessThanOrEqual,
+    FirstTagNonzero,
     TagFinite,
     FederateEqual,
+    FederatesConnected,
+}
+
+pub fn preceding_permutables_by_ogrank_from_dir(
+    dir: &Path,
+) -> Result<Vec<HashSet<OgRank>>, String> {
+    let rti_csv = dir.join("rti.csv");
+    let conninfo = dir.join("conninfo.txt");
+    let axioms = axioms::axioms();
+    let always_occurring: HashSet<_> = (0..lf_trace_reader::trace_by_physical_time(&rti_csv).len())
+        .map(|ogrank| OgRank(ogrank as u32))
+        .collect();
+    let (trace, _map2og) =
+        elaborated_from_lf_trace_records(lf_trace_reader::trace_by_physical_time(&rti_csv));
+    let conninfo = ConnInfo::from_str(&std::fs::read_to_string(conninfo).unwrap()).unwrap();
+    preceding_permutables_by_ogrank(&trace, &axioms, always_occurring, &conninfo)
 }
 
 pub fn preceding_permutables_by_ogrank(
     trace: &[TraceRecord],
     axioms: &[Rule],
     always_occurring: HashSet<OgRank>,
-) -> Vec<HashSet<OgRank>> {
-    let unpermutables = Unpermutables::from_realizable_trace(trace, axioms, always_occurring);
-    unpermutables.preceding_permutables_by_ogrank()
+    conninfo: &ConnInfo,
+) -> Result<Vec<HashSet<OgRank>>, String> {
+    let unpermutables =
+        Unpermutables::from_realizable_trace(trace, axioms, always_occurring, conninfo)?;
+    Ok(unpermutables.preceding_permutables_by_ogrank())
 }
 
 pub struct Unpermutables {
@@ -106,24 +112,29 @@ pub struct OgRank(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TraceRecord {
     pub event: Event,
-    pub tag: (i64, i64),
-    pub fedid: i32,
+    pub tag: Tag,
+    pub fedid: FedId,
 }
 
 impl Display for TraceRecord {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{:?} ({}, {}) @ {:?}",
-            self.event, self.tag.0, self.tag.1, self.fedid
-        )
+        write!(f, "{:?} {} @ {:?}", self.event, self.tag, self.fedid)
     }
+}
+
+fn tracerecords_to_string(
+    trace: &[TraceRecord],
+    put_marker_if: impl Fn(&TraceRecord) -> bool,
+) -> String {
+    trace
+    .iter().map(|it| (it.to_string(), put_marker_if(it))).fold(String::new(), |s, (other, matches)| if s.is_empty() {String::new()} else {s + "\n"} + if matches {"▶ "} else {"  "} + &other)
 }
 
 impl TraceRecord {
     pub fn from_lf_trace_record(lf_trace_record: &lf_trace_reader::TraceRecord) -> Self {
-        let event = Event::from_str(&lf_trace_record.event).unwrap();
-        let tag = (
+        let event = Event::from_str(&lf_trace_record.event)
+            .unwrap_or_else(|_| panic!("Unrecognized event: {}", lf_trace_record.event));
+        let tag = Tag(
             lf_trace_record.elapsed_logical_time,
             lf_trace_record.microstep,
         );
@@ -131,7 +142,7 @@ impl TraceRecord {
         Self {
             event,
             tag,
-            fedid: source,
+            fedid: FedId(source),
         }
     }
 }
@@ -146,42 +157,47 @@ pub fn elaborated_from_lf_trace_records(
     let mut firsts = HashSet::new();
     for (ogidx, record) in lf_trace_records.iter().enumerate() {
         let tr = TraceRecord::from_lf_trace_record(record);
-        match tr.event {
-            Event::Send(EventType::Ptag) | Event::Send(EventType::Tag) => {
-                let elaborated = TraceRecord {
-                    event: Event::Send(EventType::FirstTagOrPtag),
-                    tag: tr.tag,
-                    fedid: tr.fedid,
-                };
-                if !firsts.contains(&elaborated) {
-                    firsts.insert(elaborated);
-                    ret.push(elaborated);
-                }
+        if let Some(event) = match tr.event {
+            Event::SendPtag | Event::SendTag => Some(TraceRecord {
+                event: Event::SendFirstTagOrPtag,
+                tag: tr.tag,
+                fedid: tr.fedid,
+            }),
+            Event::RecvTaggedMsg | Event::RecvPortAbs => Some(TraceRecord {
+                event: Event::RecvFirstPortAbsOrTaggedMsg,
+                tag: tr.tag,
+                fedid: tr.fedid,
+            }),
+            Event::RecvNet => Some(TraceRecord {
+                event: Event::FirstRecvNetOrSendStopGrnOrRecvLtc,
+                tag: tr.tag,
+                fedid: tr.fedid,
+            }),
+            Event::SendStopGrn => Some(TraceRecord {
+                event: Event::FirstRecvNetOrSendStopGrnOrRecvLtc,
+                tag: tr.tag,
+                fedid: tr.fedid,
+            }),
+            _ => None,
+        } {
+            if !firsts.contains(&event) {
+                firsts.insert(event);
+                ret.push(event);
             }
-            Event::Recv(EventType::TaggedMsg) | Event::Recv(EventType::PortAbs) => {
-                let elaborated = TraceRecord {
-                    event: Event::Recv(EventType::FirstPortAbsOrTaggedMsg),
-                    tag: tr.tag,
-                    fedid: tr.fedid,
-                };
-                if !firsts.contains(&elaborated) {
-                    firsts.insert(elaborated);
-                    ret.push(elaborated);
-                }
-            }
-            Event::Recv(EventType::Net) => {
-                let elaborated = TraceRecord {
-                    event: Event::Recv(EventType::FirstNet),
-                    tag: tr.tag,
-                    fedid: tr.fedid,
-                };
-                if !firsts.contains(&elaborated) {
-                    firsts.insert(elaborated);
-                    ret.push(elaborated);
-                }
-            }
-            _ => {}
         }
+        // if tr.event == Event::RecvLtc {
+        //     for downstream in conninfo::downstream_federates(tr.fedid) {
+        //         let event = TraceRecord {
+        //             event: Event::RecvLtc,
+        //             tag: tr.tag,
+        //             fedid: downstream,
+        //         };
+        //         if !firsts.contains(&event) {
+        //             firsts.insert(event);
+        //             ret.push(event);
+        //         }
+        //     }
+        // }
         elaborated2og.insert(OgRank(ret.len() as u32), OgRank(ogidx as u32));
         ret.push(tr);
     }
@@ -189,26 +205,42 @@ pub fn elaborated_from_lf_trace_records(
 }
 
 impl Rule {
-    fn matches(&self, tr_before: &TraceRecord, tr_after: &TraceRecord) -> bool {
+    fn matches(
+        &self,
+        tr_before: &TraceRecord,
+        tr_after: &TraceRecord,
+        conninfo: &ConnInfo,
+    ) -> bool {
         self.event == tr_after.event
             && self.preceding_event == tr_before.event
             && self
                 .relations
                 .iter()
-                .all(|rel| rel.holds(tr_before, tr_after))
+                .all(|rel| rel.holds(tr_before, tr_after, conninfo))
     }
 }
 
 impl Relation {
-    fn holds(&self, tr_before: &TraceRecord, tr_after: &TraceRecord) -> bool {
+    fn holds(&self, tr_before: &TraceRecord, tr_after: &TraceRecord, conninfo: &ConnInfo) -> bool {
         fn finite(a: i64) -> bool {
             a.abs() < 1_000_000_000_000
         }
+        let compare_before_plus_delay_with_after = |f: fn(&Tag, &Tag) -> bool| {
+            if let Some(delay) = conninfo.0.get(&(tr_before.fedid, tr_after.fedid)) {
+                f(&(tr_before.tag + *delay), &tr_after.tag)
+            } else {
+                false
+            }
+        };
         match self {
-            Relation::TagEqual => tr_before.tag == tr_after.tag,
-            Relation::TagLessThan => tr_before.tag < tr_after.tag,
-            Relation::TagLessThanOrEqual => tr_before.tag <= tr_after.tag,
+            Relation::TagPlusDelayEqual => compare_before_plus_delay_with_after(Tag::eq),
+            Relation::TagPlusDelayLessThan => compare_before_plus_delay_with_after(Tag::lt),
+            Relation::TagPlusDelayLessThanOrEqual => compare_before_plus_delay_with_after(Tag::le),
             Relation::FederateEqual => tr_before.fedid == tr_after.fedid,
+            Relation::FirstTagNonzero => tr_before.tag != Tag(0, 0),
+            Relation::FederatesConnected => {
+                conninfo.0.contains_key(&(tr_before.fedid, tr_after.fedid))
+            }
             Relation::TagFinite => finite(tr_before.tag.0) && finite(tr_after.tag.0),
         }
     }
@@ -225,7 +257,8 @@ impl Unpermutables {
         trace: &[TraceRecord],
         axioms: &[Rule],
         always_occurring: HashSet<OgRank>,
-    ) -> Self {
+        conninfo: &ConnInfo,
+    ) -> Result<Self, String> {
         let mut ogrank2immediatepredecessors = Vec::new();
         for (ogrank, tr) in trace.iter().enumerate() {
             let mut immediate_predecessors = HashSet::new();
@@ -235,14 +268,15 @@ impl Unpermutables {
                     tr,
                     &trace[..ogrank],
                     &trace[ogrank + 1..],
-                ));
+                    conninfo,
+                )?);
             }
             ogrank2immediatepredecessors.push(immediate_predecessors);
         }
-        Self {
+        Ok(Self {
             ogrank2immediatepredecessors,
             always_occurring,
-        }
+        })
     }
     /// An ogrank A is _preceding_ an ogrank B iff A is numerically less than B, having occurred
     /// first in the OG trace.
@@ -325,23 +359,27 @@ impl Unpermutables {
         tr: &TraceRecord,
         before: &[TraceRecord],
         after: &[TraceRecord],
-    ) -> HashSet<OgRank> {
+        conninfo: &ConnInfo,
+    ) -> Result<HashSet<OgRank>, String> {
         let mut immediate_predecessors = HashSet::new();
-        if after.iter().any(|tr_after| rule.matches(tr_after, tr)) {
-            panic!(
-                "Tracepoint:\n    {:?}\nfollowed by:\n    {:?} is a counterexample to the axiom:\n{:?}",
-                tr, after, rule
-            );
+        if let Some(other) = after
+            .iter()
+            .find(|tr_after| rule.matches(tr_after, tr, conninfo))
+        {
+            return Result::Err(format!(
+                "Observed\n{}\n★ {}\n{}\nTracepoint:\n    {:?}\nfollowed by:\n    {}\nwith delay:\n    {:?}\nis a counterexample to the axiom:\n{:?}",
+                tracerecords_to_string(before, |_| false), tr, tracerecords_to_string(after, |it| it == other), tr, other, conninfo.0.get(&(tr.fedid, other.fedid)), rule
+            ));
         }
         if rule.event == tr.event {
             immediate_predecessors.extend(
                 before
                     .iter()
                     .enumerate()
-                    .filter(|(_, tr_before)| rule.matches(tr_before, tr))
+                    .filter(|(_, tr_before)| rule.matches(tr_before, tr, conninfo))
                     .map(|(ogrank, _)| OgRank(ogrank as u32)),
             );
         }
-        immediate_predecessors
+        Ok(immediate_predecessors)
     }
 }

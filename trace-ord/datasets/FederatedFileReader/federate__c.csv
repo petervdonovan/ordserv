@@ -1,0 +1,11 @@
+Event, Reactor, Source, Destination, Elapsed Logical Time, Microstep, Elapsed Physical Time, Trigger, Extra Delay, File Index, Line Number, Sequence Number for File and Line
+Sending FED_ID, NO REACTOR, 1, -1, -1702002732074363748, 0, -1000453079, NO TRIGGER, 0, 0, 1114, 0
+Receiving ACK, NO REACTOR, 1, -1, -1702002732074363748, 0, -1000392599, NO TRIGGER, 0, 0, 1148, 0
+Sending TIMESTAMP, NO REACTOR, 1, -1, -1000380894, 0, -1000380165, NO TRIGGER, 0, 0, 471, 0
+Receiving TIMESTAMP, NO REACTOR, 1, -1, 0, 0, -999848694, NO TRIGGER, 0, 0, 1206, 0
+Sending NET, NO REACTOR, 1, -1, 0, 0, -999789603, NO TRIGGER, 0, 0, 522, 0
+Receiving PTAG, NO REACTOR, 1, -1, 0, 0, -999675899, NO TRIGGER, 0, 0, 2100, 0
+Receiving TAGGED_MSG, NO REACTOR, 1, -1, 0, 0, -999615148, NO TRIGGER, 0, 0, 1724, 0
+Receiving TAG, NO REACTOR, 1, -1, 0, 0, -999559795, NO TRIGGER, 0, 0, 1880, 0
+Receiving TAG, NO REACTOR, 1, -1, 7521369304780412059, -1, -999533378, NO TRIGGER, 0, 0, 1880, 1
+Sending LTC, NO REACTOR, 1, -1, 0, 0, -999530980, NO TRIGGER, 0, 0, 522, 1

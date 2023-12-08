@@ -1,104 +1,125 @@
-use crate::{Event, EventType, Relation, Rule};
+use crate::{Event, Relation, Rule};
 
 pub fn axioms() -> Vec<Rule> {
     vec![
-        // The following is boilerplate for "first"s that are elaborated in.
+        // The following is boilerplate for "first"s that are elaborated in. TODO: automate this.
         Rule {
-            preceding_event: Event::Recv(EventType::FirstNet),
-            event: Event::Recv(EventType::Net),
-            relations: vec![Relation::FederateEqual, Relation::TagEqual],
+            preceding_event: Event::FirstRecvNetOrSendStopGrnOrRecvLtc,
+            event: Event::RecvNet,
+            relations: vec![Relation::FederateEqual, Relation::TagPlusDelayEqual],
         },
         Rule {
-            preceding_event: Event::Recv(EventType::FirstPortAbsOrTaggedMsg),
-            event: Event::Recv(EventType::PortAbs),
-            relations: vec![Relation::FederateEqual, Relation::TagEqual],
+            preceding_event: Event::FirstRecvNetOrSendStopGrnOrRecvLtc,
+            event: Event::SendStopGrn,
+            relations: vec![Relation::FederateEqual, Relation::TagPlusDelayEqual],
         },
         Rule {
-            preceding_event: Event::Recv(EventType::FirstPortAbsOrTaggedMsg),
-            event: Event::Recv(EventType::TaggedMsg),
-            relations: vec![Relation::FederateEqual, Relation::TagEqual],
+            preceding_event: Event::RecvFirstPortAbsOrTaggedMsg,
+            event: Event::RecvPortAbs,
+            relations: vec![Relation::FederateEqual, Relation::TagPlusDelayEqual],
         },
         Rule {
-            preceding_event: Event::Send(EventType::FirstTagOrPtag),
-            event: Event::Send(EventType::Tag),
-            relations: vec![Relation::FederateEqual, Relation::TagEqual],
+            preceding_event: Event::RecvFirstPortAbsOrTaggedMsg,
+            event: Event::RecvTaggedMsg,
+            relations: vec![Relation::FederateEqual, Relation::TagPlusDelayEqual],
         },
         Rule {
-            preceding_event: Event::Send(EventType::FirstTagOrPtag),
-            event: Event::Send(EventType::Ptag),
-            relations: vec![Relation::FederateEqual, Relation::TagEqual],
+            preceding_event: Event::SendFirstTagOrPtag,
+            event: Event::SendTag,
+            relations: vec![Relation::FederateEqual, Relation::TagPlusDelayEqual],
+        },
+        Rule {
+            preceding_event: Event::SendFirstTagOrPtag,
+            event: Event::SendPtag,
+            relations: vec![Relation::FederateEqual, Relation::TagPlusDelayEqual],
         },
         // The following are for LTCs.
         Rule {
-            preceding_event: Event::Recv(EventType::TaggedMsg),
-            event: Event::Recv(EventType::Ltc),
-            relations: vec![Relation::TagLessThanOrEqual, Relation::FederateEqual],
-        },
-        Rule {
-            preceding_event: Event::Recv(EventType::PortAbs),
-            event: Event::Recv(EventType::Ltc),
-            relations: vec![Relation::TagLessThanOrEqual, Relation::FederateEqual],
-        },
-        Rule {
-            preceding_event: Event::Recv(EventType::Ltc),
-            event: Event::Recv(EventType::FirstPortAbsOrTaggedMsg),
-            relations: vec![Relation::TagLessThan, Relation::FederateEqual],
-        },
-        // The following are for handling of NETs.
-        Rule {
-            preceding_event: Event::Recv(EventType::FirstNet),
-            event: Event::Send(EventType::FirstTagOrPtag),
+            preceding_event: Event::RecvTaggedMsg,
+            event: Event::RecvLtc,
             relations: vec![
-                Relation::TagEqual,
+                Relation::TagPlusDelayLessThanOrEqual,
                 Relation::FederateEqual,
-                Relation::TagFinite,
             ],
         },
         Rule {
-            preceding_event: Event::Recv(EventType::Ltc),
-            event: Event::Send(EventType::Net),
-            relations: vec![Relation::TagLessThan, Relation::FederateEqual],
+            preceding_event: Event::RecvPortAbs,
+            event: Event::RecvLtc,
+            relations: vec![
+                Relation::TagPlusDelayLessThanOrEqual,
+                Relation::FederateEqual,
+            ],
         },
         Rule {
-            preceding_event: Event::Send(EventType::Ptag),
-            event: Event::Recv(EventType::Ltc),
-            relations: vec![Relation::TagLessThanOrEqual, Relation::FederateEqual],
+            preceding_event: Event::RecvLtc,
+            event: Event::RecvFirstPortAbsOrTaggedMsg,
+            relations: vec![Relation::TagPlusDelayLessThan, Relation::FederateEqual],
+        },
+        // The following are for handling of NETs.
+        Rule {
+            preceding_event: Event::FirstRecvNetOrSendStopGrnOrRecvLtc,
+            event: Event::SendFirstTagOrPtag,
+            relations: vec![
+                Relation::TagPlusDelayEqual,
+                Relation::FederateEqual,
+                Relation::TagFinite,
+                Relation::FirstTagNonzero,
+            ],
         },
         Rule {
-            preceding_event: Event::Send(EventType::Tag),
-            event: Event::Recv(EventType::Ltc),
-            relations: vec![Relation::TagLessThanOrEqual, Relation::FederateEqual],
+            preceding_event: Event::RecvLtc,
+            event: Event::RecvNet,
+            relations: vec![Relation::TagPlusDelayLessThan, Relation::FederateEqual],
+        },
+        Rule {
+            preceding_event: Event::SendPtag,
+            event: Event::RecvLtc,
+            relations: vec![
+                Relation::TagPlusDelayLessThanOrEqual,
+                Relation::FederateEqual,
+            ],
+        },
+        Rule {
+            preceding_event: Event::SendTag,
+            event: Event::RecvLtc,
+            relations: vec![
+                Relation::TagPlusDelayLessThanOrEqual,
+                Relation::FederateEqual,
+            ],
         },
         // The following is for handling of PTAGs and TAGs.
         Rule {
-            preceding_event: Event::Send(EventType::Ptag),
-            event: Event::Send(EventType::Tag),
-            relations: vec![Relation::TagLessThanOrEqual, Relation::FederateEqual],
+            preceding_event: Event::SendPtag,
+            event: Event::SendTag,
+            relations: vec![
+                Relation::TagPlusDelayLessThanOrEqual,
+                Relation::FederateEqual,
+            ],
         },
         Rule {
-            preceding_event: Event::Send(EventType::FirstTagOrPtag),
-            event: Event::Recv(EventType::FirstPortAbsOrTaggedMsg),
-            relations: vec![Relation::TagEqual, Relation::FederateEqual],
+            preceding_event: Event::SendFirstTagOrPtag,
+            event: Event::RecvFirstPortAbsOrTaggedMsg,
+            relations: vec![Relation::TagPlusDelayEqual, Relation::FederateEqual],
         },
         // The following encode the startup sequence in which a federate connects to RTI.
         Rule {
-            preceding_event: Event::Recv(EventType::FedId),
-            event: Event::Send(EventType::Ack),
+            preceding_event: Event::RecvFedId,
+            event: Event::SendAck,
             relations: vec![Relation::FederateEqual],
         },
         Rule {
-            preceding_event: Event::Send(EventType::Ack),
-            event: Event::Recv(EventType::Timestamp),
+            preceding_event: Event::SendAck,
+            event: Event::RecvTimestamp,
             relations: vec![Relation::FederateEqual],
         },
         Rule {
-            preceding_event: Event::Recv(EventType::Timestamp),
-            event: Event::Send(EventType::Timestamp),
+            preceding_event: Event::RecvTimestamp,
+            event: Event::SendTimestamp,
             relations: vec![Relation::FederateEqual],
         },
         Rule {
-            preceding_event: Event::Send(EventType::Timestamp),
-            event: Event::Recv(EventType::Net),
+            preceding_event: Event::SendTimestamp,
+            event: Event::RecvNet,
             relations: vec![Relation::FederateEqual],
         },
     ]

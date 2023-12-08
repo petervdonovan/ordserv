@@ -1,0 +1,18 @@
+Start time:, 1702002732103801144
+End time:, 1702002731104933531
+Total time:, -998867613
+
+Total Event Occurrences
+Sending ACK, 3
+Sending TIMESTAMP, 3
+Sending PTAG, 3
+Sending TAG, 8
+Sending TAGGED_MSG, 6
+Receiving TIMESTAMP, 3
+Receiving NET, 14
+Receiving LTC, 9
+Receiving FED_ID, 3
+Receiving TAGGED_MSG, 6
+
+Reaction Executions
+Reactor, Reaction, Occurrences, Total Time, Pct Total Time, Avg Time, Max Time, Min Time
