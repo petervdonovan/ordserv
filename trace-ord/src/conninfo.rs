@@ -128,7 +128,7 @@ impl FromStr for Delay {
         Ok(Self::from(interval))
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FedId(pub i32);
 
 pub struct ConnInfo(pub HashMap<(FedId, FedId), Delay>);

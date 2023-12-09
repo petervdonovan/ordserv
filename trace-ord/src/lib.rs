@@ -192,7 +192,7 @@ impl Display for BinaryRelation {
 
 pub fn preceding_permutables_by_ogrank_from_dir(
     dir: &Path,
-) -> Result<Vec<HashSet<OgRank>>, String> {
+) -> (Vec<Event>, Result<Vec<HashSet<OgRank>>, String>) {
     let rti_csv = dir.join("rti.csv");
     let conninfo = dir.join("conninfo.txt");
     let conninfo = ConnInfo::from_str(&std::fs::read_to_string(conninfo).unwrap()).unwrap();
@@ -205,8 +205,9 @@ pub fn preceding_permutables_by_ogrank_from_dir(
         &axioms,
         &conninfo,
     );
-    println!("{}", tracerecords_to_string(&trace[..], true, |_| false));
-    preceding_permutables_by_ogrank(&trace, &axioms, always_occurring, &conninfo)
+    let permutables = preceding_permutables_by_ogrank(&trace, &axioms, always_occurring, &conninfo);
+    // println!("{}", tracerecords_to_string(&trace[..], true, |_| false));
+    (trace, permutables)
 }
 
 pub fn preceding_permutables_by_ogrank(
@@ -551,7 +552,7 @@ impl BinaryRelation {
 }
 
 impl OgRank {
-    fn idx(&self) -> usize {
+    pub fn idx(&self) -> usize {
         self.0 as usize
     }
 }
@@ -593,18 +594,17 @@ impl Unpermutables {
         for (ogrank, tr) in trace.iter().enumerate() {
             if let EventPerTraceUniqueId::First(ref rel) = &tr.unique_id {
                 let mut running_intersection: Option<HashSet<OgRank>> = None;
-                for (preds, tr) in ogrank2immediatepredecessors[ogrank + 1..]
+                for (preds, _) in ogrank2immediatepredecessors[ogrank + 1..]
                     .iter_mut()
                     .zip(&trace[ogrank + 1..])
+                    .filter(|(_, tr)| rel.holds(tr, conninfo))
                 {
                     if let Some(running_intersection) = &mut running_intersection {
                         running_intersection.retain(|ogr| preds.contains(ogr));
                     } else {
                         running_intersection = Some(preds.clone());
                     }
-                    if rel.holds(tr, conninfo) {
-                        preds.insert(OgRank(ogrank as u32));
-                    }
+                    preds.insert(OgRank(ogrank as u32));
                 }
                 if let Some(running_intersection) = running_intersection {
                     ogrank2immediatepredecessors[ogrank].extend(running_intersection.into_iter());
@@ -655,31 +655,20 @@ impl Unpermutables {
                 let mut running_intersection = smallest_non_predecessor_set;
                 // the sets implicitly contain everything greater than to `ipred0`
                 running_intersection.extend((ipred0.0 + 1..ogrank as u32).map(OgRank));
-                if ogrank == 17 {
-                    for ipred in immediate_predecessors.iter().filter(|ogrank| {
-                        self.always_occurring.contains(ogrank) && **ogrank != ipred0
-                    }) {
-                        let mut remove_list = Vec::new();
-                        for ogrank in running_intersection.iter() {
-                            // the sets implicitly contain everything greater than `ipred`
-                            if !(ret[ipred.idx()].contains(ogrank) || ogrank > ipred) {
-                                remove_list.push(*ogrank);
-                            }
-                        }
-                        for ogrank in remove_list {
-                            running_intersection.remove(&ogrank);
+                for ipred in immediate_predecessors
+                    .iter()
+                    .filter(|ogrank| self.always_occurring.contains(ogrank) && **ogrank != ipred0)
+                {
+                    let mut remove_list = Vec::new();
+                    for ogrank in running_intersection.iter() {
+                        // the sets implicitly contain everything greater than `ipred`
+                        if !(ret[ipred.idx()].contains(ogrank) || ogrank > ipred) {
+                            remove_list.push(*ogrank);
                         }
                     }
-                    println!(
-                        "immediate_predecessors: {:?} at # 17",
-                        immediate_predecessors
-                    );
-                    println!(
-                        "smallest_non_predecessor_set: {:?} and ipred0: {} and ret length: {}",
-                        running_intersection,
-                        ipred0.0,
-                        ret.len()
-                    );
+                    for ogrank in remove_list {
+                        running_intersection.remove(&ogrank);
+                    }
                 }
                 ret.push(running_intersection);
             } else {
@@ -712,34 +701,6 @@ impl Unpermutables {
             .map(|(ogr, _)| OgRank(ogr as u32))
             .collect())
     }
-    // fn apply_rule(
-    //     rule: &Rule,
-    //     tr: &Event,
-    //     before: &[Event],
-    //     after: &[Event],
-    //     conninfo: &ConnInfo,
-    // ) -> Result<HashSet<OgRank>, String> {
-    //     let mut immediate_predecessors = HashSet::new();
-    //     if let Some(other) = after
-    //         .iter()
-    //         .find(|tr_after| rule.matches(tr_after, tr, conninfo))
-    //     {
-    //         return Result::Err(format!(
-    //             "Observed\n{}\n★ {}\n{}\nTracepoint:\n    {}\nfollowed by:\n    {}\nwith delay:\n    {:?}\nis a counterexample to the axiom:\n{:?}",
-    //             tracerecords_to_string(before, |_| false), tr, tracerecords_to_string(after, |it| it == other), tr, other, conninfo.0.get(&(tr.fedid, other.fedid)), rule
-    //         ));
-    //     }
-    //     if rule.event == tr.event {
-    //         immediate_predecessors.extend(
-    //             before
-    //                 .iter()
-    //                 .enumerate()
-    //                 .filter(|(_, tr_before)| rule.matches(tr_before, tr, conninfo))
-    //                 .map(|(ogrank, _)| OgRank(ogrank as u32)),
-    //         );
-    //     }
-    //     Ok(immediate_predecessors)
-    // }
 }
 
 /// testing module
