@@ -1,10 +1,12 @@
 use std::{collections::HashMap, fmt::Display, ops::Add, str::FromStr};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Delay(u64, u64);
 
+pub const NO_DELAY: Delay = Delay(0, 0);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Tag(pub i64, pub i64);
+pub struct Tag(pub i64, pub u64);
 
 impl Add<Delay> for Tag {
     type Output = Self;
@@ -12,7 +14,20 @@ impl Add<Delay> for Tag {
     fn add(self, rhs: Delay) -> Self::Output {
         let mut tag = self;
         tag.0 += rhs.0 as i64;
-        tag.1 += rhs.1 as i64;
+        tag.1 += rhs.1;
+        tag
+    }
+}
+
+impl Tag {
+    pub fn strict_add(self, rhs: Delay) -> Self {
+        let mut tag = self;
+        tag.0 += rhs.0 as i64;
+        tag.1 += rhs.1;
+        if rhs.0 != 0 {
+            tag.0 -= 1;
+            tag.1 = if tag.1 == 0 { u64::MAX } else { tag.1 - 1 };
+        }
         tag
     }
 }
@@ -20,6 +35,53 @@ impl Add<Delay> for Tag {
 impl Display for Tag {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "({}, {})", self.0, self.1)
+    }
+}
+
+impl FromStr for Tag {
+    type Err = String;
+    /// inverse of Display. Format: (i64, i64)
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // strip the parentheses
+        let s = &s[1..s.len() - 1];
+        let mut tag = s.split(", ");
+        let time = 1000
+            * tag
+                .next()
+                .ok_or("No time")?
+                .parse::<i64>()
+                .map_err(|e| format!("Invalid time: {}", e))?;
+        let microstep = 1000
+            * tag
+                .next()
+                .ok_or("No count")?
+                .parse::<i64>()
+                .map_err(|e| format!("Invalid count: {}", e))?;
+        Ok(Self(time, get_nonnegative_microstep(microstep)))
+    }
+}
+
+pub fn get_nonnegative_microstep(microstep: i64) -> u64 {
+    if microstep == -1 {
+        u64::MAX
+    } else if microstep < 0 {
+        panic!("Negative microstep");
+    } else {
+        microstep as u64
+    }
+}
+
+impl Display for Delay {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0 == 0 && self.1 == 0 {
+            write!(f, "no_delay")
+        } else if self.0 == 0 && self.1 == 1 {
+            write!(f, "(0, 0)")
+        } else if self.0 > 0 {
+            write!(f, "{}", self.0)
+        } else {
+            unreachable!()
+        }
     }
 }
 
@@ -108,7 +170,7 @@ impl FromStr for ConnInfo {
                     .ok_or("No upstream delay")?
                     .parse::<Delay>()
                     .map_err(|e| format!("Invalid upstream delay: {}", e))?;
-                conn_info.insert((FedId(enclave_id), FedId(upstream_fed_id)), upstream_delay);
+                conn_info.insert((FedId(upstream_fed_id), FedId(enclave_id)), upstream_delay);
             }
             conn_info.insert((FedId(enclave_id), FedId(enclave_id)), Delay(0, 0));
         }
