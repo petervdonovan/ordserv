@@ -139,7 +139,7 @@ impl FromStr for Delay {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FedId(pub i32);
 
-pub struct ConnInfo(pub HashMap<(FedId, FedId), Delay>);
+pub struct ConnInfo(pub HashMap<(FedId, FedId), Delay>, usize);
 
 impl FromStr for ConnInfo {
     type Err = String;
@@ -181,6 +181,12 @@ impl FromStr for ConnInfo {
                 conn_info.insert((FedId(upstream_fed_id), FedId(enclave_id)), upstream_delay);
             }
         }
-        Ok(Self(conn_info))
+        Ok(Self(conn_info, num_nodes))
+    }
+}
+
+impl ConnInfo {
+    pub fn n_federates(&self) -> usize {
+        self.1
     }
 }

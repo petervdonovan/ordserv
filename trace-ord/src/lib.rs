@@ -55,6 +55,7 @@ pub enum BinaryRelation {
     FederateZeroDelayDirectlyUpstreamOf,
     FederateDirectlyUpstreamOf,
     IsFirst(Box<BinaryRelation>),
+    IsFirstForFederate(Box<BinaryRelation>),
     And(Box<[BinaryRelation]>),
     Or(Box<[BinaryRelation]>),
     Unary(Box<Predicate>),
@@ -183,6 +184,9 @@ impl Display for BinaryRelation {
                 write!(f, "Federate is directly upstream of")
             }
             BinaryRelation::IsFirst(relation) => write!(f, "(FIRST {})", relation),
+            BinaryRelation::IsFirstForFederate(relation) => {
+                write!(f, "(FedwiseFIRST {})", relation)
+            }
             BinaryRelation::And(relations) => {
                 write!(f, "({})", relations[0])?;
                 for relation in &relations[1..] {
@@ -223,7 +227,6 @@ pub fn preceding_permutables_by_ogrank_from_dir(
         .map(|ogrank| OgRank(ogrank as u32))
         .collect();
     let permutables = preceding_permutables_by_ogrank(&trace, &axioms, always_occurring, &conninfo);
-    // println!("{}", tracerecords_to_string(&trace[..], true, |_| false));
     (trace, permutables)
 }
 
@@ -265,6 +268,7 @@ pub enum Event {
         ogrank: OgRank,
     },
     First(Predicate),
+    FirstForFederate(FedId, Predicate),
 }
 
 // impl Display for Event {
@@ -286,6 +290,7 @@ impl Display for Event {
                 ogrank,
             } => write!(f, "{} {} @ {:?} (src={})", event, tag, fedid, ogrank.0),
             Event::First(p) => write!(f, "(FIRST {})", p),
+            Event::FirstForFederate(fedid, p) => write!(f, "(FedwiseFIRST {} {})", fedid.0, p),
         }
     }
 }
@@ -421,16 +426,26 @@ pub fn elaborated_from_trace_records(
     for _ in 0..concretes.len() {
         firsts.push(vec![]);
     }
-    for p in get_first_predicates(axioms, &concretes, conninfo) {
-        // println!("DEBUG: {}", p);
+    let (predicates, federate_wise_predicates) = get_first_predicates(axioms, &concretes, conninfo);
+    for p in predicates {
         for (ogr, record) in concretes.iter().enumerate() {
             if p.holds(record, conninfo) {
-                // firsts[ogr].push(Event {
-                //     unique_id: EventPerTraceUniqueId::First(p.clone()),
-                //     ..record.clone()
-                // });
                 firsts[ogr].push(Event::First(p.clone()));
                 break;
+            }
+        }
+    }
+    for p in federate_wise_predicates {
+        let mut federates_hit = HashSet::new();
+        for (ogr, record) in concretes.iter().enumerate() {
+            if let Event::Concrete { fedid, .. } = record {
+                if p.holds(record, conninfo) && !federates_hit.contains(fedid) {
+                    firsts[ogr].push(Event::FirstForFederate(*fedid, p.clone()));
+                    federates_hit.insert(*fedid);
+                    if federates_hit.len() == conninfo.n_federates() {
+                        break;
+                    }
+                }
             }
         }
     }
@@ -448,10 +463,17 @@ fn get_first_predicates(
     axioms: &[Rule],
     concretes: &[Event],
     conninfo: &ConnInfo,
-) -> HashSet<Predicate> {
-    let mut ret = HashSet::new();
+) -> (HashSet<Predicate>, HashSet<Predicate>) {
+    let mut ret = (HashSet::new(), HashSet::new());
     for a in axioms {
-        add_first_predicates_recursive(&a.event, &a.preceding_event, concretes, &mut ret, conninfo);
+        add_first_predicates_recursive(
+            &a.event,
+            &a.preceding_event,
+            concretes,
+            &mut ret.0,
+            &mut ret.1,
+            conninfo,
+        );
     }
     ret
 }
@@ -461,6 +483,7 @@ fn add_first_predicates_recursive(
     brel: &BinaryRelation,
     concretes: &[Event],
     predicates: &mut HashSet<Predicate>,
+    federate_wise_predicates: &mut HashSet<Predicate>,
     conninfo: &ConnInfo,
 ) {
     match brel {
@@ -480,24 +503,41 @@ fn add_first_predicates_recursive(
         | BinaryRelation::FederateDirectlyUpstreamOf => {}
         BinaryRelation::IsFirst(rel) => {
             for e in concretes.iter().filter(|e| event.holds(e, conninfo)) {
-                // if let Event::Concrete {
-                //     event,
-                //     tag,
-                //     fedid,
-                //     ogrank,
-                // } = e
-                // {
-                //     if ogrank.0 == 0 {
-                //         println!("DEBUG:!! {} is first", e);
-                //     }
-                // }
                 predicates.insert(Predicate::BoundBinary(Box::new((e.clone(), *rel.clone()))));
             }
-            add_first_predicates_recursive(event, rel, concretes, predicates, conninfo);
+            add_first_predicates_recursive(
+                event,
+                rel,
+                concretes,
+                predicates,
+                federate_wise_predicates,
+                conninfo,
+            );
+        }
+        BinaryRelation::IsFirstForFederate(rel) => {
+            for e in concretes.iter().filter(|e| event.holds(e, conninfo)) {
+                federate_wise_predicates
+                    .insert(Predicate::BoundBinary(Box::new((e.clone(), *rel.clone()))));
+            }
+            add_first_predicates_recursive(
+                event,
+                rel,
+                concretes,
+                predicates,
+                federate_wise_predicates,
+                conninfo,
+            );
         }
         BinaryRelation::And(rels) | BinaryRelation::Or(rels) => {
             for rel in &**rels {
-                add_first_predicates_recursive(event, rel, concretes, predicates, conninfo);
+                add_first_predicates_recursive(
+                    event,
+                    rel,
+                    concretes,
+                    predicates,
+                    federate_wise_predicates,
+                    conninfo,
+                );
             }
         }
         BinaryRelation::Unary(prel) => {
@@ -618,7 +658,7 @@ impl BinaryRelation {
                     {
                         delays.push((*src, *delay));
                     }
-                    f(&(*ptag), &tag, &delays)
+                    f(ptag, tag, &delays)
                 } else {
                     false
                 }
@@ -643,33 +683,17 @@ impl BinaryRelation {
             BinaryRelation::TagStrictPlusDelay2FedLessThan => {
                 compare_tags_given_delay(|a, b, d| a.strict_add(*d) < *b)
             }
-            // conninfo
-            //     .0
-            //     .iter()
-            //     .filter(|((src, _), _)| *src == preceding.fedid)
-            //     .all(|(_, delay)| preceding.tag.strict_add(*delay) < e.tag),
             BinaryRelation::TagStrictPlusDelayFromSomeImmUpstreamFedGreaterThanOrEquals => {
                 compare_tags_given_all_downstream_delays(|a, b, delays| {
                     delays.iter().any(|(_, delay)| a.strict_add(*delay) >= *b)
                 })
             }
-            // conninfo
-            //     .0
-            //     .iter()
-            //     .filter(|((src, _), _)| *src == preceding.fedid)
-            //     .any(|(_, delay)| preceding.tag.strict_add(*delay) >= e.tag),
             BinaryRelation::TagPlusDelayToAllImmDowntreamFedsLessThan => {
                 compare_tags_given_all_downstream_delays(|a, b, delays| {
                     delays.iter().all(|(_, delay)| *a + *delay < *b)
                 })
             }
-            // conninfo
-            //     .0
-            //     .iter()
-            //     .filter(|((src, _), _)| *src == preceding.fedid)
-            //     .all(|(_, delay)| preceding.tag + *delay < e.tag),
             BinaryRelation::FederateEquals => neither_first(|_, _, a, b, _| a == b),
-            // e.fedid == preceding.fedid,
             BinaryRelation::FederateZeroDelayDirectlyUpstreamOf => {
                 neither_first(|_, _, _pfed, _fed, delay| delay == Some(&NO_DELAY))
             }
@@ -678,17 +702,16 @@ impl BinaryRelation {
             }
             BinaryRelation::IsFirst(r) => {
                 if let Event::First(other) = &preceding {
-                    // if matches!(other, Predicate::BoundBinary(_)) {
-                    //     println!(
-                    //         "DEBUG: {}\n    {}\n    {}",
-                    //         other,
-                    //         Predicate::BoundBinary(Box::new((e.clone(), *r.clone()))),
-                    //         other == &Predicate::BoundBinary(Box::new((e.clone(), *r.clone())))
-                    //     );
-                    // }
                     other == &Predicate::BoundBinary(Box::new((e.clone(), *r.clone())))
                 // maybe not the most efficient
                 // TODO: consider logical equivalence?
+                } else {
+                    false
+                }
+            }
+            BinaryRelation::IsFirstForFederate(r) => {
+                if let Event::FirstForFederate(_, other_r) = &preceding {
+                    other_r == &Predicate::BoundBinary(Box::new((e.clone(), *r.clone())))
                 } else {
                     false
                 }
@@ -752,19 +775,31 @@ impl Unpermutables {
         conninfo: &ConnInfo,
     ) {
         for (ogrank, tr) in trace.iter().enumerate() {
-            if let Event::First(ref rel) = &tr {
+            if let Event::First(ref rel) | Event::FirstForFederate(_, ref rel) = &tr {
+                let fedid = if let Event::FirstForFederate(fedid, _) = &tr {
+                    Some(*fedid)
+                } else {
+                    None
+                };
                 // println!("DEBUG: {}", rel);
                 let mut running_before_intersection: Option<HashSet<OgRank>> = None;
                 let mut n_matches = 0;
                 let mut first_match = None;
-                // let mut second_match = None;
-                for ((ogr, preds), tr) in ogrank2immediatepredecessors[ogrank + 1..]
+                for ((ogr, preds), _tr) in ogrank2immediatepredecessors[ogrank + 1..]
                     .iter_mut()
                     .enumerate()
                     .zip(&trace[ogrank + 1..])
                     .filter(|(_, tr)| {
                         // println!("DEBUG: {}\n    {},    {}", tr, rel, rel.holds(tr, conninfo));
-                        rel.holds(tr, conninfo) && !matches!(tr, Event::First(_))
+                        rel.holds(tr, conninfo)
+                            && !matches!(tr, Event::First(_))
+                            && if let (Event::Concrete { fedid: other, .. }, Some(fedid)) =
+                                (tr, fedid)
+                            {
+                                *other == fedid
+                            } else {
+                                true
+                            }
                     })
                 {
                     let ogr = ogrank + 1 + ogr;

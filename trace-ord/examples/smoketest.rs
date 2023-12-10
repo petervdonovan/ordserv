@@ -33,12 +33,12 @@ pub fn main() {
             panic!("Fatal error during processing of dataset from {:?}", path);
         });
         unused_axioms.push(unused);
-        // println!("{}", tracerecords_to_string(&trace[..], true, |_| false));
-        // for (ogrank, permutables) in preceding_permutables.iter().enumerate() {
-        //     let mut sample = permutables.iter().map(|it| it.0).collect::<Vec<_>>();
-        //     sample.sort();
-        //     println!("Permutable with {}:\n    {:?}", ogrank, sample);
-        // }
+        println!("{}", tracerecords_to_string(&trace[..], true, |_| false));
+        for (ogrank, permutables) in preceding_permutables.iter().enumerate() {
+            let mut sample = permutables.iter().map(|it| it.0).collect::<Vec<_>>();
+            sample.sort();
+            println!("Permutable with {}:\n    {:?}", ogrank, sample);
+        }
         let (len, n_permutables) = preceding_permutables
             .iter()
             .enumerate()

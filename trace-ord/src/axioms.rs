@@ -44,6 +44,7 @@ pub fn axioms() -> Vec<Rule> {
         // }, // disabled because it isn't true: the conninfo records the shortest delay, but there could be longer delays that put messages arbitrarily far into the future -- even though the full structure of the program, which is not yet encoded in the conninfo, would not allow that.
         // The following are for handling of NETs.
         Rule {
+            // you should have received a net or a ltc or something that lets you know that a TAG or PTAG is needed before you send one
             preceding_event: BinaryRelation::IsFirst(Box::new(And(Box::new([
                 BinaryRelation::Or(Box::new([
                     Unary(Box::new(EventIs(SendStopGrn))),
@@ -88,17 +89,6 @@ pub fn axioms() -> Vec<Rule> {
             ])),
             event: Predicate::And(Box::new([EventIs(RecvLtc), TagNonzero])),
         },
-        // Rule {
-        //     preceding_event: BinaryRelation::IsFirst(Box::new(And(Box::new([
-        //         Unary(Box::new(Or(Box::new([
-        //             EventIs(SendPtag),
-        //             EventIs(SendTag),
-        //         ])))),
-        //         FederateEquals,
-        //         // TagPlusDelay2FedLessThanOrEqual,
-        //     ])))),
-        //     event: EventIs(RecvLtc),
-        // },
         // The following is for handling of PTAGs and TAGs.
         Rule {
             // tags and ptags to the same federate are monotonic
@@ -123,15 +113,35 @@ pub fn axioms() -> Vec<Rule> {
         },
         Rule {
             // you can't send a TAG nor PTAG until you have received a high enough NET from any upstream federate
-            preceding_event: BinaryRelation::IsFirst(Box::new(And(Box::new([
+            preceding_event: BinaryRelation::IsFirstForFederate(Box::new(And(Box::new([
                 Unary(Box::new(EventIs(RecvNet))),
                 TagPlusDelay2FedGreaterThanOrEquals,
-                // FIXME: I want to express the first such event _from a particular upstream federate_, but that isn't possible yet.
             ])))),
             event: Predicate::And(Box::new([
                 Or(Box::new([EventIs(SendPtag), EventIs(SendTag)])),
                 TagNonzero, // should be tag greater than min input delay to federate
             ])),
+        }, // this rule does not seem very helpful
+        Rule {
+            // you can't grant a TAG until you have received a high enough LTC from any upstream federate or you have granted a strictly higher TAG to an upstream federate
+            preceding_event: BinaryRelation::IsFirstForFederate(Box::new(BinaryRelation::Or(
+                Box::new([
+                    And(Box::new([
+                        Unary(Box::new(EventIs(RecvLtc))),
+                        FederateZeroDelayDirectlyUpstreamOf,
+                        TagGreaterThanOrEqual,
+                    ])),
+                    And(Box::new([
+                        Unary(Box::new(Or(Box::new([
+                            EventIs(SendTag),
+                            EventIs(SendStopGrn),
+                        ])))),
+                        FederateZeroDelayDirectlyUpstreamOf,
+                        TagGreaterThanOrEqual,
+                    ])),
+                ]),
+            ))),
+            event: Predicate::And(Box::new([EventIs(SendTag), TagNonzero])),
         },
         Rule {
             // in particular, you can't send a PTAG until either you have sent an equal PTAG to an upstream federate that is upstream with only zero delay, or you have received an equal NET from the same federate
@@ -150,11 +160,7 @@ pub fn axioms() -> Vec<Rule> {
                     TagEquals,
                 ])),
             ])))),
-            event: Predicate::And(Box::new([
-                EventIs(SendPtag),
-                TagNonzero,
-                // EventIs(SendTag), // FIXME: unsatisfiable, just for testing
-            ])),
+            event: Predicate::And(Box::new([EventIs(SendPtag), TagNonzero])),
         },
         // Rule {
         //     preceding_event: BinaryRelation::IsFirst(Box::new(And(Box::new([
