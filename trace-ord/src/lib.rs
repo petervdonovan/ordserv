@@ -5,7 +5,7 @@ use std::{
     str::FromStr,
 };
 
-use conninfo::{get_nonnegative_microstep, ConnInfo, FedId, Tag, NO_DELAY};
+use conninfo::{get_nonnegative_microstep, ConnInfo, Delay, FedId, Tag, NO_DELAY};
 
 pub mod axioms;
 pub mod conninfo;
@@ -32,7 +32,7 @@ pub enum EventKind {
 
 /// If two events match a rule, then the rule says that there is a precedence relation between them
 /// (with the preceding event occurring first in all non-error traces).
-// #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Rule {
     pub event: Predicate,
     pub preceding_event: BinaryRelation,
@@ -44,11 +44,16 @@ pub enum BinaryRelation {
     TagPlusDelay2FedLessThan,
     TagPlusDelay2FedLessThanOrEqual,
     TagGreaterThanOrEqual,
-    TagStrictPlusDelayFromAllImmUpstreamFedsLessThan,
+    TagStrictPlusDelay2FedLessThan,
+    TagPlusDelay2FedGreaterThanOrEquals,
     TagStrictPlusDelayFromSomeImmUpstreamFedGreaterThanOrEquals,
-    TagPlusDelayFromAllImmUpstreamFedsLessThan,
+    TagPlusDelayToAllImmDowntreamFedsLessThan,
+    TagLessThan,
+    TagLessThanOrEqual,
+    TagEquals,
     FederateEquals,
     FederateZeroDelayDirectlyUpstreamOf,
+    FederateDirectlyUpstreamOf,
     IsFirst(Box<BinaryRelation>),
     And(Box<[BinaryRelation]>),
     Or(Box<[BinaryRelation]>),
@@ -154,19 +159,28 @@ impl Display for BinaryRelation {
             BinaryRelation::TagPlusDelay2FedEquals => write!(f, "Tag + Delay = Tag"),
             BinaryRelation::TagPlusDelay2FedLessThan => write!(f, "Tag + Delay < Tag"),
             BinaryRelation::TagPlusDelay2FedLessThanOrEqual => write!(f, "Tag + Delay ≤ Tag"),
-            BinaryRelation::TagStrictPlusDelayFromAllImmUpstreamFedsLessThan => {
+            BinaryRelation::TagPlusDelay2FedGreaterThanOrEquals => {
+                write!(f, "Tag + Delay ≥ Tag")
+            }
+            BinaryRelation::TagStrictPlusDelay2FedLessThan => {
                 write!(f, "Tag strict+ All Delays < Tag")
             }
             BinaryRelation::TagStrictPlusDelayFromSomeImmUpstreamFedGreaterThanOrEquals => {
                 write!(f, "Tag strict+ Some Delay ≥ Tag")
             }
-            BinaryRelation::TagPlusDelayFromAllImmUpstreamFedsLessThan => {
+            BinaryRelation::TagPlusDelayToAllImmDowntreamFedsLessThan => {
                 write!(f, "Tag + All Delays < Tag")
             }
             BinaryRelation::TagGreaterThanOrEqual => write!(f, "Tag ≥ Tag"),
+            BinaryRelation::TagEquals => write!(f, "Tag = Tag"),
+            BinaryRelation::TagLessThan => write!(f, "Tag < Tag"),
+            BinaryRelation::TagLessThanOrEqual => write!(f, "Tag ≤ Tag"),
             BinaryRelation::FederateEquals => write!(f, "Federate = Federate"),
             BinaryRelation::FederateZeroDelayDirectlyUpstreamOf => {
                 write!(f, "Federate has zero delay directly upstream of")
+            }
+            BinaryRelation::FederateDirectlyUpstreamOf => {
+                write!(f, "Federate is directly upstream of")
             }
             BinaryRelation::IsFirst(relation) => write!(f, "(FIRST {})", relation),
             BinaryRelation::And(relations) => {
@@ -192,19 +206,22 @@ impl Display for BinaryRelation {
 
 pub fn preceding_permutables_by_ogrank_from_dir(
     dir: &Path,
-) -> (Vec<Event>, Result<Vec<HashSet<OgRank>>, String>) {
+) -> (
+    Vec<Event>,
+    Result<(HashSet<Rule>, Vec<HashSet<OgRank>>), String>,
+) {
     let rti_csv = dir.join("rti.csv");
     let conninfo = dir.join("conninfo.txt");
     let conninfo = ConnInfo::from_str(&std::fs::read_to_string(conninfo).unwrap()).unwrap();
     let axioms = axioms::axioms();
-    let always_occurring: HashSet<_> = (0..lf_trace_reader::trace_by_physical_time(&rti_csv).len())
-        .map(|ogrank| OgRank(ogrank as u32))
-        .collect();
     let trace = elaborated_from_trace_records(
         lf_trace_reader::trace_by_physical_time(&rti_csv),
         &axioms,
         &conninfo,
     );
+    let always_occurring: HashSet<_> = (0..trace.len())
+        .map(|ogrank| OgRank(ogrank as u32))
+        .collect();
     let permutables = preceding_permutables_by_ogrank(&trace, &axioms, always_occurring, &conninfo);
     // println!("{}", tracerecords_to_string(&trace[..], true, |_| false));
     (trace, permutables)
@@ -215,10 +232,10 @@ pub fn preceding_permutables_by_ogrank(
     axioms: &[Rule],
     always_occurring: HashSet<OgRank>,
     conninfo: &ConnInfo,
-) -> Result<Vec<HashSet<OgRank>>, String> {
-    let unpermutables =
+) -> Result<(HashSet<Rule>, Vec<HashSet<OgRank>>), String> {
+    let (unused, unpermutables) =
         Unpermutables::from_realizable_trace(trace, axioms, always_occurring, conninfo)?;
-    Ok(unpermutables.preceding_permutables_by_ogrank())
+    Ok((unused, unpermutables.preceding_permutables_by_ogrank()))
 }
 
 pub struct Unpermutables {
@@ -227,26 +244,49 @@ pub struct Unpermutables {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct OgRank(pub u32);
+// #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+// pub enum EventPerTraceUniqueId {
+//     Og(OgRank),
+//     First(Predicate),
+// }
+// #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+// pub struct Event {
+//     pub event: EventKind,
+//     pub tag: Tag,
+//     pub fedid: FedId,
+//     pub unique_id: EventPerTraceUniqueId,
+// }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum EventPerTraceUniqueId {
-    Og(OgRank),
+pub enum Event {
+    Concrete {
+        event: EventKind,
+        tag: Tag,
+        fedid: FedId,
+        ogrank: OgRank,
+    },
     First(Predicate),
 }
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Event {
-    pub event: EventKind,
-    pub tag: Tag,
-    pub fedid: FedId,
-    pub unique_id: EventPerTraceUniqueId,
-}
 
+// impl Display for Event {
+//     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+//         write!(
+//             f,
+//             "{} {} @ {:?} (src={})",
+//             self.event, self.tag, self.fedid, self.unique_id
+//         )
+//     }
+// }
 impl Display for Event {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{} {} @ {:?} (src={})",
-            self.event, self.tag, self.fedid, self.unique_id
-        )
+        match self {
+            Event::Concrete {
+                event,
+                tag,
+                fedid,
+                ogrank,
+            } => write!(f, "{} {} @ {:?} (src={})", event, tag, fedid, ogrank.0),
+            Event::First(p) => write!(f, "(FIRST {})", p),
+        }
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -271,13 +311,16 @@ impl FromStr for Event {
         let mut s = s.next().unwrap().split("(src=");
         s.next().unwrap(); // should be error, not panic, ditto everywhere else
         let mut s = s.next().unwrap().split(')');
-        let unique_id = EventPerTraceUniqueId::from_str(s.next().unwrap())
+        let unique_id = s
+            .next()
+            .unwrap()
+            .parse()
             .map_err(|_| EventParseError::InvalidUniqueId)?;
-        Ok(Self {
+        Ok(Self::Concrete {
             event,
             tag,
             fedid,
-            unique_id,
+            ogrank: OgRank(unique_id),
         })
     }
 }
@@ -295,28 +338,28 @@ impl FromStr for FedId {
     }
 }
 
-impl Display for EventPerTraceUniqueId {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            EventPerTraceUniqueId::Og(ogr) => write!(f, "{}", ogr.0),
-            EventPerTraceUniqueId::First(rel) => write!(f, "{}", rel),
-        }
-    }
-}
+// impl Display for EventPerTraceUniqueId {
+//     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+//         match self {
+//             EventPerTraceUniqueId::Og(ogr) => write!(f, "{}", ogr.0),
+//             EventPerTraceUniqueId::First(rel) => write!(f, "{}", rel),
+//         }
+//     }
+// }
 
-impl FromStr for EventPerTraceUniqueId {
-    type Err = ();
-    /// Inverse of Display::fmt
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Ok(ogr) = s.parse::<u32>() {
-            return Ok(Self::Og(OgRank(ogr)));
-        }
-        // Ok(Self::First(Predicate::from_str(s).map_err(|_| ())?))
-        Result::Err(())
-    }
-}
+// impl FromStr for EventPerTraceUniqueId {
+//     type Err = ();
+//     /// Inverse of Display::fmt
+//     fn from_str(s: &str) -> Result<Self, Self::Err> {
+//         if let Ok(ogr) = s.parse::<u32>() {
+//             return Ok(Self::Og(OgRank(ogr)));
+//         }
+//         // Ok(Self::First(Predicate::from_str(s).map_err(|_| ())?))
+//         Result::Err(())
+//     }
+// }
 
-fn tracerecords_to_string(
+pub fn tracerecords_to_string(
     trace: &[Event],
     numbering: bool,
     put_marker_if: impl Fn(&Event) -> bool,
@@ -355,11 +398,11 @@ impl Event {
             get_nonnegative_microstep(lf_trace_record.microstep),
         );
         let source = lf_trace_record.destination;
-        Self {
+        Self::Concrete {
             event,
             tag,
             fedid: FedId(source),
-            unique_id: EventPerTraceUniqueId::Og(OgRank(ogrank.0)),
+            ogrank: OgRank(ogrank.0),
         }
     }
 }
@@ -371,29 +414,32 @@ pub fn elaborated_from_trace_records(
 ) -> Vec<Event> {
     let concretes = trace_records
         .iter()
-        .map(|record| Event::from_lf_trace_record(record, OgRank(0)))
+        .enumerate()
+        .map(|(ogr, record)| Event::from_lf_trace_record(record, OgRank(ogr as u32)))
         .collect::<Vec<_>>();
     let mut firsts = Vec::<Vec<Event>>::new();
     for _ in 0..concretes.len() {
         firsts.push(vec![]);
     }
     for p in get_first_predicates(axioms, &concretes, conninfo) {
+        // println!("DEBUG: {}", p);
         for (ogr, record) in concretes.iter().enumerate() {
-            if p.holds(record, &ConnInfo(HashMap::new())) {
-                firsts[ogr].push(Event {
-                    unique_id: EventPerTraceUniqueId::First(p.clone()),
-                    ..record.clone()
-                });
+            if p.holds(record, conninfo) {
+                // firsts[ogr].push(Event {
+                //     unique_id: EventPerTraceUniqueId::First(p.clone()),
+                //     ..record.clone()
+                // });
+                firsts[ogr].push(Event::First(p.clone()));
                 break;
             }
         }
     }
     let mut ret = Vec::new();
-    for (ogidx, record) in trace_records.iter().enumerate() {
+    for (ogidx, e) in concretes.into_iter().enumerate() {
         for first in firsts.get_mut(ogidx).unwrap().drain(..) {
             ret.push(first);
         }
-        ret.push(Event::from_lf_trace_record(record, OgRank(ogidx as u32)));
+        ret.push(e);
     }
     ret
 }
@@ -421,14 +467,30 @@ fn add_first_predicates_recursive(
         BinaryRelation::TagPlusDelay2FedEquals
         | BinaryRelation::TagPlusDelay2FedLessThan
         | BinaryRelation::TagPlusDelay2FedLessThanOrEqual
+        | BinaryRelation::TagPlusDelay2FedGreaterThanOrEquals
         | BinaryRelation::TagGreaterThanOrEqual
+        | BinaryRelation::TagEquals
+        | BinaryRelation::TagLessThan
+        | BinaryRelation::TagLessThanOrEqual
         | BinaryRelation::FederateEquals
-        | BinaryRelation::TagStrictPlusDelayFromAllImmUpstreamFedsLessThan
+        | BinaryRelation::TagStrictPlusDelay2FedLessThan
         | BinaryRelation::TagStrictPlusDelayFromSomeImmUpstreamFedGreaterThanOrEquals
-        | BinaryRelation::TagPlusDelayFromAllImmUpstreamFedsLessThan
-        | BinaryRelation::FederateZeroDelayDirectlyUpstreamOf => {}
+        | BinaryRelation::TagPlusDelayToAllImmDowntreamFedsLessThan
+        | BinaryRelation::FederateZeroDelayDirectlyUpstreamOf
+        | BinaryRelation::FederateDirectlyUpstreamOf => {}
         BinaryRelation::IsFirst(rel) => {
             for e in concretes.iter().filter(|e| event.holds(e, conninfo)) {
+                // if let Event::Concrete {
+                //     event,
+                //     tag,
+                //     fedid,
+                //     ogrank,
+                // } = e
+                // {
+                //     if ogrank.0 == 0 {
+                //         println!("DEBUG:!! {} is first", e);
+                //     }
+                // }
                 predicates.insert(Predicate::BoundBinary(Box::new((e.clone(), *rel.clone()))));
             }
             add_first_predicates_recursive(event, rel, concretes, predicates, conninfo);
@@ -468,11 +530,29 @@ fn add_first_predicates_recursive_from_predicate(
 impl Predicate {
     pub fn holds(&self, e: &Event, conninfo: &ConnInfo) -> bool {
         match self {
-            Predicate::TagNonzero => e.tag != Tag(0, 0),
-            Predicate::TagFinite => e.tag.0.abs() < 1_000_000_000_000,
-            Predicate::EventIs(event) => e.event == *event,
+            Predicate::TagNonzero => {
+                if let Event::Concrete { tag, .. } = e {
+                    tag != &Tag(0, 0)
+                } else {
+                    false
+                }
+            }
+            Predicate::TagFinite => {
+                if let Event::Concrete { tag, .. } = e {
+                    tag.0.abs() < 1_000_000_000_000
+                } else {
+                    false
+                }
+            }
+            Predicate::EventIs(event) => {
+                if let Event::Concrete { event: other, .. } = e {
+                    other == event
+                } else {
+                    false
+                }
+            }
             Predicate::IsFirst(relation) => {
-                if let EventPerTraceUniqueId::First(other) = &e.unique_id {
+                if let Event::First(other) = &e {
                     other == &**relation // TODO: consider logical equivalence?
                 } else {
                     false
@@ -487,52 +567,125 @@ impl Predicate {
 
 impl BinaryRelation {
     pub fn holds(&self, e: &Event, preceding: &Event, conninfo: &ConnInfo) -> bool {
-        let compare_before_plus_delay_with_after = |f: fn(&Tag, &Tag) -> bool| {
-            f(
-                &(preceding.tag
-                    + *conninfo
-                        .0
-                        .get(&(preceding.fedid, e.fedid))
-                        .unwrap_or(&NO_DELAY)),
-                &e.tag,
-            )
+        let neither_first = |f: fn(&Tag, &Tag, &FedId, &FedId, Option<&Delay>) -> bool| {
+            if let (
+                Event::Concrete {
+                    tag: ptag,
+                    fedid: pfedid,
+                    ..
+                },
+                Event::Concrete { tag, fedid, .. },
+            ) = (preceding, e)
+            {
+                f(ptag, tag, pfedid, fedid, conninfo.0.get(&(*pfedid, *fedid)))
+            } else {
+                false
+            }
         };
+        let compare_tags_given_delay = |f: fn(&Tag, &Tag, &Delay) -> bool| {
+            if let (
+                Event::Concrete {
+                    tag: ptag,
+                    fedid: pfedid,
+                    ..
+                },
+                Event::Concrete { tag, fedid, .. },
+            ) = (preceding, e)
+            {
+                if let Some(delay) = conninfo.0.get(&(*pfedid, *fedid)) {
+                    f(&(*ptag), &tag, delay)
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+        let compare_tags_given_all_downstream_delays =
+            |f: fn(&Tag, &Tag, &[(FedId, Delay)]) -> bool| {
+                if let (
+                    Event::Concrete {
+                        tag: ptag,
+                        fedid: pfedid,
+                        ..
+                    },
+                    Event::Concrete { tag, fedid, .. },
+                ) = (preceding, e)
+                {
+                    let mut delays = Vec::new();
+                    for ((src, _), delay) in
+                        conninfo.0.iter().filter(|((_, dst), _)| *dst == *fedid)
+                    {
+                        delays.push((*src, *delay));
+                    }
+                    f(&(*ptag), &tag, &delays)
+                } else {
+                    false
+                }
+            };
         match self {
             BinaryRelation::TagPlusDelay2FedEquals => {
-                compare_before_plus_delay_with_after(|a, b| a == b)
+                compare_tags_given_delay(|a, b, d| *a + *d == *b)
             }
             BinaryRelation::TagPlusDelay2FedLessThan => {
-                compare_before_plus_delay_with_after(|a, b| a < b)
+                compare_tags_given_delay(|a, b, d| *a + *d < *b)
             }
             BinaryRelation::TagPlusDelay2FedLessThanOrEqual => {
-                compare_before_plus_delay_with_after(|a, b| a <= b)
+                compare_tags_given_delay(|a, b, d| *a + *d <= *b)
             }
-            BinaryRelation::TagGreaterThanOrEqual => {
-                compare_before_plus_delay_with_after(|a, b| a >= b)
+            BinaryRelation::TagPlusDelay2FedGreaterThanOrEquals => {
+                compare_tags_given_delay(|a, b, d| *a + *d >= *b)
             }
-            BinaryRelation::TagStrictPlusDelayFromAllImmUpstreamFedsLessThan => conninfo
-                .0
-                .iter()
-                .filter(|((src, _), _)| *src == preceding.fedid)
-                .all(|(_, delay)| preceding.tag.strict_add(*delay) < e.tag),
-            BinaryRelation::TagStrictPlusDelayFromSomeImmUpstreamFedGreaterThanOrEquals => conninfo
-                .0
-                .iter()
-                .filter(|((src, _), _)| *src == preceding.fedid)
-                .any(|(_, delay)| preceding.tag.strict_add(*delay) >= e.tag),
-            BinaryRelation::TagPlusDelayFromAllImmUpstreamFedsLessThan => conninfo
-                .0
-                .iter()
-                .filter(|((src, _), _)| *src == preceding.fedid)
-                .all(|(_, delay)| preceding.tag + *delay < e.tag),
-            BinaryRelation::FederateEquals => e.fedid == preceding.fedid,
-            BinaryRelation::FederateZeroDelayDirectlyUpstreamOf => conninfo
-                .0
-                .get(&(e.fedid, preceding.fedid))
-                .map(|delay| *delay == NO_DELAY)
-                .unwrap_or(false),
+            BinaryRelation::TagGreaterThanOrEqual => compare_tags_given_delay(|a, b, d| *a >= *b),
+            BinaryRelation::TagEquals => neither_first(|a, b, _, _, _| a == b),
+            BinaryRelation::TagLessThan => neither_first(|a, b, _, _, _| a < b),
+            BinaryRelation::TagLessThanOrEqual => neither_first(|a, b, _, _, _| a <= b),
+            BinaryRelation::TagStrictPlusDelay2FedLessThan => {
+                compare_tags_given_delay(|a, b, d| a.strict_add(*d) < *b)
+            }
+            // conninfo
+            //     .0
+            //     .iter()
+            //     .filter(|((src, _), _)| *src == preceding.fedid)
+            //     .all(|(_, delay)| preceding.tag.strict_add(*delay) < e.tag),
+            BinaryRelation::TagStrictPlusDelayFromSomeImmUpstreamFedGreaterThanOrEquals => {
+                compare_tags_given_all_downstream_delays(|a, b, delays| {
+                    delays.iter().any(|(_, delay)| a.strict_add(*delay) >= *b)
+                })
+            }
+            // conninfo
+            //     .0
+            //     .iter()
+            //     .filter(|((src, _), _)| *src == preceding.fedid)
+            //     .any(|(_, delay)| preceding.tag.strict_add(*delay) >= e.tag),
+            BinaryRelation::TagPlusDelayToAllImmDowntreamFedsLessThan => {
+                compare_tags_given_all_downstream_delays(|a, b, delays| {
+                    delays.iter().all(|(_, delay)| *a + *delay < *b)
+                })
+            }
+            // conninfo
+            //     .0
+            //     .iter()
+            //     .filter(|((src, _), _)| *src == preceding.fedid)
+            //     .all(|(_, delay)| preceding.tag + *delay < e.tag),
+            BinaryRelation::FederateEquals => neither_first(|_, _, a, b, _| a == b),
+            // e.fedid == preceding.fedid,
+            BinaryRelation::FederateZeroDelayDirectlyUpstreamOf => {
+                neither_first(|_, _, _pfed, _fed, delay| delay == Some(&NO_DELAY))
+            }
+            BinaryRelation::FederateDirectlyUpstreamOf => {
+                neither_first(|_, _, _pfed, _fed, delay| delay.is_some())
+            }
             BinaryRelation::IsFirst(r) => {
-                if let EventPerTraceUniqueId::First(other) = &e.unique_id {
+                if let Event::First(other) = &preceding {
+                    // if matches!(other, Predicate::BoundBinary(_)) {
+                    //     println!(
+                    //         "DEBUG: {}\n    {}\n    {}",
+                    //         other,
+                    //         Predicate::BoundBinary(Box::new((e.clone(), *r.clone()))),
+                    //         other == &Predicate::BoundBinary(Box::new((e.clone(), *r.clone())))
+                    //     );
+                    // }
                     other == &Predicate::BoundBinary(Box::new((e.clone(), *r.clone())))
                 // maybe not the most efficient
                 // TODO: consider logical equivalence?
@@ -563,26 +716,33 @@ impl Unpermutables {
         axioms: &[Rule],
         always_occurring: HashSet<OgRank>,
         conninfo: &ConnInfo,
-    ) -> Result<Self, String> {
+    ) -> Result<(HashSet<Rule>, Self), String> {
+        let mut unused_axioms: HashSet<Rule> = axioms.iter().cloned().collect();
         let mut ogrank2immediatepredecessors = Vec::new();
         for (ogrank, tr) in trace.iter().enumerate() {
             let mut immediate_predecessors = HashSet::new();
             for rule in axioms {
-                immediate_predecessors.extend(Self::apply_rule(
-                    rule,
-                    tr,
-                    &trace[..ogrank],
-                    &trace[ogrank + 1..],
-                    conninfo,
-                )?);
+                let before_size = immediate_predecessors.len();
+                let iter =
+                    Self::apply_rule(rule, tr, &trace[..ogrank], &trace[ogrank + 1..], conninfo)?;
+                if !iter.is_empty() {
+                    unused_axioms.remove(rule);
+                }
+                immediate_predecessors.extend(iter);
+                // if immediate_predecessors.len() > before_size {
+                //     unused_axioms.remove(rule);
+                // }
             }
             ogrank2immediatepredecessors.push(immediate_predecessors);
         }
         Self::add_precedences_for_firsts(&mut ogrank2immediatepredecessors, trace, conninfo);
-        Ok(Self {
-            ogrank2immediatepredecessors,
-            always_occurring,
-        })
+        Ok((
+            unused_axioms,
+            Self {
+                ogrank2immediatepredecessors,
+                always_occurring,
+            },
+        ))
     }
     /// The first appears before all that which it matches, and all that appears before all that
     /// which it matches, excluding itself, appears before it.
@@ -592,23 +752,55 @@ impl Unpermutables {
         conninfo: &ConnInfo,
     ) {
         for (ogrank, tr) in trace.iter().enumerate() {
-            if let EventPerTraceUniqueId::First(ref rel) = &tr.unique_id {
-                let mut running_intersection: Option<HashSet<OgRank>> = None;
-                for (preds, _) in ogrank2immediatepredecessors[ogrank + 1..]
+            if let Event::First(ref rel) = &tr {
+                // println!("DEBUG: {}", rel);
+                let mut running_before_intersection: Option<HashSet<OgRank>> = None;
+                let mut n_matches = 0;
+                let mut first_match = None;
+                // let mut second_match = None;
+                for ((ogr, preds), tr) in ogrank2immediatepredecessors[ogrank + 1..]
                     .iter_mut()
+                    .enumerate()
                     .zip(&trace[ogrank + 1..])
-                    .filter(|(_, tr)| rel.holds(tr, conninfo))
+                    .filter(|(_, tr)| {
+                        // println!("DEBUG: {}\n    {},    {}", tr, rel, rel.holds(tr, conninfo));
+                        rel.holds(tr, conninfo) && !matches!(tr, Event::First(_))
+                    })
                 {
-                    if let Some(running_intersection) = &mut running_intersection {
+                    let ogr = ogrank + 1 + ogr;
+                    n_matches += 1;
+                    if n_matches == 1 {
+                        first_match = Some(ogr);
+                    }
+                    if let Some(running_intersection) = &mut running_before_intersection {
                         running_intersection.retain(|ogr| preds.contains(ogr));
                     } else {
-                        running_intersection = Some(preds.clone());
+                        running_before_intersection = Some(preds.clone());
                     }
                     preds.insert(OgRank(ogrank as u32));
                 }
-                if let Some(running_intersection) = running_intersection {
+                if let Some(running_intersection) = running_before_intersection {
                     ogrank2immediatepredecessors[ogrank].extend(running_intersection.into_iter());
                 }
+                if n_matches == 1 {
+                    for after in ogrank2immediatepredecessors[first_match.unwrap() + 1..]
+                        .iter_mut()
+                        .filter(|ogrs| ogrs.contains(&OgRank(ogrank as u32)))
+                    {
+                        after.insert(OgRank(first_match.unwrap() as u32));
+                    }
+                }
+                // if n_matches > 1 {
+                //     println!("n_matches: {}", n_matches);
+                // }
+                // let len = ogrank2immediatepredecessors.len();
+                // for after in ogrank2immediatepredecessors
+                //     [first_match.unwrap() + 1..second_match.unwrap_or(len)]
+                //     .iter_mut()
+                //     .filter(|ogrs| ogrs.contains(&OgRank(ogrank as u32)))
+                // {
+                //     after.insert(OgRank(first_match.unwrap() as u32));
+                // }
             }
         }
     }
@@ -690,8 +882,8 @@ impl Unpermutables {
         let p = Predicate::BoundBinary(Box::new((e.clone(), rule.preceding_event.clone())));
         if let Some(other) = after.iter().find(|tr_after| p.holds(tr_after, conninfo)) {
             return Result::Err(format!(
-                "Observed\n{}\n★ {}\n{}\nTracepoint:\n    {}\nfollowed by:\n    {}\nwith delay:\n    {}\nis a counterexample to the axiom:\n{}",
-                tracerecords_to_string(before, false, |_| false), e, tracerecords_to_string(after, false, |it| it == other), e, other, conninfo.0.get(&(e.fedid, other.fedid)).map(|it| it.to_string()).unwrap_or("∞".to_string()), rule
+                "Observed\n{}\n★ {}\n{}\nTracepoint:\n    {}\nfollowed by:\n    {}\nis a counterexample to the axiom:\n{}",
+                tracerecords_to_string(before, false, |_| false), e, tracerecords_to_string(after, false, |it| it == other), e, other, rule
             ));
         }
         Ok(before
@@ -713,7 +905,7 @@ mod tests {
     use crate::BinaryRelation::{
         And, FederateEquals, FederateZeroDelayDirectlyUpstreamOf, TagPlusDelay2FedEquals,
         TagPlusDelay2FedLessThan, TagPlusDelay2FedLessThanOrEqual,
-        TagPlusDelayFromAllImmUpstreamFedsLessThan, Unary,
+        TagPlusDelayToAllImmDowntreamFedsLessThan, Unary,
     };
     use crate::EventKind::*;
     use crate::Predicate::*;
@@ -729,7 +921,7 @@ mod tests {
             preceding_event: And(Box::new([
                 Unary(Box::new(EventIs(RecvLtc))),
                 FederateEquals,
-                TagPlusDelayFromAllImmUpstreamFedsLessThan,
+                TagPlusDelayToAllImmDowntreamFedsLessThan,
             ])),
             event: EventIs(RecvTaggedMsg),
         };

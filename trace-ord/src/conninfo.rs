@@ -13,8 +13,16 @@ impl Add<Delay> for Tag {
 
     fn add(self, rhs: Delay) -> Self::Output {
         let mut tag = self;
-        tag.0 += rhs.0 as i64;
-        tag.1 += rhs.1;
+        if tag.0 == i64::MAX || rhs.0 == u64::MAX {
+            tag.0 = i64::MAX;
+        } else {
+            tag.0 += rhs.0 as i64;
+        }
+        if tag.1 == u64::MAX || rhs.1 == u64::MAX {
+            tag.1 = u64::MAX;
+        } else {
+            tag.1 += rhs.1;
+        }
         tag
     }
 }
@@ -172,7 +180,6 @@ impl FromStr for ConnInfo {
                     .map_err(|e| format!("Invalid upstream delay: {}", e))?;
                 conn_info.insert((FedId(upstream_fed_id), FedId(enclave_id)), upstream_delay);
             }
-            conn_info.insert((FedId(enclave_id), FedId(enclave_id)), Delay(0, 0));
         }
         Ok(Self(conn_info))
     }
