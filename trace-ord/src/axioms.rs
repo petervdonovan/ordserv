@@ -140,20 +140,6 @@ pub fn axioms() -> Vec<Rule> {
             event: EventIs(SendTag),
         },
         Rule {
-            // you can't send a TAG nor PTAG until you have received a high enough NET from any upstream federate
-            preceding_event: BinaryRelation::IsFirstForFederate(Box::new(And(Box::new([
-                Unary(Box::new(EventIs(RecvNet))),
-                TagPlusDelay2FedGreaterThanOrEquals,
-            ])))),
-            event: Predicate::And(Box::new([
-                Or(Box::new([EventIs(SendPtag), EventIs(SendTag)])),
-                TagNonzero,
-                Not(Box::new(
-                    FedHasNoneUpstreamWithDelayLessThanOrEqualCurrentTag,
-                )), // should be tag greater than min input delay to federate
-            ])),
-        }, // this rule does not seem very helpful; it may be redundant with those that follow it
-        Rule {
             // you can't grant a TAG until you have received a high enough LTC from any upstream federate or you have granted a strictly higher TAG to an upstream federate
             preceding_event: BinaryRelation::IsFirstForFederate(Box::new(BinaryRelation::Or(
                 Box::new([
