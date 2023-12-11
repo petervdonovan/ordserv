@@ -70,7 +70,7 @@ pub fn axioms() -> Vec<Rule> {
             ])),
         },
         Rule {
-            // Once you receive an LTC for a tag, you will never PortAbsent, nor TaggedMessage for any earlier or equal tag
+            // Once you receive an LTC for a tag, you will never receive a PortAbsent nor TaggedMessage for any earlier or equal tag
             preceding_event: And(Box::new([
                 Unary(Box::new(Predicate::Or(Box::new([
                     EventIs(RecvPortAbs),
@@ -90,6 +90,7 @@ pub fn axioms() -> Vec<Rule> {
             ])),
             event: Predicate::And(Box::new([EventIs(RecvLtc), TagNonzero])),
         },
+        // The following are for lower-bounding receive times or portabs and tagged messages.
         Rule {
             // Once you receive port absent or tagged message for a tag, you cannot receive an LTC for a tag that is so early that it plus the max delay of all outgoing connections is less than the tag of the port absent or tagged message
             preceding_event: And(Box::new([

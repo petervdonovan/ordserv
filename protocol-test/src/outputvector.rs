@@ -72,14 +72,6 @@ impl Serialize for OvrReg {
   where
     S: serde::Serializer,
   {
-    // let mut ret = serializer.serialize_struct("OvrDelta", 1)?;
-    // ret
-    //   .serialize_field(
-    //     "idx2node",
-    //     &self.idx2node[self.idx2node_saved_up_to.0 as usize..],
-    //   )
-    //   .unwrap();
-    // ret.end()
     (OvrDelta {
       idx2node: self.idx2node[self.idx2node_saved_up_to.0 as usize..]
         .iter()

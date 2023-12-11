@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use trace_ord::{tracerecords_to_string, Event};
 
 const IGNORE_TESTS: [&str; 1] = [
@@ -6,12 +8,18 @@ const IGNORE_TESTS: [&str; 1] = [
 
 const MAX_TRACE_LENGTH: usize = 200;
 
+const COMPUTED_PRECEDENCES_FILENAME: &str = "computed_precedences.mpk";
+const DATASETS_PATH: &str = "trace-ord/datasets";
+
 pub fn main() {
-    let mut entries: Vec<_> = std::fs::read_dir("trace-ord/datasets").unwrap().collect();
+    let datasets_path = Path::new(DATASETS_PATH);
+    let mut entries: Vec<_> = std::fs::read_dir(datasets_path)
+        .unwrap()
+        .filter(|entry| entry.as_ref().unwrap().metadata().unwrap().is_dir())
+        .collect();
     entries.sort_by_key(|it| it.as_ref().unwrap().file_name());
-    let mut geomean = 1.0;
-    let mut count = 0;
-    let mut unused_axioms = vec![];
+    let mut ax2nuseses = vec![];
+    let mut cp = trace_ord::serde::ComputedPrecedences::default();
     for entry in entries {
         let entry = entry.unwrap();
         let path = entry.path().canonicalize().unwrap();
@@ -19,7 +27,8 @@ pub fn main() {
         if IGNORE_TESTS.contains(&name.as_str()) {
             continue;
         }
-        if lf_trace_reader::trace_by_physical_time(&path.join("rti.csv")).len() > MAX_TRACE_LENGTH {
+        let ogtrace = lf_trace_reader::trace_by_physical_time(&path.join("rti.csv"));
+        if ogtrace.len() > MAX_TRACE_LENGTH {
             println!("Skipping {} because it is too long", name);
             continue;
         }
@@ -28,36 +37,20 @@ pub fn main() {
         // }
         let (trace, preceding_permutables) =
             trace_ord::preceding_permutables_by_ogrank_from_dir(&path);
-        let (unused, preceding_permutables) = preceding_permutables.unwrap_or_else(|err| {
+        let (ax2nuses, preceding_permutables) = preceding_permutables.unwrap_or_else(|err| {
             println!("Error: {}", err);
             panic!("Fatal error during processing of dataset from {:?}", path);
         });
-        unused_axioms.push(unused);
+        cp.add_test(name.clone(), ogtrace, trace, preceding_permutables.clone());
+        ax2nuseses.push(ax2nuses);
         // println!("{}", tracerecords_to_string(&trace[..], true, |_| false));
         // for (ogrank, permutables) in preceding_permutables.iter().enumerate() {
         //     let mut sample = permutables.iter().map(|it| it.0).collect::<Vec<_>>();
         //     sample.sort();
         //     println!("Permutable with {}:\n    {:?}", ogrank, sample);
         // }
-        let (len, n_permutables) = preceding_permutables
-            .iter()
-            .enumerate()
-            .filter_map(|(ogrank, permutables)| {
-                if let Event::First(_) = trace[ogrank] {
-                    None
-                } else {
-                    Some(permutables)
-                }
-            })
-            .map(|it| {
-                it.iter()
-                    .filter(|ogr| !matches!(trace[ogr.idx()], Event::First(_)))
-                    .count()
-            })
-            .fold((0, 0), |(len, n_permutables_sum), n_permutables| {
-                (len + 1, n_permutables_sum + n_permutables)
-            });
-        let max_permutables = len * (len - 1) / 2;
+        let n_permutables = cp.n_permutables(&name);
+        let max_permutables = cp.max_n_permutables(&name);
         println!(
             "Total number of permutables in {}: {} / {}",
             name, n_permutables, max_permutables
@@ -65,18 +58,23 @@ pub fn main() {
         if n_permutables == 0 {
             continue;
         }
-        geomean *= n_permutables as f64 / max_permutables as f64;
-        count += 1;
     }
-    println!("Unused axioms:");
-    for unused in unused_axioms[1..]
+    println!("Total # constraints added by axiom (ignoring redundancy and consequences of transitivity):");
+    for (ax, nuses) in ax2nuseses[1..]
         .iter()
-        .fold(unused_axioms[0].clone(), |acc, next| {
-            acc.intersection(next).cloned().collect()
+        .fold(ax2nuseses[0].clone(), |mut acc, next| {
+            for (ax, nuses) in next.iter() {
+                *acc.get_mut(ax).unwrap() += *nuses;
+            }
+            acc
         })
     {
-        println!("    {}", unused);
+        println!("    {} uses of {}", nuses, ax);
     }
-    geomean = geomean.powf(1.0 / count as f64);
-    println!("Geometric mean: {}", geomean);
+    println!("Geometric mean: {}", cp.geomean_n_permutables_normalized());
+    std::fs::write(
+        datasets_path.join(COMPUTED_PRECEDENCES_FILENAME),
+        rmp_serde::to_vec(&cp).unwrap(),
+    )
+    .unwrap();
 }

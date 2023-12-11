@@ -5,10 +5,12 @@ use std::{
     str::FromStr,
 };
 
+use ::serde::{Deserialize, Serialize};
 use conninfo::{get_nonnegative_microstep, ConnInfo, Delay, FedId, Tag, NO_DELAY, STARTUP};
 
 pub mod axioms;
 pub mod conninfo;
+pub mod serde;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum EventKind {
@@ -228,7 +230,7 @@ pub fn preceding_permutables_by_ogrank_from_dir(
     dir: &Path,
 ) -> (
     Vec<Event>,
-    Result<(HashSet<Rule>, Vec<HashSet<OgRank>>), String>,
+    Result<(HashMap<Rule, u32>, Vec<HashSet<OgRank>>), String>,
 ) {
     let rti_csv = dir.join("rti.csv");
     let conninfo = dir.join("conninfo.txt");
@@ -273,7 +275,7 @@ pub fn preceding_permutables_by_ogrank(
     axioms: &[Rule],
     always_occurring: HashSet<OgRank>,
     conninfo: &ConnInfo,
-) -> Result<(HashSet<Rule>, Vec<HashSet<OgRank>>), String> {
+) -> Result<(HashMap<Rule, u32>, Vec<HashSet<OgRank>>), String> {
     let (unused, unpermutables) =
         Unpermutables::from_realizable_trace(trace, axioms, always_occurring, conninfo)?;
     Ok((unused, unpermutables.preceding_permutables_by_ogrank()))
@@ -283,7 +285,7 @@ pub struct Unpermutables {
     pub ogrank2immediatepredecessors: Vec<HashSet<OgRank>>,
     pub always_occurring: HashSet<OgRank>,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct OgRank(pub u32);
 // #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 // pub enum EventPerTraceUniqueId {
@@ -808,28 +810,25 @@ impl Unpermutables {
         axioms: &[Rule],
         always_occurring: HashSet<OgRank>,
         conninfo: &ConnInfo,
-    ) -> Result<(HashSet<Rule>, Self), String> {
-        let mut unused_axioms: HashSet<Rule> = axioms.iter().cloned().collect();
+    ) -> Result<(HashMap<Rule, u32>, Self), String> {
+        let mut n_uses_by_axiom: HashMap<Rule, u32> =
+            axioms.iter().cloned().map(|it| (it, 0)).collect();
         let mut ogrank2immediatepredecessors = Vec::new();
         for (ogrank, tr) in trace.iter().enumerate() {
             let mut immediate_predecessors = HashSet::new();
             for rule in axioms {
-                let before_size = immediate_predecessors.len();
-                let iter =
+                let preds =
                     Self::apply_rule(rule, tr, &trace[..ogrank], &trace[ogrank + 1..], conninfo)?;
-                if !iter.is_empty() {
-                    unused_axioms.remove(rule);
+                if !preds.is_empty() {
+                    *n_uses_by_axiom.get_mut(rule).unwrap() += preds.len() as u32;
                 }
-                immediate_predecessors.extend(iter);
-                // if immediate_predecessors.len() > before_size {
-                //     unused_axioms.remove(rule);
-                // }
+                immediate_predecessors.extend(preds);
             }
             ogrank2immediatepredecessors.push(immediate_predecessors);
         }
         Self::add_precedences_for_firsts(&mut ogrank2immediatepredecessors, trace, conninfo);
         Ok((
-            unused_axioms,
+            n_uses_by_axiom,
             Self {
                 ogrank2immediatepredecessors,
                 always_occurring,
@@ -894,17 +893,6 @@ impl Unpermutables {
                         after.insert(OgRank(first_match.unwrap() as u32));
                     }
                 }
-                // if n_matches > 1 {
-                //     println!("n_matches: {}", n_matches);
-                // }
-                // let len = ogrank2immediatepredecessors.len();
-                // for after in ogrank2immediatepredecessors
-                //     [first_match.unwrap() + 1..second_match.unwrap_or(len)]
-                //     .iter_mut()
-                //     .filter(|ogrs| ogrs.contains(&OgRank(ogrank as u32)))
-                // {
-                //     after.insert(OgRank(first_match.unwrap() as u32));
-                // }
             }
         }
     }

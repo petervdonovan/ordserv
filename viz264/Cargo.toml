@@ -14,3 +14,4 @@ rmp-serde = "1.1.2"
 simple_logger = "4.3.0"
 statrs = "0.16.0"
 streaming-transpositions = { version = "0.1.0", path = "../streaming-transpositions" }
+trace-ord = { version = "0.1.0", path = "../trace-ord" }

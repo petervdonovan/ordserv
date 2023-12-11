@@ -2301,6 +2301,8 @@ name = "trace-ord"
 version = "0.1.0"
 dependencies = [
  "lf-trace-reader",
+ "rmp-serde",
+ "serde",
 ]
 
 [[package]]
@@ -2403,6 +2405,7 @@ dependencies = [
  "simple_logger",
  "statrs",
  "streaming-transpositions",
+ "trace-ord",
 ]
 
 [[package]]

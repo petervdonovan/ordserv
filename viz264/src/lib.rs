@@ -1,4 +1,9 @@
-use std::{cmp::Ordering, collections::HashMap, fs::File, path::PathBuf};
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    fs::File,
+    path::{Path, PathBuf},
+};
 
 const MAX_RUNS_TO_CONSIDER: usize = 5000;
 
@@ -23,6 +28,15 @@ use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterato
 use statrs::statistics::Statistics;
 use stats::BasicStats;
 use streaming_transpositions::{OgRank2CurRank, StreamingTranspositions};
+use trace_ord::serde::ComputedPrecedences;
+
+pub fn get_trace_ords(p: &Path) -> ComputedPrecedences {
+    std::fs::read(p)
+        .map(|bytes| {
+            rmp_serde::from_slice(&bytes).expect("failed to deserialize computed precedences")
+        })
+        .expect("failed to read computed precedences")
+}
 
 pub fn get_atses(scratch: &PathBuf) -> Vec<AtsDelta> {
     let mut atses = Vec::new();
