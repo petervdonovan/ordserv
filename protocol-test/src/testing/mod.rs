@@ -603,7 +603,7 @@ impl AccumulatingTracesState {
     testruns: &HashMap<TestId, Arc<RwLock<TestRuns>>>,
     executables: &Vec<(TestId, Executable)>,
   ) -> Option<(TestId, Executable)> {
-    let mut rng = rand::rngs::StdRng::seed_from_u64(tidx as u64);
+    let mut rng = rand::thread_rng();
     let start_at = (0..executables.len()).choose(&mut rng).unwrap();
     let mut current = start_at;
     loop {
