@@ -1,6 +1,6 @@
-Start time:, 1702002733045486469
-End time:, 1702002732046124413
-Total time:, -999362056
+Start time:, 1702260914077505374
+End time:, 1702260913078176417
+Total time:, -999328957
 
 Total Event Occurrences
 Sending ACK, 2
@@ -10,7 +10,7 @@ Sending TAG, 4
 Sending PORT_ABS, 2
 Sending TAGGED_MSG, 1
 Receiving TIMESTAMP, 2
-Receiving NET, 6
+Receiving NET, 8
 Receiving LTC, 6
 Receiving FED_ID, 2
 Receiving PORT_ABS, 2

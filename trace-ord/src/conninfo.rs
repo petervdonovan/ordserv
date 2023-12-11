@@ -4,6 +4,7 @@ use std::{collections::HashMap, fmt::Display, ops::Add, str::FromStr};
 pub struct Delay(u64, u64);
 
 pub const NO_DELAY: Delay = Delay(0, 0);
+pub const STARTUP: Tag = Tag(0, 0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Tag(pub i64, pub u64);
@@ -139,9 +140,16 @@ impl FromStr for Delay {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FedId(pub i32);
 
-pub struct ConnInfo(pub HashMap<(FedId, FedId), Delay>, usize);
+pub struct ConnInfo {
+    stdp2d: SrcDestPair2Delay,
+    fed2uds: Vec<Fed2UpstreamDelays>,
+}
 
-impl FromStr for ConnInfo {
+struct SrcDestPair2Delay(HashMap<(FedId, FedId), Delay>, usize);
+
+struct Fed2UpstreamDelays(FedId, Vec<Delay>);
+
+impl FromStr for SrcDestPair2Delay {
     type Err = String;
 
     /// Format:
@@ -185,8 +193,65 @@ impl FromStr for ConnInfo {
     }
 }
 
+impl FromStr for Fed2UpstreamDelays {
+    type Err = String;
+
+    /// Format:
+    ///  federate_id n_delays delay0 delay1 delay2 ...
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut line = s.split_whitespace();
+        let fed_id = line
+            .next()
+            .ok_or("No federate id")?
+            .parse::<i32>()
+            .map_err(|e| format!("Invalid federate id: {}", e))?;
+        let n_delays = line
+            .next()
+            .ok_or("No number of delays")?
+            .parse::<usize>()
+            .map_err(|e| format!("Invalid number of delays: {}", e))?;
+        let mut delays = Vec::with_capacity(n_delays);
+        for _ in 0..n_delays {
+            delays.push(
+                line.next()
+                    .ok_or("No delay")?
+                    .parse::<Delay>()
+                    .map_err(|e| format!("Invalid delay: {}", e))?,
+            );
+        }
+        Ok(Self(FedId(fed_id), delays))
+    }
+}
+
 impl ConnInfo {
+    pub fn from_strs(rti: &str, federates: &[String]) -> Self {
+        let stdp2d = SrcDestPair2Delay::from_str(rti).expect("Invalid RTI");
+        let mut fed2uds = Vec::with_capacity(federates.len());
+        for fed in federates {
+            fed2uds.push(Fed2UpstreamDelays::from_str(fed).expect("Invalid federate"));
+        }
+        Self { stdp2d, fed2uds }
+    }
     pub fn n_federates(&self) -> usize {
-        self.1
+        self.stdp2d.1
+    }
+    pub fn get(&self, src: FedId, dest: FedId) -> Option<&Delay> {
+        self.stdp2d.0.get(&(src, dest))
+    }
+    pub fn min_delays2dest(&self, dest: FedId) -> impl Iterator<Item = (&FedId, &Delay)> {
+        self.stdp2d
+            .0
+            .iter()
+            .filter(move |((_, d), _)| d.0 == dest.0)
+            .map(|((s, _), d)| (s, d))
+    }
+    pub fn largest_delay_out(&self, src: FedId) -> Option<Delay> {
+        // for each downstream federate, find the largest input delay
+        self.fed2uds
+            .iter()
+            .filter(|dest| self.stdp2d.0.get(&(src, dest.0)).is_some())
+            .flat_map(|fed2uds| fed2uds.1.iter())
+            .max()
+            .copied()
     }
 }

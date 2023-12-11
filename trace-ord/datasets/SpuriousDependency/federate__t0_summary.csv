@@ -1,6 +1,6 @@
-Start time:, 1702002731964802533
-End time:, 1702002730966896646
-Total time:, -997905887
+Start time:, 1702260913102401974
+End time:, 1702260912103161857
+Total time:, -999240117
 
 Total Event Occurrences
 Sending TIMESTAMP, 1
@@ -12,7 +12,6 @@ Sending TAGGED_MSG, 1
 Receiving ACK, 1
 Receiving TIMESTAMP, 1
 Receiving PTAG, 2
-Receiving TAG, 1
 Receiving PORT_ABS, 2
 
 Reaction Executions

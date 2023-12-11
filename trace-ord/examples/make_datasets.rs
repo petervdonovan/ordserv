@@ -24,7 +24,7 @@ fn main() {
                 .to_str()
                 .unwrap(),
         )
-        .env("LF_CONNECTION_INFO_FILE", &format!("conninfo.txt"))
+        .env("LF_CONNECTION_INFO_FILE", "conninfo.txt")
         .current_dir(&cwd)
         .spawn()
         .unwrap()

@@ -7,8 +7,9 @@ use crate::BinaryRelation::{
     And, FederateDirectlyUpstreamOf, FederateEquals, FederateZeroDelayDirectlyUpstreamOf,
     TagEquals, TagGreaterThanOrEqual, TagLessThan, TagLessThanOrEqual, TagPlusDelay2FedEquals,
     TagPlusDelay2FedGreaterThanOrEquals, TagPlusDelay2FedLessThan, TagPlusDelay2FedLessThanOrEqual,
-    TagStrictPlusDelay2FedLessThan, TagStrictPlusDelayFromSomeImmUpstreamFedGreaterThanOrEquals,
-    Unary,
+    TagPlusLargestDelayGreaterThanOrEqual, TagPlusLargestDelayLessThan,
+    TagPlusLargestDelayLessThanOrEqual, TagStrictPlusDelay2FedLessThan,
+    TagStrictPlusDelayFromSomeImmUpstreamFedGreaterThanOrEquals, Unary,
 };
 use crate::EventKind::*;
 use crate::Predicate::*;
@@ -89,6 +90,32 @@ pub fn axioms() -> Vec<Rule> {
             ])),
             event: Predicate::And(Box::new([EventIs(RecvLtc), TagNonzero])),
         },
+        Rule {
+            // Once you receive port absent or tagged message for a tag, you cannot receive an LTC for a tag that is so early that it plus the max delay of all outgoing connections is less than the tag of the port absent or tagged message
+            preceding_event: And(Box::new([
+                Unary(Box::new(EventIs(RecvLtc))),
+                FederateEquals,
+                TagPlusLargestDelayLessThan,
+            ])),
+            event: Predicate::Or(Box::new([EventIs(RecvPortAbs), EventIs(RecvTaggedMsg)])),
+        },
+        Rule {
+            // Once you receive port absent or tagged message for a tag, you cannot send the very first tag/ptag for a tag that is so early that it plus the max delay of all outgoing connections is less than or equal to the tag of the port absent or tagged message
+            preceding_event: BinaryRelation::IsFirst(Box::new(And(Box::new([
+                Unary(Box::new(Or(Box::new([
+                    EventIs(SendTag),
+                    EventIs(SendPtag),
+                ])))),
+                FederateEquals,
+                TagPlusLargestDelayGreaterThanOrEqual,
+            ])))),
+            event: Predicate::And(Box::new([
+                Predicate::Or(Box::new([EventIs(RecvPortAbs), EventIs(RecvTaggedMsg)])),
+                Not(Box::new(
+                    FedHasNoneUpstreamWithDelayLessThanOrEqualCurrentTag,
+                )),
+            ])),
+        },
         // The following is for handling of PTAGs and TAGs.
         Rule {
             // tags and ptags to the same federate are monotonic
@@ -134,6 +161,7 @@ pub fn axioms() -> Vec<Rule> {
                     And(Box::new([
                         Unary(Box::new(Or(Box::new([
                             EventIs(SendTag),
+                            EventIs(RecvNet),
                             EventIs(SendStopGrn),
                         ])))),
                         FederateZeroDelayDirectlyUpstreamOf,
@@ -235,10 +263,7 @@ pub fn axioms() -> Vec<Rule> {
             event: EventIs(SendTimestamp),
         },
         Rule {
-            preceding_event: And(Box::new([
-                Unary(Box::new(EventIs(SendTimestamp))),
-                FederateEquals,
-            ])),
+            preceding_event: And(Box::new([Unary(Box::new(EventIs(SendTimestamp)))])),
             event: Or(Box::new([
                 EventIs(RecvNet),
                 EventIs(RecvLtc),

@@ -1,12 +1,12 @@
-Start time:, 1702002733017308661
-End time:, 1702002732019845132
-Total time:, -997463529
+Start time:, 1702260913612546236
+End time:, 1702260912616557897
+Total time:, -995988339
 
 Total Event Occurrences
 Sending ACK, 4
 Sending TIMESTAMP, 4
-Sending TAG, 42
-Sending PORT_ABS, 50
+Sending TAG, 41
+Sending PORT_ABS, 49
 Sending TAGGED_MSG, 20
 Receiving TIMESTAMP, 4
 Receiving NET, 60

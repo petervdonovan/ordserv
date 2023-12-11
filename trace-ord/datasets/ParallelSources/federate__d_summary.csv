@@ -1,10 +1,10 @@
-Start time:, 1702002732630521520
-End time:, 1702002731631558453
-Total time:, -998963067
+Start time:, 1702260913822903630
+End time:, 1702260912823618813
+Total time:, -999284817
 
 Total Event Occurrences
 Sending TIMESTAMP, 1
-Sending NET, 2
+Sending NET, 5
 Sending LTC, 3
 Sending FED_ID, 1
 Receiving ACK, 1
