@@ -230,6 +230,7 @@ pub fn preceding_permutables_by_ogrank_from_dir(
     dir: &Path,
 ) -> (
     Vec<Event>,
+    ConnInfo,
     Result<(HashMap<Rule, u32>, Vec<HashSet<OgRank>>), String>,
 ) {
     let rti_csv = dir.join("rti.csv");
@@ -267,7 +268,7 @@ pub fn preceding_permutables_by_ogrank_from_dir(
         .map(|ogrank| OgRank(ogrank as u32))
         .collect();
     let permutables = preceding_permutables_by_ogrank(&trace, &axioms, always_occurring, &conninfo);
-    (trace, permutables)
+    (trace, conninfo, permutables)
 }
 
 pub fn preceding_permutables_by_ogrank(
@@ -984,6 +985,41 @@ impl Unpermutables {
             .filter(|(_, tr_before)| p.holds(tr_before, conninfo))
             .map(|(ogr, _)| OgRank(ogr as u32))
             .collect())
+    }
+}
+
+fn check_rule(
+    before: &[Event],
+    e: Event,
+    after: &[Event],
+    rule: &Rule,
+    conninfo: &ConnInfo,
+) -> Result<(), String> {
+    if !rule.event.holds(&e, conninfo) {
+        return Ok(());
+    }
+    let p = Predicate::BoundBinary(Box::new((e.clone(), rule.preceding_event.clone())));
+    if let Some(other) = after.iter().find(|tr_after| p.holds(tr_after, conninfo)) {
+        return Result::Err(format!(
+                "Observed\n{}\n★ {}\n{}\nTracepoint:\n    {}\nfollowed by:\n    {}\nis a counterexample to the axiom:\n{}",
+                tracerecords_to_string(before, false, |_| false), e, tracerecords_to_string(after, false, |it| it == other), e, other, rule
+            ));
+    }
+    Ok(())
+}
+
+impl Rule {
+    pub fn check(&self, trace: &[Event], conninfo: &ConnInfo) -> Result<(), String> {
+        for (ogrank, e) in trace.iter().enumerate() {
+            check_rule(
+                &trace[..ogrank],
+                e.clone(),
+                &trace[ogrank + 1..],
+                self,
+                conninfo,
+            )?;
+        }
+        Ok(())
     }
 }
 

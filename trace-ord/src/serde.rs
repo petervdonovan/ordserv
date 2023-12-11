@@ -1,14 +1,15 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use lf_trace_reader::TraceRecord;
 use serde::{Deserialize, Serialize};
 
-use crate::{Event, OgRank};
+use crate::{conninfo::ConnInfo, Event, OgRank};
 
 /// A map from test name to a map from ogranks to the lists of preceding ogranks which can appear
 /// later.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ComputedPrecedences(pub Vec<(String, (Vec<TraceRecord>, Vec<Vec<OgRank>>))>);
+pub struct ComputedPrecedences(pub Vec<(String, OgtraceOgtracePrecs)>);
+pub type OgtraceOgtracePrecs = (Vec<TraceRecord>, Vec<Vec<OgRank>>, ConnInfo);
 
 impl ComputedPrecedences {
     pub fn add_test(
@@ -16,24 +17,33 @@ impl ComputedPrecedences {
         test_name: String,
         ogtrace: Vec<TraceRecord>,
         etrace: Vec<Event>,
-        precedences: Vec<HashSet<OgRank>>,
+        permutables: Vec<HashSet<OgRank>>,
+        conninfo: ConnInfo,
     ) {
-        let filtered = precedences
+        let filtered = permutables
             .into_iter()
             .zip(etrace.iter())
             .filter(|(_, e)| matches!(e, Event::Concrete { .. }))
             .map(|(ogrs, _)| {
                 let mut collected = ogrs
                     .into_iter()
-                    .filter(|ogr| matches!(etrace[ogr.idx()], Event::Concrete { .. }))
+                    .filter_map(|ogr| match etrace[ogr.idx()] {
+                        Event::Concrete { ogrank, .. } => Some(ogrank),
+                        _ => None,
+                    })
                     .collect::<Vec<_>>();
                 collected.sort();
                 collected
             })
-            .collect();
-        self.0.push((test_name, (ogtrace, filtered)));
+            .collect::<Vec<_>>();
+        assert!(filtered.len() == ogtrace.len());
+        assert!(filtered
+            .iter()
+            .enumerate()
+            .all(|(idx, ogrs)| ogrs.iter().all(|ogr| ogr.idx() < idx)));
+        self.0.push((test_name, (ogtrace, filtered, conninfo)));
     }
-    pub fn get(&self, test_name: &str) -> &(Vec<TraceRecord>, Vec<Vec<OgRank>>) {
+    pub fn get(&self, test_name: &str) -> &(Vec<TraceRecord>, Vec<Vec<OgRank>>, ConnInfo) {
         self.0
             .iter()
             .find(|(name, _)| name == test_name)

@@ -1,12 +1,14 @@
 use std::{collections::HashMap, fmt::Display, ops::Add, str::FromStr};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Delay(u64, u64);
 
 pub const NO_DELAY: Delay = Delay(0, 0);
 pub const STARTUP: Tag = Tag(0, 0);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Tag(pub i64, pub u64);
 
 impl Add<Delay> for Tag {
@@ -137,16 +139,16 @@ impl FromStr for Delay {
         Ok(Self::from(interval))
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct FedId(pub i32);
-
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConnInfo {
     stdp2d: SrcDestPair2Delay,
     fed2uds: Vec<Fed2UpstreamDelays>,
 }
-
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct SrcDestPair2Delay(HashMap<(FedId, FedId), Delay>, usize);
-
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct Fed2UpstreamDelays(FedId, Vec<Delay>);
 
 impl FromStr for SrcDestPair2Delay {

@@ -176,6 +176,9 @@ impl OutputVector {
       len: ov.0.len(),
     }
   }
+  pub fn sentinel(&self) -> CurRank {
+    CurRank(self.len as u32)
+  }
   fn new_rec(ov: &[CurRank], ovr: &mut OvrReg, start: usize, default: i32) -> OutputVectorNodeIdx {
     // Remark: it is impressive that after copilot generated this function, only small edits were
     // required.
@@ -214,9 +217,14 @@ impl OutputVector {
   pub fn unpack(&self, ovr: &OutputVectorRegistry) -> Vec<CurRank> {
     let rounded_up_len = (self.len - 1) / OUTPUT_VECTOR_CHUNK_SIZE * OUTPUT_VECTOR_CHUNK_SIZE
       + OUTPUT_VECTOR_CHUNK_SIZE;
-    let default = CurRank(self.len as u32);
-    let mut ret = vec![default; rounded_up_len];
-    Self::unpack_rec(self.data, &ovr.read().unwrap(), &mut ret, 0, default);
+    let mut ret = vec![self.sentinel(); rounded_up_len];
+    Self::unpack_rec(
+      self.data,
+      &ovr.read().unwrap(),
+      &mut ret,
+      0,
+      self.sentinel(),
+    );
     ret
   }
   fn unpack_rec(

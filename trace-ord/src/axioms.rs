@@ -147,9 +147,12 @@ pub fn axioms() -> Vec<Rule> {
             ])))),
             event: Predicate::And(Box::new([
                 Or(Box::new([EventIs(SendPtag), EventIs(SendTag)])),
-                TagNonzero, // should be tag greater than min input delay to federate
+                TagNonzero,
+                Not(Box::new(
+                    FedHasNoneUpstreamWithDelayLessThanOrEqualCurrentTag,
+                )), // should be tag greater than min input delay to federate
             ])),
-        }, // this rule does not seem very helpful
+        }, // this rule does not seem very helpful; it may be redundant with those that follow it
         Rule {
             // you can't grant a TAG until you have received a high enough LTC from any upstream federate or you have granted a strictly higher TAG to an upstream federate
             preceding_event: BinaryRelation::IsFirstForFederate(Box::new(BinaryRelation::Or(
@@ -264,9 +267,19 @@ pub fn axioms() -> Vec<Rule> {
             event: EventIs(SendTimestamp),
         },
         Rule {
-            preceding_event: And(Box::new([Unary(Box::new(EventIs(SendTimestamp)))])),
+            preceding_event: And(Box::new([
+                Unary(Box::new(EventIs(SendTimestamp))),
+                FederateEquals,
+            ])),
+            event: Predicate::And(Box::new([EventIs(RecvNet), Not(Box::new(TagNonzero))])),
+        },
+        Rule {
+            preceding_event: And(Box::new([Unary(Box::new(EventIs(RecvTimestamp)))])),
+            // preceding_event: And(Box::new([Unary(Box::new(Predicate::And(Box::new([
+            //     EventIs(RecvNet),
+            //     Not(Box::new(TagNonzero)),
+            // ]))))])),
             event: Or(Box::new([
-                EventIs(RecvNet),
                 EventIs(RecvLtc),
                 EventIs(RecvPortAbs),
                 EventIs(RecvTaggedMsg),

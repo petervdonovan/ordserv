@@ -35,13 +35,19 @@ pub fn main() {
         // if name != "SimpleFederated" {
         //     continue;
         // }
-        let (trace, preceding_permutables) =
+        let (trace, conninfo, preceding_permutables) =
             trace_ord::preceding_permutables_by_ogrank_from_dir(&path);
         let (ax2nuses, preceding_permutables) = preceding_permutables.unwrap_or_else(|err| {
             println!("Error: {}", err);
             panic!("Fatal error during processing of dataset from {:?}", path);
         });
-        cp.add_test(name.clone(), ogtrace, trace, preceding_permutables.clone());
+        cp.add_test(
+            name.clone(),
+            ogtrace,
+            trace,
+            preceding_permutables.clone(),
+            conninfo,
+        );
         ax2nuseses.push(ax2nuses);
         // println!("{}", tracerecords_to_string(&trace[..], true, |_| false));
         // for (ogrank, permutables) in preceding_permutables.iter().enumerate() {
