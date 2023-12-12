@@ -303,13 +303,17 @@ impl TraceHasher {
   pub fn update(&mut self, tr: &TraceRecord) {
     tr.event.hash(&mut self.coarse);
     tr.destination.hash(&mut self.coarse);
-    tr.elapsed_logical_time.hash(&mut self.coarse);
+    if tr.elapsed_logical_time >= 0 {
+      tr.elapsed_logical_time.hash(&mut self.coarse);
+    }
     tr.microstep.hash(&mut self.coarse);
     tr.event.hash(&mut self.fine);
     tr.reactor.hash(&mut self.fine);
     tr.source.hash(&mut self.fine);
     tr.destination.hash(&mut self.fine);
-    tr.elapsed_logical_time.hash(&mut self.fine);
+    if tr.elapsed_logical_time >= 0 {
+      tr.elapsed_logical_time.hash(&mut self.fine);
+    }
     tr.microstep.hash(&mut self.fine);
     tr.trigger.hash(&mut self.fine);
     tr.extra_delay.hash(&mut self.fine);

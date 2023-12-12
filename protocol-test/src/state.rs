@@ -78,7 +78,9 @@ impl TracePointId {
     tr.reactor.hash(&mut hash);
     tr.source.hash(&mut hash);
     tr.destination.hash(&mut hash);
-    tr.elapsed_logical_time.hash(&mut hash);
+    if tr.elapsed_logical_time >= 0 {
+      tr.elapsed_logical_time.hash(&mut hash);
+    }
     tr.microstep.hash(&mut hash);
     tr.trigger.hash(&mut hash);
     tr.extra_delay.hash(&mut hash);
