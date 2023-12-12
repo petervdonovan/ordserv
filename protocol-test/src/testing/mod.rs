@@ -423,7 +423,7 @@ impl AccumulatingTracesState {
           guard.done = true;
         }
         break;
-      } else if guard.initial_cumsum_in_current_pass != guard.strans_out.cumsum() {
+      } else if true {
         guard.pair_iterator =
           BigSmallIterator::new(OgRank(guard.pair_iterator.max_ogrank_strict().0));
         guard.initial_cumsum_in_current_pass = guard.strans_out.cumsum();
