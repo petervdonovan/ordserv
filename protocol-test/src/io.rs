@@ -25,7 +25,7 @@ use crate::{
 const C_ORDERING_CLIENT_LIBRARY_PATH: &str = "../../target/release/libc_ordering_client.so";
 const C_ORDERING_CLIENT_LIBRARY_PATH_ENV_VAR: &str = "C_ORDERING_CLIENT_LIBRARY_PATH";
 
-const ORDSERV_WAIT_TIMEOUT_MILLISECONDS: &str = "25";
+const ORDSERV_WAIT_TIMEOUT_MILLISECONDS: &str = "200";
 
 pub struct RunContext<'a> {
   pub scratch: &'a Path,
