@@ -339,7 +339,7 @@ fn add_to_strans(
   ovr: &OutputVectorRegistry,
 ) {
   if let Ok((ov, _trhash, _status)) = &raw {
-    strans.record(OgRank2CurRank(ov.unpack(ovr)));
+    strans.record(OgRank2CurRank(ov.unpack(ovr)), ov.sentinel());
   }
 }
 
@@ -487,8 +487,8 @@ impl AccumulatingTracesState {
       .out_ovkey
       .vectorfy(raw_traces_rti_only.into_iter());
     Ok((
-      HookOgRank2CurRank(hook_orcr),
-      OutOgRank2CurRank(out_orcr),
+      HookOgRank2CurRank(hook_orcr, self.kcs.metadata(id).hook_ovkey.sentinel()),
+      OutOgRank2CurRank(out_orcr, self.kcs.metadata(id).out_ovkey.sentinel()),
       th,
       status,
     ))
@@ -678,8 +678,8 @@ impl AccumulatingTracesState {
         let idx = ConstraintListIndex(entry.clr.len() as u32 - 1);
         match run {
           Ok((hook_orcr, out_orcr, trhash, status)) => {
-            entry.strans_hook.record(hook_orcr.0.clone());
-            entry.strans_out.record(out_orcr.0.clone());
+            entry.strans_hook.record(hook_orcr.0.clone(), hook_orcr.1);
+            entry.strans_out.record(out_orcr.0.clone(), out_orcr.1);
             let ov = OutputVector::new(out_orcr.0, Arc::clone(&my_ovr));
             entry
               .iomats

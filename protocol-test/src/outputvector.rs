@@ -126,11 +126,15 @@ impl OutputVectorKey {
     }
   }
 
+  pub fn sentinel(&self) -> CurRank {
+    CurRank(u32::MAX)
+  }
+
   pub fn vectorfy(
     &self,
     records: impl Iterator<Item = TraceRecord>,
   ) -> (OgRank2CurRank, TraceHash, VectorfyStatus) {
-    let mut ov = vec![CurRank(self.n_tracepoints as u32); self.n_tracepoints];
+    let mut ov = vec![self.sentinel(); self.n_tracepoints];
     let mut th = TraceHasher::default();
     let mut status = VectorfyStatus::Ok;
     let mut subidxs = HashMap::new();
@@ -177,7 +181,7 @@ impl OutputVector {
     }
   }
   pub fn sentinel(&self) -> CurRank {
-    CurRank(self.len as u32)
+    CurRank(u32::MAX)
   }
   fn new_rec(ov: &[CurRank], ovr: &mut OvrReg, start: usize, default: i32) -> OutputVectorNodeIdx {
     // Remark: it is impressive that after copilot generated this function, only small edits were

@@ -27,7 +27,7 @@ use protocol_test::{
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use statrs::statistics::Statistics;
 use stats::BasicStats;
-use streaming_transpositions::{OgRank2CurRank, StreamingTranspositions};
+use streaming_transpositions::{CurRank, OgRank2CurRank, StreamingTranspositions};
 use trace_ord::serde::ComputedPrecedences;
 
 pub fn get_trace_ords(p: &Path) -> ComputedPrecedences {
@@ -310,7 +310,7 @@ pub fn error_rate(ats: &AccumulatingTracesState, errors_file_name: &str) {
     );
 }
 
-fn compute_permutable_sets(
+pub fn compute_permutable_sets(
     runs: impl std::ops::Deref<Target = TestRuns> + Sync,
     metadata: &TestMetadata,
     ovr: &OutputVectorRegistry,
@@ -318,18 +318,21 @@ fn compute_permutable_sets(
     let stride = 128; // Relevant to performance
     let stop_at = runs.raw_traces.len().min(MAX_RUNS_TO_CONSIDER);
     StreamingTranspositions::new(metadata.og_ov_length_rounded_up(), 10000, 0.000001)
-        .par_record_all((0..(stop_at / stride).max(1)).into_par_iter().map(|start| {
-            runs.raw_traces[(start * stride)..(start * stride + stride).min(stop_at)]
-                .iter()
-                .filter_map(|(_, result)| {
-                    if let Ok((trace, _, _)) = result {
-                        Some(trace)
-                    } else {
-                        None
-                    }
-                })
-                .map(|trace| OgRank2CurRank(trace.unpack(ovr)))
-        }))
+        .par_record_all(
+            (0..(stop_at / stride).max(1)).into_par_iter().map(|start| {
+                runs.raw_traces[(start * stride)..(start * stride + stride).min(stop_at)]
+                    .iter()
+                    .filter_map(|(_, result)| {
+                        if let Ok((trace, _, _)) = result {
+                            Some(trace)
+                        } else {
+                            None
+                        }
+                    })
+                    .map(|trace| OgRank2CurRank(trace.unpack(ovr)))
+            }),
+            CurRank(metadata.out_ovkey.sentinel().0),
+        )
 }
 
 fn get_permutable_sets_by_testid(

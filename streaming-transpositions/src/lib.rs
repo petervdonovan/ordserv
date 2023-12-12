@@ -29,9 +29,9 @@ impl OgRank {
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct HookOgRank2CurRank(pub OgRank2CurRank);
+pub struct HookOgRank2CurRank(pub OgRank2CurRank, pub CurRank);
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct OutOgRank2CurRank(pub OgRank2CurRank);
+pub struct OutOgRank2CurRank(pub OgRank2CurRank, pub CurRank);
 
 pub struct Orderings<'a> {
     before_and_afters: &'a [HashSet<OgRank>],
@@ -205,7 +205,7 @@ impl StreamingTranspositions {
         }
         before_and_afters
     }
-    pub fn record(&mut self, trace: OgRank2CurRank) {
+    pub fn record(&mut self, trace: OgRank2CurRank, sentinel: CurRank) {
         if trace.0.len() != self.inner.og_trace_length {
             panic!(
                 "trace length {} does not match og_trace_length {}",
@@ -222,7 +222,7 @@ impl StreamingTranspositions {
             let iterator = ogrank_currank_pairs[left_bound..idx]
                 .iter()
                 .filter(|(other_idx, _currank)| other_idx > &ogrank)
-                .filter(|(_other_idx, currank)| currank.0 != og_trace_length);
+                .filter(|(_other_idx, currank)| *currank != sentinel);
             // the trace length is used as a placeholder when the hookinvocation of the ogrank is not observed
             if self.all_ancestors.is_some() {
                 for (other_idx, _currank) in iterator {
@@ -237,19 +237,20 @@ impl StreamingTranspositions {
         self.inner.traces_recorded.0 += 1;
         self.inner.update_cumsums_if_needed();
     }
-    pub fn record_all(&mut self, traces: impl Iterator<Item = OgRank2CurRank>) {
+    pub fn record_all(&mut self, traces: impl Iterator<Item = OgRank2CurRank>, sentinel: CurRank) {
         for trace in traces {
-            self.record(trace);
+            self.record(trace, sentinel);
         }
     }
     pub fn par_record_all(
         self,
         traces: impl ParallelIterator<Item = impl Iterator<Item = OgRank2CurRank>>,
+        sentinel: CurRank,
     ) -> Self {
         let mut mapped: Vec<_> = traces
             .map(|trace| {
                 let mut st = self.empty();
-                st.record_all(trace);
+                st.record_all(trace, sentinel);
                 st
             })
             .collect();
@@ -496,7 +497,7 @@ pub mod tests {
             ]
         "#]];
         let mut st = StreamingTranspositions::new(4, 1, 0.1);
-        st.record_all(traces.into_iter().map(OgRank2CurRank));
+        st.record_all(traces.into_iter().map(OgRank2CurRank), CurRank(40));
         expected_before_and_after.assert_eq(&st.orderings().to_string());
         expected_cumsums.assert_debug_eq(&st.cumsums().collect::<Vec<_>>());
     }
@@ -506,13 +507,19 @@ pub mod tests {
         let traces = random_traces(100, 100, 30, 10);
         let mut st = StreamingTranspositions::new(100, 1, 0.1);
         let st_parallel = StreamingTranspositions::new(100, 1, 0.1);
-        st.record_all(traces.iter().map(|it| OgRank2CurRank(it.clone())));
+        st.record_all(
+            traces.iter().map(|it| OgRank2CurRank(it.clone())),
+            CurRank(4000),
+        );
         st.check_invariants_expensive();
-        let st_parallel = st_parallel.par_record_all((0..10).into_par_iter().map(|start| {
-            traces[start * 10..(start * 10 + 10)]
-                .iter()
-                .map(|it| OgRank2CurRank(it.clone()))
-        }));
+        let st_parallel = st_parallel.par_record_all(
+            (0..10).into_par_iter().map(|start| {
+                traces[start * 10..(start * 10 + 10)]
+                    .iter()
+                    .map(|it| OgRank2CurRank(it.clone()))
+            }),
+            CurRank(4000),
+        );
         st_parallel.check_invariants_expensive();
         for (before_and_after, par_before_and_after) in st
             .orderings()

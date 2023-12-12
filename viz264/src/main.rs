@@ -1,6 +1,6 @@
 use std::{collections::HashSet, path::PathBuf};
 
-use streaming_transpositions::{OgRank2CurRank, StreamingTranspositions};
+use streaming_transpositions::{CurRank, OgRank2CurRank, StreamingTranspositions};
 use trace_ord::conninfo;
 use viz264::{
     compare_permutable_sets, describe_permutable_sets, error_rate, get_atses, get_latest_ats,
@@ -47,6 +47,7 @@ fn empirical_all_permutables_translated(
     strans_out: &StreamingTranspositions,
     ogog2og: &OgRank2CurRank,
     len: usize,
+    sentinel: CurRank,
 ) -> Vec<HashSet<trace_ord::OgRank>> {
     let mut empirical_all_permutables = Vec::with_capacity(len);
     let mut hit_ogs = HashSet::new();
@@ -54,13 +55,14 @@ fn empirical_all_permutables_translated(
         empirical_all_permutables.push(HashSet::new());
     }
     for (og, ogr) in strans_out.orderings().iter().enumerate() {
+        print!("{} {:?}  ", og, ogr);
         let current_idx = ogog2og.0[og].0 as usize;
-        if current_idx >= len {
+        if current_idx == sentinel.0 as usize {
             continue;
         }
         hit_ogs.insert(current_idx);
         let current: &mut HashSet<trace_ord::OgRank> = &mut empirical_all_permutables[current_idx];
-        for permutable in ogr.iter().filter(|permutable| permutable.0 < len as u32) {
+        for permutable in ogr.iter().filter(|permutable| permutable.0 != sentinel.0) {
             current.insert(trace_ord::OgRank(ogog2og.0[permutable.idx()].0));
         }
     }
@@ -87,18 +89,41 @@ fn do_computed_precedences() {
             println!("Skipping {}", name);
             continue;
         }
-        let strans_out = &runs.read().unwrap().strans_out;
+        // let strans_out = &runs.read().unwrap().strans_out;
+        let strans_out =
+            viz264::compute_permutable_sets(runs.read().unwrap(), ats.kcs.metadata(&tid), &ats.ovr);
+        println!(
+            "DEBUG: cumsums = {:?}, traces recorded = {:?}, runs = {:?}, ok runs = {:?}",
+            strans_out.cumsums().collect::<Vec<_>>(),
+            strans_out.traces_recorded(),
+            runs.read().unwrap().raw_traces.len(),
+            runs.read()
+                .unwrap()
+                .raw_traces
+                .iter()
+                .filter(|it| it.1.is_ok())
+                .count(),
+        );
         let (ogtrace, preceding_permutables, _conninfo) = cp.get(name);
-        let (ogog2og, _, _) = ats
-            .kcs
-            .metadata(&tid)
-            .out_ovkey
-            .vectorfy(ogtrace.iter().cloned());
-
         let all_permutables =
             all_permutables_from_preceding_permutables(preceding_permutables, ogtrace);
-        let empirical_all_permutables =
-            empirical_all_permutables_translated(strans_out, &ogog2og, all_permutables.len());
+        let out_ovkey = &ats.kcs.metadata(&tid).out_ovkey;
+        let (ogog2og, _, _) = out_ovkey.vectorfy(ogtrace.iter().cloned());
+        println!(
+            "sentinel = {:?}, ogog2og = {:?}",
+            out_ovkey.sentinel(),
+            ogog2og
+        );
+        let empirical_all_permutables = empirical_all_permutables_translated(
+            &strans_out,
+            &ogog2og,
+            all_permutables.len(),
+            out_ovkey.sentinel(),
+        );
+        println!(
+            "empirical_all_permutables = {:?}",
+            empirical_all_permutables
+        );
         let mut sum = 0.0;
         let mut count = 0;
         let mut nontrivials = 0;
@@ -108,13 +133,13 @@ fn do_computed_precedences() {
         {
             let ok = upper_bound.is_superset(lower_bound);
             let ratio = lower_bound.len() as f64 / upper_bound.len() as f64;
-            // print!(
-            //     "{} = {} / {} (ok={})  ",
-            //     ratio,
-            //     lower_bound.len(),
-            //     upper_bound.len(),
-            //     ok
-            // );
+            print!(
+                "{} = {} / {} (ok={})  ",
+                ratio,
+                lower_bound.len(),
+                upper_bound.len(),
+                ok
+            );
             if ok {
                 sum += ratio;
                 count += 1;
@@ -209,6 +234,6 @@ fn main() {
     // do_throughput_and_error_rate();
     // do_describe_permutable_sets();
     // do_compare_permutable_sets();
-    // do_computed_precedences();
-    do_check_axioms();
+    do_computed_precedences();
+    // do_check_axioms();
 }
