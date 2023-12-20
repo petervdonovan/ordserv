@@ -10,7 +10,9 @@ pub struct BasicStats {
 pub type StatProjection = (String, Box<dyn Fn(&BasicStats) -> f64>);
 impl BasicStats {
     pub fn new(data: impl Iterator<Item = f64>) -> Self {
-        let mut data: Vec<_> = data.filter(|it| it.is_finite()).collect();
+        let mut data: Vec<_> = data
+            .map(|it: f64| if it.is_finite() { it } else { 0.0 }) // FIXME: Why 0? This is a hack
+            .collect();
         data.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let len = data.len();
         let mean = data.iter().sum::<f64>() / len as f64;
