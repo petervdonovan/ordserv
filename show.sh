@@ -1,5 +1,5 @@
-cd ./viz264
+cd ./viz
 cargo build
 cd ..
-./viz264/target/debug/viz264
+./viz/target/debug/viz
 xdg-open plots/throughput.png

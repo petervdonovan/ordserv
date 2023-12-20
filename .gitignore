@@ -12,3 +12,4 @@ xdgremote.sh
 target/
 temp*
 *.lft
+measure.sh

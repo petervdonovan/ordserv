@@ -1,13 +1,13 @@
-# Project264
+# Ordserv
 
 To get started, run:
 
 ```sh
-git clone https://github.com/petervdonovan/cs264-final-project.git
-cd cs264-final-project
+git clone https://github.com/petervdonovan/ordserv.git
+cd ordserv
 git submodule update --init --recursive
 ./build.sh
-export PATH=$(pwd)/lf-264/build/install/lf-cli/bin:$PATH
+export PATH=$(pwd)/lf-ordserv/build/install/lf-cli/bin:$PATH
 ./go.sh
 ```
 

@@ -1,7 +1,7 @@
-cd reactor-c-264/ && \
+cd reactor-c-ordserv/ && \
 git add . && \
 git commit --amend -m "REVERT ME" && \
-cd ../lf-264 && \
+cd ../lf-ordserv && \
 git add . && \
 git commit --amend -m "REVERT ME" && \
 cd .. && \

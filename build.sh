@@ -1,4 +1,4 @@
-cd lf-264
+cd lf-ordserv
 cd core/src/main/resources/lib/c/reactor-c/core/federated/RTI
 ./build.sh
 cd ../../../../../../../../../..

@@ -1,5 +1,5 @@
-cd viz264
+cd viz
 RUSTFLAGS=-g cargo build --release
 cd ..
-LD_PRELOAD=./libbytehound.so ./viz264/target/release/viz264
+LD_PRELOAD=./libbytehound.so ./viz/target/release/viz
 bytehound server memory-profiling_*.dat

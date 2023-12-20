@@ -2,7 +2,7 @@ use std::{collections::HashSet, path::PathBuf};
 
 use streaming_transpositions::{CurRank, OgRank2CurRank, StreamingTranspositions};
 use trace_ord::conninfo;
-use viz264::{
+use viz::{
     compare_permutable_sets, describe_permutable_sets, error_rate, get_atses, get_latest_ats,
     get_trace_ords, runs_over_time_chart,
 };
@@ -91,7 +91,7 @@ fn do_computed_precedences() {
         }
         // let strans_out = &runs.read().unwrap().strans_out;
         let strans_out =
-            viz264::compute_permutable_sets(runs.read().unwrap(), ats.kcs.metadata(&tid), &ats.ovr);
+            viz::compute_permutable_sets(runs.read().unwrap(), ats.kcs.metadata(&tid), &ats.ovr);
         println!(
             "DEBUG: cumsums = {:?}, traces recorded = {:?}, runs = {:?}, ok runs = {:?}",
             strans_out.cumsums().collect::<Vec<_>>(),

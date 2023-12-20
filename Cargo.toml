@@ -5,7 +5,7 @@ members = [
     "c-ordering-client",
     "protocol-test",
     "streaming-transpositions",
-    "viz264",
+    "viz",
     "trace-ord",
     "lf-trace-reader",
 ]

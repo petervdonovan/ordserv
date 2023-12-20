@@ -381,7 +381,7 @@ mod tests {
   };
 
   fn tests_relpath() -> PathBuf {
-    PathBuf::from("../lf-264/test/C/bin")
+    PathBuf::from("../lf-ordserv/test/C/bin")
   }
 
   fn scratch_relpath() -> PathBuf {
