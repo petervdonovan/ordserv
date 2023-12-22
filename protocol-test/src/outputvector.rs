@@ -174,7 +174,7 @@ fn compute_hash(ovn: OutputVectorNode) -> OutputVectorNode {
 impl OutputVector {
   pub fn new(ov: OgRank2CurRank, ovr: OutputVectorRegistry) -> Self {
     let mut ovrmut = ovr.write().unwrap();
-    let data = Self::new_rec(&ov.0, &mut ovrmut, 0, ov.0.len() as i32);
+    let data = Self::new_rec(&ov.0, &mut ovrmut, 0, u32::MAX as i32);
     Self {
       data,
       len: ov.0.len(),
@@ -312,9 +312,7 @@ mod tests {
     assert_eq!(
       ov,
       (0..rounded_up)
-        .map(|it| *new_trace_og_ranks
-          .get(&(it as u32))
-          .unwrap_or(&(length as u32)))
+        .map(|it| *new_trace_og_ranks.get(&(it as u32)).unwrap_or(&u32::MAX))
         .map(CurRank)
         .collect::<Vec<_>>()
     );
