@@ -212,13 +212,11 @@ pub fn axioms() -> Vec<Rule> {
         Rule {
             preceding_event: And(Box::new([
                 Unary(Box::new(Or(Box::new([
-                    // EventIs(RecvPortAbs),
-                    // EventIs(RecvTaggedMsg),  // I do not think these are correct? But there is no counterexample.
-                    EventIs(SendPortAbs),
-                    EventIs(SendTaggedMsg),
+                    EventIs(RecvPortAbs),
+                    EventIs(RecvTaggedMsg),
                 ])))),
                 FederateEquals,
-                TagLessThanOrEqual,
+                TagLessThanOrEqual, // Want: tag minus smallest delay less than or equal
             ])),
             event: Or(Box::new([EventIs(RecvLtc)])),
         },
