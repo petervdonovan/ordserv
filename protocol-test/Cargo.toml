@@ -30,3 +30,6 @@ simple_logger = "4.3.0"
 streaming-transpositions = { version = "0.1.0", path = "../streaming-transpositions" }
 tokio = { version = "=1.21.0", features = ["process", "tracing", "fs"] }
 wait-timeout = "0.2.0"
+
+[dev-dependencies]
+pretty_assertions = "1.4.0"

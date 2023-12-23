@@ -16,7 +16,7 @@ pub fn trace_by_physical_time(trace_path: &Path) -> Vec<TraceRecord> {
     records
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub struct TraceRecord {
     #[serde(rename = "Event")]
     pub event: String,
@@ -62,4 +62,21 @@ impl TraceRecord {
             sequence_number_for_file_and_line: rand::random::<u32>() % 100,
         }
     }
+    // pub fn mock() -> Self {
+    //     let rng = &mut rand::thread_rng();
+    //     Self {
+    //         event: vec!["A", "B"].choose(rng).unwrap().to_string(),
+    //         reactor: vec!["R"].choose(rng).unwrap().to_string(),
+    //         source: 0,
+    //         destination: 0,
+    //         elapsed_logical_time: 0,
+    //         microstep: 0,
+    //         elapsed_physical_time: 0,
+    //         trigger: vec!["W"].choose(rng).unwrap().to_string(),
+    //         extra_delay: 0,
+    //         file_index: rand::random::<u32>() % 10,
+    //         line_number: rand::random::<u32>() % 10,
+    //         sequence_number_for_file_and_line: rand::random::<u32>() % 100,
+    //     }
+    // }
 }

@@ -143,6 +143,9 @@ impl OutputVectorKey {
       if let Some(idxs) = self.map.get(&tpi) {
         subidxs.entry(tpi).or_insert(0);
         if let Some(idx) = idxs.get(subidxs[&tpi]) {
+          if ov[idx.0 as usize] != self.sentinel() {
+            status = VectorfyStatus::DuplicateTracePointId;
+          }
           ov[idx.0 as usize] = CurRank(rank as u32);
           subidxs.entry(tpi).and_modify(|it| *it += 1);
         } else {
@@ -152,6 +155,9 @@ impl OutputVectorKey {
         status = VectorfyStatus::MissingTracePointId;
       }
       th.update(&tr);
+    }
+    if ov.iter().any(|it| *it == self.sentinel()) {
+      status = VectorfyStatus::MissingTracePointId;
     }
     (OgRank2CurRank(ov), th.finish(), status)
   }
@@ -165,6 +171,7 @@ pub enum VectorfyStatus {
   Ok,
   MissingTracePointId,
   ExtraTracePointId,
+  DuplicateTracePointId,
 }
 
 fn compute_hash(ovn: OutputVectorNode) -> OutputVectorNode {
@@ -174,7 +181,7 @@ fn compute_hash(ovn: OutputVectorNode) -> OutputVectorNode {
 impl OutputVector {
   pub fn new(ov: OgRank2CurRank, ovr: OutputVectorRegistry) -> Self {
     let mut ovrmut = ovr.write().unwrap();
-    let data = Self::new_rec(&ov.0, &mut ovrmut, 0, u32::MAX as i32);
+    let data = Self::new_rec(&ov.0, &mut ovrmut, 0, i32::MAX);
     Self {
       data,
       len: ov.0.len(),
@@ -218,17 +225,28 @@ impl OutputVector {
       }
     }
   }
+  pub fn recover<'a>(
+    &self,
+    ovr: &OutputVectorRegistry,
+    ovkey: &'a OutputVectorKey,
+  ) -> impl Iterator<Item = Option<&'a TraceRecord>> {
+    let curranks = self.unpack(ovr);
+    let mut ogranks = curranks.into_iter().enumerate().collect::<Vec<_>>();
+    ogranks.sort_by_key(|(_, rank)| *rank);
+    let sentinel = self.sentinel();
+    ogranks.into_iter().map(move |(idx, currank)| {
+      if currank != sentinel {
+        ovkey.records.get(idx)
+      } else {
+        None
+      }
+    })
+  }
   pub fn unpack(&self, ovr: &OutputVectorRegistry) -> Vec<CurRank> {
     let rounded_up_len = (self.len - 1) / OUTPUT_VECTOR_CHUNK_SIZE * OUTPUT_VECTOR_CHUNK_SIZE
       + OUTPUT_VECTOR_CHUNK_SIZE;
     let mut ret = vec![self.sentinel(); rounded_up_len];
-    Self::unpack_rec(
-      self.data,
-      &ovr.read().unwrap(),
-      &mut ret,
-      0,
-      self.sentinel(),
-    );
+    Self::unpack_rec(self.data, &ovr.read().unwrap(), &mut ret, 0);
     ret
   }
   fn unpack_rec(
@@ -236,7 +254,6 @@ impl OutputVector {
     ovrdata: &RwLockReadGuard<'_, OvrReg>,
     seqnum2hookinvoc: &mut [CurRank],
     start: u32,
-    default: CurRank,
   ) {
     if seqnum2hookinvoc.len() / OUTPUT_VECTOR_CHUNK_SIZE * OUTPUT_VECTOR_CHUNK_SIZE
       != seqnum2hookinvoc.len()
@@ -250,7 +267,7 @@ impl OutputVector {
           panic!("seqnum2hookinvoc.len() must be OUTPUT_VECTOR_CHUNK_SIZE when unpacking a leaf, but it is {}", seqnum2hookinvoc.len());
         }
         for (i, rank) in chunk.rel_ranks.iter().enumerate() {
-          if *rank == default.0 as i32 {
+          if *rank == i32::MAX {
             continue;
           }
           seqnum2hookinvoc[i] = CurRank((*rank + start as i32) as u32);
@@ -258,20 +275,13 @@ impl OutputVector {
       }
       OutputVectorNode::Node(pair) => {
         let mid = seqnum2hookinvoc.len().next_power_of_two() / 2;
-        Self::unpack_rec(
-          pair.left,
-          ovrdata,
-          &mut seqnum2hookinvoc[0..mid],
-          start,
-          default,
-        );
+        Self::unpack_rec(pair.left, ovrdata, &mut seqnum2hookinvoc[0..mid], start);
         if let Some(right) = pair.right {
           Self::unpack_rec(
             right,
             ovrdata,
             &mut seqnum2hookinvoc[mid..],
             start + mid as u32,
-            default,
           );
         }
       }
@@ -293,27 +303,26 @@ mod tests {
       (length - 1) / OUTPUT_VECTOR_CHUNK_SIZE * OUTPUT_VECTOR_CHUNK_SIZE + OUTPUT_VECTOR_CHUNK_SIZE;
     let ovr = Arc::new(RwLock::new(OvrReg::default()));
     let og_trace = (0..length).map(|_| TraceRecord::mock()).collect::<Vec<_>>();
-    let mut new_trace = og_trace.clone();
+    let mut new_trace = og_trace.iter().cloned().enumerate().collect::<Vec<_>>();
     for _ in 0..23 {
       let start = rand::random::<usize>() % length;
-      let end = rand::random::<usize>() % 14;
-      new_trace[start..end.max(length)].shuffle(&mut rand::thread_rng());
+      let end = (start + rand::random::<usize>() % 14).min(length);
+      new_trace[start..end].shuffle(&mut rand::thread_rng());
     }
     let ovk = OutputVectorKey::new(og_trace, 1);
-    let (ov, _, _) = ovk.vectorfy(new_trace.clone().into_iter());
+    let (ov, _, _) = ovk.vectorfy(new_trace.iter().cloned().map(|(_, b)| b));
     let ov = OutputVector::new(ov, Arc::clone(&ovr));
-    let ov = ov.unpack(&ovr);
-    let new_trace_og_ranks = new_trace
+    let ov = ov.recover(&ovr, &ovk).collect::<Vec<_>>();
+    let mut transposed_new_trace_idxs = new_trace
       .iter()
-      .map(|id| ovk.map[&TracePointId::new(id)][0].0)
+      .map(|(a, _)| OgRank(*a as u32))
       .enumerate()
-      .map(|(i, rank)| (rank, i as u32))
-      .collect::<HashMap<_, _>>();
-    assert_eq!(
+      .collect::<Vec<_>>();
+    transposed_new_trace_idxs.sort_by_key(|(_, b)| *b);
+    pretty_assertions::assert_eq!(
       ov,
       (0..rounded_up)
-        .map(|it| *new_trace_og_ranks.get(&(it as u32)).unwrap_or(&u32::MAX))
-        .map(CurRank)
+        .map(|it| new_trace.get(it).map(|it| &it.1))
         .collect::<Vec<_>>()
     );
   }
