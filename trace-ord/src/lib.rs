@@ -42,20 +42,25 @@ pub struct Rule {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum BinaryRelation {
-    TagPlusDelay2FedEquals,
-    TagPlusDelay2FedLessThan,
-    TagPlusDelay2FedLessThanOrEqual,
-    TagGreaterThanOrEqual,
-    TagStrictPlusDelay2FedLessThan,
-    TagPlusDelay2FedGreaterThanOrEquals,
-    TagStrictPlusDelayFromSomeImmUpstreamFedGreaterThanOrEquals,
-    TagPlusDelayToAllImmDowntreamFedsLessThan,
-    TagPlusLargestDelayLessThan,
-    TagPlusLargestDelayLessThanOrEqual,
-    TagPlusLargestDelayGreaterThanOrEqual,
-    TagLessThan,
-    TagLessThanOrEqual,
-    TagEquals,
+    // TagPlusDelay2FedEquals,   // = Equals(TagPlusDelay(SmallestDelayBetween), Tag)
+    // TagPlusDelay2FedLessThan, // = LessThan(TagPlusDelay(SmallestDelayBetween), Tag)
+    // TagPlusDelay2FedLessThanOrEqual, // = LessThanOrEqual(TagPlusDelay(SmallestDelayBetween), Tag)
+    // TagGreaterThanOrEqual,    // = GreaterThanOrEqual(Tag, Tag)
+    // TagStrictPlusDelay2FedLessThan, // = LessThan(TagStrictPlusDelay(SmallestDelayBetween), Tag)
+    // TagPlusDelay2FedGreaterThanOrEquals, // = GreaterThanOrEqual(TagPlusDelay(SmallestDelayBetween), Tag)
+    // TagStrictPlusDelayFromSomeImmUpstreamFedGreaterThanOrEquals, // = GreaterThanOrEqual(TagStrictPlusDelay(LargestDelayFromSomeImmUpstreamFed), Tag)
+    // TagPlusDelayToAllImmDownstreamFedsLessThan, // = LessThan(TagPlusDelay(LargestDelayFromPreceding), Tag)
+    // TagPlusLargestDelayLessThan, // = LessThan(TagPlusDelay(LargestDelayFromPreceding), Tag)
+    // TagPlusLargestDelayLessThanOrEqual, // = LessThanOrEqual(TagPlusDelay(LargestDelayFromPreceding), Tag)
+    // TagPlusLargestDelayGreaterThanOrEqual, // = GreaterThanOrEqual(TagPlusDelay(LargestDelayFromPreceding), Tag)
+    // TagLessThan,                           // = LessThan(Tag, Tag)
+    // TagLessThanOrEqual,                    // = LessThanOrEqual(Tag, Tag)
+    // TagEquals,                             // = Equals(Tag, Tag)
+    LessThan(Term, Term),
+    LessThanOrEqual(Term, Term),
+    GreaterThanOrEqual(Term, Term),
+    GreaterThan(Term, Term),
+    Equal(Term, Term),
     FederateEquals,
     FederateZeroDelayDirectlyUpstreamOf,
     FederateDirectlyUpstreamOf,
@@ -64,6 +69,21 @@ pub enum BinaryRelation {
     And(Box<[BinaryRelation]>),
     Or(Box<[BinaryRelation]>),
     Unary(Box<Predicate>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Term {
+    Tag,
+    TagPlusDelay(DelayTerm),
+    TagStrictPlusDelay(DelayTerm),
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum DelayTerm {
+    SmallestDelayBetween,
+    SmallestDelayFrom,
+    SmallestDelayFromSomeImmUpstreamFed,
+    LargestDelayFrom,
+    LargestDelayFromSomeImmUpstreamFed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -165,35 +185,61 @@ impl Display for Predicate {
     }
 }
 
+impl Display for Term {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Term::Tag => write!(f, "Tag"),
+            Term::TagPlusDelay(delay) => write!(f, "Tag + {}", delay),
+            Term::TagStrictPlusDelay(delay) => write!(f, "Tag strict+ {}", delay),
+        }
+    }
+}
+
+impl Display for DelayTerm {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DelayTerm::SmallestDelayBetween => write!(f, "SmallestDelayBetween"),
+            DelayTerm::SmallestDelayFrom => write!(f, "SmallestDelayFromPreceding"),
+            DelayTerm::SmallestDelayFromSomeImmUpstreamFed => {
+                write!(f, "SmallestDelayFromSomeImmUpstreamFed")
+            }
+            DelayTerm::LargestDelayFrom => write!(f, "LargestDelayFromPreceding"),
+            DelayTerm::LargestDelayFromSomeImmUpstreamFed => {
+                write!(f, "LargestDelayFromSomeImmUpstreamFed")
+            }
+        }
+    }
+}
+
 impl Display for BinaryRelation {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            BinaryRelation::TagPlusDelay2FedEquals => write!(f, "Tag + Delay = Tag"),
-            BinaryRelation::TagPlusDelay2FedLessThan => write!(f, "Tag + Delay < Tag"),
-            BinaryRelation::TagPlusDelay2FedLessThanOrEqual => write!(f, "Tag + Delay ≤ Tag"),
-            BinaryRelation::TagPlusDelay2FedGreaterThanOrEquals => {
-                write!(f, "Tag + Delay ≥ Tag")
-            }
-            BinaryRelation::TagStrictPlusDelay2FedLessThan => {
-                write!(f, "Tag strict+ All Delays < Tag")
-            }
-            BinaryRelation::TagStrictPlusDelayFromSomeImmUpstreamFedGreaterThanOrEquals => {
-                write!(f, "Tag strict+ Some Delay ≥ Tag")
-            }
-            BinaryRelation::TagPlusDelayToAllImmDowntreamFedsLessThan => {
-                write!(f, "Tag + All Delays < Tag")
-            }
-            BinaryRelation::TagPlusLargestDelayLessThan => write!(f, "Tag + Max Delay < Tag"),
-            BinaryRelation::TagPlusLargestDelayLessThanOrEqual => {
-                write!(f, "Tag + Max Delay ≤ Tag")
-            }
-            BinaryRelation::TagPlusLargestDelayGreaterThanOrEqual => {
-                write!(f, "Tag + Max Delay ≥ Tag")
-            }
-            BinaryRelation::TagGreaterThanOrEqual => write!(f, "Tag ≥ Tag"),
-            BinaryRelation::TagEquals => write!(f, "Tag = Tag"),
-            BinaryRelation::TagLessThan => write!(f, "Tag < Tag"),
-            BinaryRelation::TagLessThanOrEqual => write!(f, "Tag ≤ Tag"),
+            // BinaryRelation::TagPlusDelay2FedEquals => write!(f, "Tag + Delay = Tag"),
+            // BinaryRelation::TagPlusDelay2FedLessThan => write!(f, "Tag + Delay < Tag"),
+            // BinaryRelation::TagPlusDelay2FedLessThanOrEqual => write!(f, "Tag + Delay ≤ Tag"),
+            // BinaryRelation::TagPlusDelay2FedGreaterThanOrEquals => {
+            //     write!(f, "Tag + Delay ≥ Tag")
+            // }
+            // BinaryRelation::TagStrictPlusDelay2FedLessThan => {
+            //     write!(f, "Tag strict+ All Delays < Tag")
+            // }
+            // BinaryRelation::TagStrictPlusDelayFromSomeImmUpstreamFedGreaterThanOrEquals => {
+            //     write!(f, "Tag strict+ Some Delay ≥ Tag")
+            // }
+            // BinaryRelation::TagPlusDelayToAllImmDownstreamFedsLessThan => {
+            //     write!(f, "Tag + All Delays < Tag")
+            // }
+            // BinaryRelation::TagPlusLargestDelayLessThan => write!(f, "Tag + Max Delay < Tag"),
+            // BinaryRelation::TagPlusLargestDelayLessThanOrEqual => {
+            //     write!(f, "Tag + Max Delay ≤ Tag")
+            // }
+            // BinaryRelation::TagPlusLargestDelayGreaterThanOrEqual => {
+            //     write!(f, "Tag + Max Delay ≥ Tag")
+            // }
+            // BinaryRelation::TagGreaterThanOrEqual => write!(f, "Tag ≥ Tag"),
+            // BinaryRelation::TagEquals => write!(f, "Tag = Tag"),
+            // BinaryRelation::TagLessThan => write!(f, "Tag < Tag"),
+            // BinaryRelation::TagLessThanOrEqual => write!(f, "Tag ≤ Tag"),
             BinaryRelation::FederateEquals => write!(f, "Federate = Federate"),
             BinaryRelation::FederateZeroDelayDirectlyUpstreamOf => {
                 write!(f, "Federate has zero delay directly upstream of")
@@ -222,17 +268,57 @@ impl Display for BinaryRelation {
                 Ok(())
             }
             BinaryRelation::Unary(p) => write!(f, "{}", p),
+            BinaryRelation::LessThan(t0, t1) => write!(f, "{} < {}", t0, t1),
+            BinaryRelation::LessThanOrEqual(t0, t1) => write!(f, "{} ≤ {}", t0, t1),
+            BinaryRelation::GreaterThanOrEqual(t0, t1) => write!(f, "{} ≥ {}", t0, t1),
+            BinaryRelation::GreaterThan(t0, t1) => write!(f, "{} > {}", t0, t1),
+            BinaryRelation::Equal(t0, t1) => write!(f, "{} = {}", t0, t1),
         }
     }
 }
 
+impl Term {
+    pub fn eval(
+        &self,
+        fedid: FedId,
+        tag: Tag,
+        fedids: (FedId, FedId),
+        conninfo: &ConnInfo,
+    ) -> Option<Tag> {
+        match self {
+            Term::Tag => Some(tag),
+            Term::TagPlusDelay(dt) => Some(tag + dt.eval(fedid, fedids, conninfo)?),
+            Term::TagStrictPlusDelay(dt) => {
+                Some(tag.strict_plus(dt.eval(fedid, fedids, conninfo)?))
+            }
+        }
+    }
+}
+
+impl DelayTerm {
+    pub fn eval(&self, fedid: FedId, fedids: (FedId, FedId), conninfo: &ConnInfo) -> Option<Delay> {
+        match self {
+            DelayTerm::SmallestDelayBetween => conninfo.get(fedids.0, fedids.1).copied(),
+            DelayTerm::SmallestDelayFrom => {
+                conninfo.delays_out(fedid).map(|(_, delay)| *delay).min()
+            }
+            DelayTerm::SmallestDelayFromSomeImmUpstreamFed => conninfo
+                .min_delays2dest(fedid)
+                .map(|(_, delay)| *delay)
+                .min(),
+            DelayTerm::LargestDelayFrom => {
+                conninfo.delays_out(fedid).map(|(_, delay)| *delay).max()
+            }
+            DelayTerm::LargestDelayFromSomeImmUpstreamFed => conninfo.delays_in(fedid).max(),
+        }
+    }
+}
+
+pub type NUsesAndUnpermutables = (HashMap<Rule, u32>, Vec<HashSet<OgRank>>);
+
 pub fn preceding_permutables_by_ogrank_from_dir(
     dir: &Path,
-) -> (
-    Vec<Event>,
-    ConnInfo,
-    Result<(HashMap<Rule, u32>, Vec<HashSet<OgRank>>), String>,
-) {
+) -> (Vec<Event>, ConnInfo, Result<NUsesAndUnpermutables, String>) {
     let rti_csv = dir.join("rti.csv");
     let conninfo = dir.join("conninfo.txt");
     let rti_conninfo = &std::fs::read_to_string(conninfo).unwrap();
@@ -249,7 +335,7 @@ pub fn preceding_permutables_by_ogrank_from_dir(
                     if filename.starts_with("conninfo_") {
                         let k = filename["conninfo_".len()..filename.len() - ".txt".len()]
                             .parse::<u32>();
-                        if let Ok(_) = k {
+                        if k.is_ok() {
                             fed_conninfos.push(std::fs::read_to_string(path).unwrap());
                         }
                     }
@@ -257,7 +343,7 @@ pub fn preceding_permutables_by_ogrank_from_dir(
             }
         }
     }
-    let conninfo = ConnInfo::from_strs(&rti_conninfo, &fed_conninfos);
+    let conninfo = ConnInfo::from_strs(rti_conninfo, &fed_conninfos);
     let axioms = axioms::axioms();
     let trace = elaborated_from_trace_records(
         lf_trace_reader::trace_by_physical_time(&rti_csv),
@@ -276,7 +362,7 @@ pub fn preceding_permutables_by_ogrank(
     axioms: &[Rule],
     always_occurring: HashSet<OgRank>,
     conninfo: &ConnInfo,
-) -> Result<(HashMap<Rule, u32>, Vec<HashSet<OgRank>>), String> {
+) -> Result<NUsesAndUnpermutables, String> {
     let (unused, unpermutables) =
         Unpermutables::from_realizable_trace(trace, axioms, always_occurring, conninfo)?;
     Ok((unused, unpermutables.preceding_permutables_by_ogrank()))
@@ -500,21 +586,21 @@ fn add_first_predicates_recursive(
     conninfo: &ConnInfo,
 ) {
     match brel {
-        BinaryRelation::TagPlusDelay2FedEquals
-        | BinaryRelation::TagPlusDelay2FedLessThan
-        | BinaryRelation::TagPlusDelay2FedLessThanOrEqual
-        | BinaryRelation::TagPlusDelay2FedGreaterThanOrEquals
-        | BinaryRelation::TagPlusLargestDelayLessThan
-        | BinaryRelation::TagPlusLargestDelayLessThanOrEqual
-        | BinaryRelation::TagPlusLargestDelayGreaterThanOrEqual
-        | BinaryRelation::TagGreaterThanOrEqual
-        | BinaryRelation::TagEquals
-        | BinaryRelation::TagLessThan
-        | BinaryRelation::TagLessThanOrEqual
-        | BinaryRelation::FederateEquals
-        | BinaryRelation::TagStrictPlusDelay2FedLessThan
-        | BinaryRelation::TagStrictPlusDelayFromSomeImmUpstreamFedGreaterThanOrEquals
-        | BinaryRelation::TagPlusDelayToAllImmDowntreamFedsLessThan
+        // BinaryRelation::TagPlusDelay2FedEquals
+        // | BinaryRelation::TagPlusDelay2FedLessThan
+        // | BinaryRelation::TagPlusDelay2FedLessThanOrEqual
+        // | BinaryRelation::TagPlusDelay2FedGreaterThanOrEquals
+        // | BinaryRelation::TagPlusLargestDelayLessThan
+        // | BinaryRelation::TagPlusLargestDelayLessThanOrEqual
+        // | BinaryRelation::TagPlusLargestDelayGreaterThanOrEqual
+        // | BinaryRelation::TagGreaterThanOrEqual
+        // | BinaryRelation::TagEquals
+        // | BinaryRelation::TagLessThan
+        // | BinaryRelation::TagLessThanOrEqual
+        // | BinaryRelation::TagStrictPlusDelay2FedLessThan
+        // | BinaryRelation::TagStrictPlusDelayFromSomeImmUpstreamFedGreaterThanOrEquals
+        // | BinaryRelation::TagPlusDelayToAllImmDownstreamFedsLessThan
+        BinaryRelation::FederateEquals
         | BinaryRelation::FederateZeroDelayDirectlyUpstreamOf
         | BinaryRelation::FederateDirectlyUpstreamOf => {}
         BinaryRelation::IsFirst(rel) => {
@@ -558,6 +644,13 @@ fn add_first_predicates_recursive(
         }
         BinaryRelation::Unary(prel) => {
             add_first_predicates_recursive_from_predicate(prel, predicates)
+        }
+        BinaryRelation::LessThan(_, _)
+        | BinaryRelation::LessThanOrEqual(_, _)
+        | BinaryRelation::GreaterThanOrEqual(_, _)
+        | BinaryRelation::GreaterThan(_, _)
+        | BinaryRelation::Equal(_, _) => {
+            // do nothing; we have recursed below the level of predicates
         }
     }
 }
@@ -654,7 +747,14 @@ impl BinaryRelation {
                 false
             }
         };
-        let neither_first_with_conninfo = |f: fn(&Tag, &Tag, &FedId, &FedId, &ConnInfo) -> bool| {
+        fn evaluate(
+            f: fn(&Tag, &Tag) -> bool,
+            t0: &Term,
+            t1: &Term,
+            e: &Event,
+            preceding: &Event,
+            conninfo: &ConnInfo,
+        ) -> bool {
             if let (
                 Event::Concrete {
                     tag: ptag,
@@ -664,107 +764,74 @@ impl BinaryRelation {
                 Event::Concrete { tag, fedid, .. },
             ) = (preceding, e)
             {
-                f(ptag, tag, pfedid, fedid, conninfo)
-            } else {
-                false
-            }
-        };
-        let compare_tags_given_delay = |f: fn(&Tag, &Tag, &Delay) -> bool| {
-            if let (
-                Event::Concrete {
-                    tag: ptag,
-                    fedid: pfedid,
-                    ..
-                },
-                Event::Concrete { tag, fedid, .. },
-            ) = (preceding, e)
-            {
-                if let Some(delay) = conninfo.get(*pfedid, *fedid) {
-                    f(&(*ptag), &tag, delay)
+                let t0 = t0.eval(*pfedid, *ptag, (*pfedid, *fedid), conninfo);
+                let t1 = t1.eval(*fedid, *tag, (*pfedid, *fedid), conninfo);
+                if let (Some(t0), Some(t1)) = (t0, t1) {
+                    f(&t0, &t1)
                 } else {
                     false
                 }
             } else {
                 false
             }
-        };
-        let compare_tags_given_all_downstream_delays =
-            |f: fn(&Tag, &Tag, &[(FedId, Delay)]) -> bool| {
-                if let (
-                    Event::Concrete {
-                        tag: ptag,
-                        fedid: pfedid,
-                        ..
-                    },
-                    Event::Concrete { tag, fedid, .. },
-                ) = (preceding, e)
-                {
-                    let mut delays = Vec::new();
-                    for (src, delay) in conninfo.min_delays2dest(*fedid) {
-                        delays.push((*src, *delay));
-                    }
-                    f(ptag, tag, &delays)
-                } else {
-                    false
-                }
-            };
+        }
         match self {
-            BinaryRelation::TagPlusDelay2FedEquals => {
-                compare_tags_given_delay(|a, b, d| *a + *d == *b)
-            }
-            BinaryRelation::TagPlusDelay2FedLessThan => {
-                compare_tags_given_delay(|a, b, d| *a + *d < *b)
-            }
-            BinaryRelation::TagPlusDelay2FedLessThanOrEqual => {
-                compare_tags_given_delay(|a, b, d| *a + *d <= *b)
-            }
-            BinaryRelation::TagPlusDelay2FedGreaterThanOrEquals => {
-                compare_tags_given_delay(|a, b, d| *a + *d >= *b)
-            }
-            BinaryRelation::TagPlusLargestDelayLessThan => {
-                neither_first_with_conninfo(|a, b, pfed, _fed, conninfo| {
-                    if let Some(delay) = conninfo.largest_delay_out(*pfed) {
-                        *a + delay < *b
-                    } else {
-                        false
-                    }
-                })
-            }
-            BinaryRelation::TagPlusLargestDelayLessThanOrEqual => {
-                neither_first_with_conninfo(|a, b, pfed, _fed, conninfo| {
-                    if let Some(delay) = conninfo.largest_delay_out(*pfed) {
-                        *a + delay <= *b
-                    } else {
-                        false
-                    }
-                })
-            }
-            BinaryRelation::TagPlusLargestDelayGreaterThanOrEqual => {
-                neither_first_with_conninfo(|a, b, pfed, _fed, conninfo| {
-                    if let Some(delay) = conninfo.largest_delay_out(*pfed) {
-                        *a + delay >= *b
-                    } else {
-                        false
-                    }
-                })
-            }
-            BinaryRelation::TagGreaterThanOrEqual => compare_tags_given_delay(|a, b, d| *a >= *b),
-            BinaryRelation::TagEquals => neither_first(|a, b, _, _, _| a == b),
-            BinaryRelation::TagLessThan => neither_first(|a, b, _, _, _| a < b),
-            BinaryRelation::TagLessThanOrEqual => neither_first(|a, b, _, _, _| a <= b),
-            BinaryRelation::TagStrictPlusDelay2FedLessThan => {
-                compare_tags_given_delay(|a, b, d| a.strict_add(*d) < *b)
-            }
-            BinaryRelation::TagStrictPlusDelayFromSomeImmUpstreamFedGreaterThanOrEquals => {
-                compare_tags_given_all_downstream_delays(|a, b, delays| {
-                    delays.iter().any(|(_, delay)| a.strict_add(*delay) >= *b)
-                })
-            }
-            BinaryRelation::TagPlusDelayToAllImmDowntreamFedsLessThan => {
-                compare_tags_given_all_downstream_delays(|a, b, delays| {
-                    delays.iter().all(|(_, delay)| *a + *delay < *b)
-                })
-            }
+            // BinaryRelation::TagPlusDelay2FedEquals => {
+            //     compare_tags_given_delay(|a, b, d| *a + *d == *b)
+            // }
+            // BinaryRelation::TagPlusDelay2FedLessThan => {
+            //     compare_tags_given_delay(|a, b, d| *a + *d < *b)
+            // }
+            // BinaryRelation::TagPlusDelay2FedLessThanOrEqual => {
+            //     compare_tags_given_delay(|a, b, d| *a + *d <= *b)
+            // }
+            // BinaryRelation::TagPlusDelay2FedGreaterThanOrEquals => {
+            //     compare_tags_given_delay(|a, b, d| *a + *d >= *b)
+            // }
+            // BinaryRelation::TagPlusLargestDelayLessThan => {
+            //     neither_first_with_conninfo(|a, b, pfed, _fed, conninfo| {
+            //         if let Some(delay) = conninfo.largest_delay_out(*pfed) {
+            //             *a + delay < *b
+            //         } else {
+            //             false
+            //         }
+            //     })
+            // }
+            // BinaryRelation::TagPlusLargestDelayLessThanOrEqual => {
+            //     neither_first_with_conninfo(|a, b, pfed, _fed, conninfo| {
+            //         if let Some(delay) = conninfo.largest_delay_out(*pfed) {
+            //             *a + delay <= *b
+            //         } else {
+            //             false
+            //         }
+            //     })
+            // }
+            // BinaryRelation::TagPlusLargestDelayGreaterThanOrEqual => {
+            //     neither_first_with_conninfo(|a, b, pfed, _fed, conninfo| {
+            //         if let Some(delay) = conninfo.largest_delay_out(*pfed) {
+            //             *a + delay >= *b
+            //         } else {
+            //             false
+            //         }
+            //     })
+            // }
+            // BinaryRelation::TagGreaterThanOrEqual => compare_tags_given_delay(|a, b, d| *a >= *b),
+            // BinaryRelation::TagEquals => neither_first(|a, b, _, _, _| a == b),
+            // BinaryRelation::TagLessThan => neither_first(|a, b, _, _, _| a < b),
+            // BinaryRelation::TagLessThanOrEqual => neither_first(|a, b, _, _, _| a <= b),
+            // BinaryRelation::TagStrictPlusDelay2FedLessThan => {
+            //     compare_tags_given_delay(|a, b, d| a.strict_add(*d) < *b)
+            // }
+            // BinaryRelation::TagStrictPlusDelayFromSomeImmUpstreamFedGreaterThanOrEquals => {
+            //     compare_tags_given_all_downstream_delays(|a, b, delays| {
+            //         delays.iter().any(|(_, delay)| a.strict_add(*delay) >= *b)
+            //     })
+            // }
+            // BinaryRelation::TagPlusDelayToAllImmDownstreamFedsLessThan => {
+            //     compare_tags_given_all_downstream_delays(|a, b, delays| {
+            //         delays.iter().all(|(_, delay)| *a + *delay < *b)
+            //     })
+            // }
             BinaryRelation::FederateEquals => neither_first(|_, _, a, b, _| a == b),
             BinaryRelation::FederateZeroDelayDirectlyUpstreamOf => {
                 neither_first(|_, _, _pfed, _fed, delay| delay == Some(&NO_DELAY))
@@ -795,6 +862,17 @@ impl BinaryRelation {
                 .iter()
                 .any(|rel| rel.holds(e, preceding, conninfo)),
             BinaryRelation::Unary(p) => p.holds(preceding, conninfo),
+            BinaryRelation::LessThan(t0, t1) => evaluate(Tag::lt, t0, t1, e, preceding, conninfo),
+            BinaryRelation::LessThanOrEqual(t0, t1) => {
+                evaluate(Tag::le, t0, t1, e, preceding, conninfo)
+            }
+            BinaryRelation::GreaterThanOrEqual(t0, t1) => {
+                evaluate(Tag::ge, t0, t1, e, preceding, conninfo)
+            }
+            BinaryRelation::GreaterThan(t0, t1) => {
+                evaluate(Tag::gt, t0, t1, e, preceding, conninfo)
+            }
+            BinaryRelation::Equal(t0, t1) => evaluate(Tag::eq, t0, t1, e, preceding, conninfo),
         }
     }
 }
@@ -1023,43 +1101,42 @@ impl Rule {
     }
 }
 
-/// testing module
-#[cfg(test)]
-mod tests {
-    use super::*;
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
 
-    use crate::{conninfo::Tag, EventKind, Rule};
+//     use crate::{conninfo::Tag, EventKind, Rule};
 
-    use crate::BinaryRelation::{
-        And, FederateEquals, FederateZeroDelayDirectlyUpstreamOf, TagPlusDelay2FedEquals,
-        TagPlusDelay2FedLessThan, TagPlusDelay2FedLessThanOrEqual,
-        TagPlusDelayToAllImmDowntreamFedsLessThan, Unary,
-    };
-    use crate::EventKind::*;
-    use crate::Predicate::*;
-    use crate::{BinaryRelation, Predicate};
+//     use crate::BinaryRelation::{
+//         And, FederateEquals, FederateZeroDelayDirectlyUpstreamOf, TagPlusDelay2FedEquals,
+//         TagPlusDelay2FedLessThan, TagPlusDelay2FedLessThanOrEqual,
+//         TagPlusDelayToAllImmDownstreamFedsLessThan, Unary,
+//     };
+//     use crate::EventKind::*;
+//     use crate::Predicate::*;
+//     use crate::{BinaryRelation, Predicate};
 
-    //     #[test]
-    //     fn rule_test0() {
-    //         let e = Event::from_str("Receiving TAGGED_MSG (0, 1) @ FedId(0) (src=6)").unwrap();
-    //         println!("{}", e);
-    //         let predecessor = Event::from_str("Receiving LTC (0, 0) @ FedId(0) (src=9)").unwrap();
-    //         println!("{}", predecessor);
-    //         let rule = Rule {
-    //             preceding_event: And(Box::new([
-    //                 Unary(Box::new(EventIs(RecvLtc))),
-    //                 FederateEquals,
-    //                 TagPlusDelayToAllImmDowntreamFedsLessThan,
-    //             ])),
-    //             event: EventIs(RecvTaggedMsg),
-    //         };
-    //         println!("{}", rule);
-    //         let conninfo = ConnInfo::from_str(
-    //             "1
-    // 0 1 0 0
-    // ",
-    //         )
-    //         .unwrap();
-    //         assert!(rule.preceding_event.holds(&e, &predecessor, &conninfo));
-    //     }
-}
+//     //     #[test]
+//     //     fn rule_test0() {
+//     //         let e = Event::from_str("Receiving TAGGED_MSG (0, 1) @ FedId(0) (src=6)").unwrap();
+//     //         println!("{}", e);
+//     //         let predecessor = Event::from_str("Receiving LTC (0, 0) @ FedId(0) (src=9)").unwrap();
+//     //         println!("{}", predecessor);
+//     //         let rule = Rule {
+//     //             preceding_event: And(Box::new([
+//     //                 Unary(Box::new(EventIs(RecvLtc))),
+//     //                 FederateEquals,
+//     //                 TagPlusDelayToAllImmDowntreamFedsLessThan,
+//     //             ])),
+//     //             event: EventIs(RecvTaggedMsg),
+//     //         };
+//     //         println!("{}", rule);
+//     //         let conninfo = ConnInfo::from_str(
+//     //             "1
+//     // 0 1 0 0
+//     // ",
+//     //         )
+//     //         .unwrap();
+//     //         assert!(rule.preceding_event.holds(&e, &predecessor, &conninfo));
+//     //     }
+// }

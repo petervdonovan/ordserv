@@ -31,7 +31,7 @@ impl Add<Delay> for Tag {
 }
 
 impl Tag {
-    pub fn strict_add(self, rhs: Delay) -> Self {
+    pub fn strict_plus(self, rhs: Delay) -> Self {
         let mut tag = self;
         tag.0 += rhs.0 as i64;
         tag.1 += rhs.1;
@@ -247,13 +247,13 @@ impl ConnInfo {
             .filter(move |((_, d), _)| d.0 == dest.0)
             .map(|((s, _), d)| (s, d))
     }
-    pub fn largest_delay_out(&self, src: FedId) -> Option<Delay> {
-        // for each downstream federate, find the largest input delay
+    pub fn delays_in(&self, dest: FedId) -> impl Iterator<Item = Delay> + '_ {
+        self.fed2uds[dest.0 as usize].1.iter().cloned()
+    }
+    pub fn delays_out(&self, src: FedId) -> impl Iterator<Item = (FedId, &Delay)> {
         self.fed2uds
             .iter()
-            .filter(|dest| self.stdp2d.0.get(&(src, dest.0)).is_some())
-            .flat_map(|fed2uds| fed2uds.1.iter())
-            .max()
-            .copied()
+            .filter(move |dest| self.stdp2d.0.get(&(src, dest.0)).is_some())
+            .flat_map(|fed2uds| std::iter::repeat(fed2uds.0).zip(fed2uds.1.iter()))
     }
 }

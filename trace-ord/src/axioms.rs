@@ -1,15 +1,11 @@
-use std::f32::consts::E;
+use crate::{EventKind, Rule};
 
-use crate::conninfo::Tag;
-use crate::{Event, EventKind, Rule};
+use crate::DelayTerm::*;
+use crate::Term::*;
 
 use crate::BinaryRelation::{
-    And, FederateDirectlyUpstreamOf, FederateEquals, FederateZeroDelayDirectlyUpstreamOf,
-    TagEquals, TagGreaterThanOrEqual, TagLessThan, TagLessThanOrEqual, TagPlusDelay2FedEquals,
-    TagPlusDelay2FedGreaterThanOrEquals, TagPlusDelay2FedLessThan, TagPlusDelay2FedLessThanOrEqual,
-    TagPlusLargestDelayGreaterThanOrEqual, TagPlusLargestDelayLessThan,
-    TagPlusLargestDelayLessThanOrEqual, TagStrictPlusDelay2FedLessThan,
-    TagStrictPlusDelayFromSomeImmUpstreamFedGreaterThanOrEquals, Unary,
+    And, Equal, FederateDirectlyUpstreamOf, FederateEquals, FederateZeroDelayDirectlyUpstreamOf,
+    GreaterThanOrEqual, LessThan, LessThanOrEqual, Unary,
 };
 use crate::EventKind::*;
 use crate::Predicate::*;
@@ -22,7 +18,7 @@ pub fn axioms() -> Vec<Rule> {
             preceding_event: And(Box::new([
                 Unary(Box::new(EventIs(RecvLtc))),
                 FederateEquals,
-                TagLessThan,
+                LessThan(Tag, Tag),
             ])),
             event: EventIs(RecvLtc),
         },
@@ -58,7 +54,7 @@ pub fn axioms() -> Vec<Rule> {
                         // FederateEquals,
                     ])),
                 ])),
-                TagEquals,
+                Equal(Tag, Tag),
                 Unary(Box::new(Predicate::And(Box::new([
                     TagFinite,
                     TagNonzero, // instead of tag nonzero it should be "tag greater than min input delay to federate"
@@ -77,7 +73,7 @@ pub fn axioms() -> Vec<Rule> {
                     EventIs(RecvTaggedMsg),
                 ])))),
                 FederateEquals,
-                TagLessThanOrEqual,
+                LessThanOrEqual(Tag, Tag),
             ])),
             event: Predicate::And(Box::new([EventIs(RecvLtc)])),
         },
@@ -86,7 +82,7 @@ pub fn axioms() -> Vec<Rule> {
             preceding_event: And(Box::new([
                 Unary(Box::new(EventIs(RecvNet))),
                 FederateEquals,
-                TagLessThanOrEqual,
+                LessThanOrEqual(Tag, Tag),
             ])),
             event: Predicate::And(Box::new([EventIs(RecvLtc), TagNonzero])),
         },
@@ -96,7 +92,7 @@ pub fn axioms() -> Vec<Rule> {
             preceding_event: And(Box::new([
                 Unary(Box::new(EventIs(RecvLtc))),
                 FederateEquals,
-                TagPlusLargestDelayLessThan,
+                LessThan(TagPlusDelay(LargestDelayFrom), Tag),
             ])),
             event: Predicate::Or(Box::new([EventIs(RecvPortAbs), EventIs(RecvTaggedMsg)])),
         },
@@ -108,7 +104,7 @@ pub fn axioms() -> Vec<Rule> {
                     EventIs(SendPtag),
                 ])))),
                 FederateEquals,
-                TagPlusLargestDelayGreaterThanOrEqual,
+                GreaterThanOrEqual(TagPlusDelay(LargestDelayFrom), Tag),
             ])))),
             event: Predicate::And(Box::new([
                 Predicate::Or(Box::new([EventIs(RecvPortAbs), EventIs(RecvTaggedMsg)])),
@@ -126,7 +122,7 @@ pub fn axioms() -> Vec<Rule> {
                     EventIs(SendTag),
                 ])))),
                 FederateEquals,
-                TagLessThan,
+                LessThan(Tag, Tag),
             ])),
             event: Or(Box::new([EventIs(SendPtag), EventIs(SendTag)])),
         },
@@ -135,7 +131,7 @@ pub fn axioms() -> Vec<Rule> {
             preceding_event: And(Box::new([
                 Unary(Box::new(EventIs(SendPtag))),
                 FederateEquals,
-                TagLessThanOrEqual,
+                LessThanOrEqual(Tag, Tag),
             ])),
             event: EventIs(SendTag),
         },
@@ -146,7 +142,7 @@ pub fn axioms() -> Vec<Rule> {
                     And(Box::new([
                         Unary(Box::new(EventIs(RecvLtc))),
                         FederateZeroDelayDirectlyUpstreamOf,
-                        TagGreaterThanOrEqual,
+                        GreaterThanOrEqual(Tag, Tag),
                     ])),
                     And(Box::new([
                         Unary(Box::new(Or(Box::new([
@@ -155,7 +151,7 @@ pub fn axioms() -> Vec<Rule> {
                             EventIs(SendStopGrn),
                         ])))),
                         FederateZeroDelayDirectlyUpstreamOf,
-                        TagGreaterThanOrEqual,
+                        GreaterThanOrEqual(Tag, Tag),
                     ])),
                 ]),
             ))),
@@ -167,7 +163,7 @@ pub fn axioms() -> Vec<Rule> {
                 And(Box::new([
                     Unary(Box::new(EventIs(SendPtag))),
                     FederateZeroDelayDirectlyUpstreamOf,
-                    TagEquals,
+                    Equal(Tag, Tag),
                 ])),
                 And(Box::new([
                     Unary(Box::new(Or(Box::new([
@@ -175,7 +171,7 @@ pub fn axioms() -> Vec<Rule> {
                         EventIs(SendStopGrn),
                     ])))),
                     BinaryRelation::Or(Box::new([FederateEquals, FederateDirectlyUpstreamOf])),
-                    TagEquals,
+                    Equal(Tag, Tag),
                 ])),
             ])))),
             event: Predicate::And(Box::new([EventIs(SendPtag), TagNonzero])),
@@ -186,7 +182,7 @@ pub fn axioms() -> Vec<Rule> {
         //             EventIs(SendTag),
         //             EventIs(SendPtag),
         //         ])))),
-        //         TagGreaterThanOrEqual,
+        //         GreaterThanOrEqual(Tag, Tag),
         //         FederateEquals,
         //     ])))),
         //     event: Or(Box::new([EventIs(RecvPortAbs), EventIs(RecvTaggedMsg)])),
@@ -196,7 +192,7 @@ pub fn axioms() -> Vec<Rule> {
             preceding_event: BinaryRelation::IsFirst(Box::new(And(Box::new([
                 Unary(Box::new(EventIs(RecvPortAbs))),
                 FederateZeroDelayDirectlyUpstreamOf,
-                TagEquals,
+                Equal(Tag, Tag),
             ])))),
             event: EventIs(SendPortAbs),
         },
@@ -204,7 +200,7 @@ pub fn axioms() -> Vec<Rule> {
             preceding_event: BinaryRelation::IsFirst(Box::new(And(Box::new([
                 Unary(Box::new(EventIs(RecvTaggedMsg))),
                 FederateDirectlyUpstreamOf,
-                TagEquals,
+                Equal(Tag, Tag),
             ])))),
             event: EventIs(SendTaggedMsg),
         },
@@ -216,7 +212,7 @@ pub fn axioms() -> Vec<Rule> {
                     EventIs(RecvTaggedMsg),
                 ])))),
                 FederateEquals,
-                TagLessThanOrEqual, // Want: tag minus smallest delay less than or equal
+                LessThanOrEqual(Tag, Tag), // Want: tag minus smallest delay less than or equal
             ])),
             event: Or(Box::new([EventIs(RecvLtc)])),
         },
@@ -224,7 +220,7 @@ pub fn axioms() -> Vec<Rule> {
         //     preceding_event: And(Box::new([
         //         Unary(Box::new(Or(Box::new([EventIs(RecvLtc)])))),
         //         FederateEquals,
-        //         TagLessThan,
+        //         LessThan(Tag, Tag),
         //     ])),
         //     event: Or(Box::new([EventIs(SendPortAbs), EventIs(SendTaggedMsg)])),
         // },  // Not true, even though it seems like maybe it should be (we have no backpressure, unbounded buffers?)
