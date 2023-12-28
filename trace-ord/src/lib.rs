@@ -7,12 +7,14 @@ use std::{
 
 use ::serde::{Deserialize, Serialize};
 use conninfo::{get_nonnegative_microstep, ConnInfo, Delay, FedId, Tag, NO_DELAY, STARTUP};
+use enum_iterator::Sequence;
 
 pub mod axioms;
 pub mod conninfo;
+pub mod enumerate;
 pub mod serde;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Sequence)]
 pub enum EventKind {
     RecvFedId,
     SendAck,
@@ -71,13 +73,13 @@ pub enum BinaryRelation {
     Unary(Box<Predicate>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Sequence)]
 pub enum Term {
     Tag,
     TagPlusDelay(DelayTerm),
     TagStrictPlusDelay(DelayTerm),
 }
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Sequence)]
 pub enum DelayTerm {
     SmallestDelayBetween,
     SmallestDelayFrom,
