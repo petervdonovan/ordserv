@@ -1,8 +1,15 @@
-use crate::{BinaryRelation, Event, EventKind, Predicate, Rule};
+use std::collections::{HashMap, HashSet};
+
+use crate::{BinaryRelation, EventKind, Predicate, Rule};
 
 #[derive(Debug, Default)]
 pub struct PredicatesWithFuel {
-    predicates_by_fuel: Vec<Vec<Predicate>>,
+    predicates_by_fuel: Vec<Vec<(Predicate, PredicateAbstraction)>>,
+}
+#[derive(Debug, Default, Clone)]
+pub struct PredicateAbstraction {
+    pub possible_events: Option<HashSet<EventKind>>,
+    pub predicate2powerbool: HashMap<Predicate, PowerBool>,
 }
 #[derive(Debug, Default)]
 pub struct PredicatesWithBoundBinariesWithFuel(PredicatesWithFuel);
@@ -18,44 +25,83 @@ pub struct BinaryRelationsWithUnariesWithFuel(BinaryRelationsWithFuel);
 pub struct RulesWithFuel {
     rules_by_fuel: Vec<Vec<Rule>>,
 }
+#[derive(Debug, Clone, Copy)]
+pub struct PowerBool {
+    pub maybe_true: bool,
+    pub maybe_false: bool,
+}
 
 impl PredicatesWithFuel {
-    pub fn advance(&mut self, fuel: usize) -> impl Iterator<Item = &Predicate> {
-        fn exact_fuel(predicates: &PredicatesWithFuel, fuel: usize) -> Vec<Predicate> {
+    pub fn advance(
+        &mut self,
+        fuel: usize,
+    ) -> impl Iterator<Item = &(Predicate, PredicateAbstraction)> {
+        fn exact_fuel(
+            predicates: &PredicatesWithFuel,
+            fuel: usize,
+        ) -> Vec<(Predicate, PredicateAbstraction)> {
             if fuel == 0 {
                 let mut ret = vec![
-                    Predicate::FedHasNoneUpstreamWithDelayLessThanOrEqualCurrentTag,
-                    Predicate::TagNonzero,
-                    Predicate::TagFinite,
+                    (
+                        Predicate::FedHasNoneUpstreamWithDelayLessThanOrEqualCurrentTag,
+                        PredicateAbstraction::fact(
+                            Predicate::FedHasNoneUpstreamWithDelayLessThanOrEqualCurrentTag,
+                        ),
+                    ),
+                    (
+                        Predicate::TagNonzero,
+                        PredicateAbstraction::fact(Predicate::TagNonzero),
+                    ),
+                    (
+                        Predicate::TagFinite,
+                        PredicateAbstraction::fact(Predicate::TagFinite),
+                    ),
                 ];
                 for kind in enum_iterator::all::<EventKind>() {
-                    ret.push(Predicate::EventIs(kind));
+                    ret.push((Predicate::EventIs(kind), PredicateAbstraction::event(kind)));
                 }
                 ret
             } else {
                 let mut ret = vec![];
                 // add And, Or, and Not, but not IsFirst or BoundBinary
-                for predicate in
-                    predicates.predicates_by_fuel[fuel - 1]
-                        .iter()
-                        .filter(|&predicate| {
-                            // no double negation
-                            !matches!(predicate, Predicate::Not(_))
-                        })
+                for (predicate, abstraction) in predicates.predicates_by_fuel[fuel - 1]
+                    .iter()
+                    .filter(|&(predicate, _)| {
+                        // no double negation
+                        !matches!(predicate, Predicate::Not(_))
+                    })
                 {
-                    ret.push(Predicate::Not(Box::new(predicate.clone())));
+                    ret.push((
+                        Predicate::Not(Box::new(predicate.clone())),
+                        abstraction.not(),
+                    ));
                 }
                 let inexact_combinations =
                     inexact_combinations(&predicates.predicates_by_fuel, fuel);
                 // println!("inexact_combinations: {:?}", inexact_combinations);
                 for combination in inexact_combinations.into_iter() {
-                    ret.push(Predicate::And(combination.clone().into_boxed_slice()));
-                    ret.push(Predicate::Or(combination.into_boxed_slice()));
+                    let bslice = || {
+                        combination
+                            .iter()
+                            .map(|it| it.0.clone())
+                            .collect::<Vec<_>>()
+                            .into_boxed_slice()
+                    };
+                    let conniter = || combination.iter().map(|it| it.1.clone());
+                    ret.push((
+                        Predicate::And(bslice()),
+                        PredicateAbstraction::and(conniter()),
+                    ));
+                    ret.push((
+                        Predicate::Or(bslice()),
+                        PredicateAbstraction::or(conniter()),
+                    ));
                 }
                 ret
             }
         }
-        let mut ret: Box<dyn Iterator<Item = &Predicate>> = Box::new(std::iter::empty());
+        let mut ret: Box<dyn Iterator<Item = &(Predicate, PredicateAbstraction)>> =
+            Box::new(std::iter::empty());
         let len = self.predicates_by_fuel.len();
         for fuel in len..=fuel {
             let exact = exact_fuel(self, fuel);
@@ -65,6 +111,95 @@ impl PredicatesWithFuel {
             ret = Box::new(ret.chain(self.predicates_by_fuel[fuel].iter()));
         }
         ret
+    }
+}
+
+impl PredicateAbstraction {
+    pub fn fact(predicate: Predicate) -> Self {
+        Self {
+            possible_events: None,
+            predicate2powerbool: vec![(predicate, PowerBool::new_true())]
+                .into_iter()
+                .collect(),
+        }
+    }
+    pub fn event(kind: EventKind) -> Self {
+        Self {
+            possible_events: Some(vec![kind].into_iter().collect()),
+            predicate2powerbool: HashMap::default(),
+        }
+    }
+    pub fn and(terms: impl Iterator<Item = PredicateAbstraction> + Clone) -> Self {
+        let possible_events: Option<HashSet<EventKind>> = terms
+            .clone()
+            .filter_map(|it| it.possible_events)
+            .fold(None, |acc, it| {
+                if let Some(acc) = acc {
+                    Some(acc.intersection(&it).cloned().collect())
+                } else {
+                    Some(it.clone())
+                }
+            });
+        let predicate2powerbool =
+            terms.fold(HashMap::<Predicate, PowerBool>::default(), |mut acc, it| {
+                for (predicate, powerbool) in it.predicate2powerbool.iter() {
+                    let entry = acc.entry(predicate.clone()).or_default();
+                    entry.and(powerbool);
+                }
+                acc
+            });
+        Self {
+            possible_events,
+            predicate2powerbool,
+        }
+    }
+    pub fn or(terms: impl Iterator<Item = PredicateAbstraction> + Clone) -> Self {
+        let possible_events: Option<HashSet<EventKind>> = terms
+            .clone()
+            .filter_map(|it| it.possible_events)
+            .fold(None, |acc, it| {
+                if let Some(acc) = acc {
+                    Some(acc.union(&it).cloned().collect())
+                } else {
+                    Some(it.clone())
+                }
+            });
+        let predicate2powerbool =
+            terms.fold(HashMap::<Predicate, PowerBool>::default(), |mut acc, it| {
+                for (predicate, powerbool) in it.predicate2powerbool.iter() {
+                    // do not keep entries that map to top after being or'ed
+                    let entry = acc.entry(predicate.clone()).or_default();
+                    entry.or(powerbool);
+                    if entry.is_top() {
+                        acc.remove(predicate);
+                    }
+                }
+                acc
+            });
+        Self {
+            possible_events,
+            predicate2powerbool,
+        }
+    }
+    pub fn not(&self) -> Self {
+        let predicate2powerbool = self
+            .predicate2powerbool
+            .iter()
+            .map(|(predicate, powerbool)| (predicate.clone(), powerbool.not()))
+            .collect();
+        Self {
+            possible_events: None,
+            predicate2powerbool,
+        }
+    }
+    pub fn uninhabitable(&self) -> bool {
+        self.possible_events
+            .as_ref()
+            .is_some_and(|it| it.is_empty())
+            || self
+                .predicate2powerbool
+                .iter()
+                .any(|(_, pb)| pb.uninhabitable())
     }
 }
 
@@ -143,11 +278,6 @@ where
                 }
             })
             .collect::<Vec<_>>();
-        // incrementables.sort_by_key(|(_, diff)| usize::MAX - diff);
-        // let incrementables = incrementables
-        //     .into_iter()
-        //     .map(|(idx, _)| idx)
-        //     .collect::<Vec<_>>();
         let mut combinations: Vec<Vec<T>> = vec![];
         loop {
             println!(
@@ -215,6 +345,57 @@ where
             }
             combinations
         }
+    }
+}
+impl Default for PowerBool {
+    fn default() -> Self {
+        Self {
+            maybe_true: true,
+            maybe_false: true,
+        }
+    }
+}
+impl PowerBool {
+    fn and(&mut self, other: &Self) {
+        self.maybe_true &= other.maybe_true;
+        self.maybe_false &= other.maybe_false;
+    }
+    fn or(&mut self, other: &Self) {
+        self.maybe_true |= other.maybe_true;
+        self.maybe_false |= other.maybe_false;
+    }
+    fn not(&self) -> Self {
+        if self.is_false() {
+            Self::new_true()
+        } else if self.is_true() {
+            Self::new_false()
+        } else {
+            Self::default()
+        }
+    }
+    fn is_top(&self) -> bool {
+        self.maybe_true && self.maybe_false
+    }
+    fn is_true(&self) -> bool {
+        self.maybe_true && !self.maybe_false
+    }
+    fn is_false(&self) -> bool {
+        !self.maybe_true && self.maybe_false
+    }
+    fn new_true() -> Self {
+        Self {
+            maybe_true: true,
+            maybe_false: false,
+        }
+    }
+    fn new_false() -> Self {
+        Self {
+            maybe_true: false,
+            maybe_false: true,
+        }
+    }
+    fn uninhabitable(&self) -> bool {
+        !self.maybe_true && !self.maybe_false
     }
 }
 mod tests {
@@ -464,7 +645,9 @@ mod tests {
             &predicates
                 .iter()
                 .step_by(100)
-                .fold(String::new(), |a, b| a + &format!("{:?}\n", b)),
+                .fold(String::new(), |a, b| a + &format!("{:?}\n", b.0)),
         );
+        let expected_n = expect_test::expect!["23332"];
+        expected_n.assert_eq(&predicates.len().to_string());
     }
 }
