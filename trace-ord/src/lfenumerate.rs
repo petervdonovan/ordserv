@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    enumerate::{Abstraction, ByFuel, NaryRelation, NaryRelationKind, PowerBool},
+    enumerate::{Abstraction, ByFuel, ConcAbst, NaryRelation, NaryRelationKind, PowerBool},
     BinaryRelation, EventKind, Predicate, Rule,
 };
 
@@ -50,104 +50,17 @@ impl NaryRelation for Predicate {
         }
     }
 
-    fn and(terms: Box<[Self]>) -> Self {
-        Predicate::And(terms)
-    }
+    // fn and(terms: Box<[Self]>) -> Self {
+    //     Predicate::And(terms)
+    // }
 
-    fn or(terms: Box<[Self]>) -> Self {
-        Predicate::Or(terms)
-    }
+    // fn or(terms: Box<[Self]>) -> Self {
+    //     Predicate::Or(terms)
+    // }
 
-    fn not(&self) -> Self {
-        Predicate::Not(Box::new(self.clone()))
-    }
-}
-
-impl ByFuel<PredicateAbstraction> {
-    pub fn advance(
-        &mut self,
-        fuel: usize,
-    ) -> impl Iterator<Item = &(Predicate, PredicateAbstraction)> {
-        fn exact_fuel(
-            predicates: &ByFuel<PredicateAbstraction>,
-            fuel: usize,
-        ) -> Vec<(Predicate, PredicateAbstraction)> {
-            if fuel == 0 {
-                Predicate::atoms()
-                    .into_iter()
-                    .map(|it| {
-                        let ab = PredicateAbstraction::fact(&it);
-                        (it, ab)
-                    })
-                    .collect()
-            } else {
-                let mut ret = vec![];
-                // add And, Or, and Not, but not IsFirst or BoundBinary
-                for (predicate, abstraction) in predicates.0[fuel - 1]
-                    .iter()
-                    .filter(|&(predicate, _)| {
-                        // no double negation
-                        predicate.kind() != NaryRelationKind::Not
-                    })
-                    .filter(|&(predicate, _)| {
-                        // heuristic: usually is not helpful to match negations of eventis.
-                        // note: we still hit all equivalence classes because not(some event) is the same as or(all other events), except with undesirably much lower fuel
-                        !matches!(predicate, Predicate::EventIs(_))
-                    })
-                {
-                    ret.push((
-                        Predicate::Not(Box::new(predicate.clone())),
-                        abstraction.not(),
-                    ));
-                }
-                let inexact_combinations =
-                    crate::enumerate::inexact_combinations(&predicates.0, fuel);
-                // println!("inexact_combinations: {:?}", inexact_combinations);
-                for combination in inexact_combinations.into_iter() {
-                    let bslice = || {
-                        combination
-                            .iter()
-                            .map(|it| it.0.clone())
-                            .collect::<Vec<_>>()
-                            .into_boxed_slice()
-                    };
-                    let conniter = || combination.iter().map(|it| it.1.clone());
-                    let aband = PredicateAbstraction::and(conniter());
-                    let abor = PredicateAbstraction::or(conniter());
-                    if let Some(aband) = aband {
-                        if !aband.uninhabitable()
-                            && !combination
-                                .iter()
-                                .any(|it| it.0.kind() == NaryRelationKind::And)
-                        {
-                            ret.push((Predicate::And(bslice()), aband));
-                        }
-                    }
-                    if let Some(abor) = abor {
-                        if !abor.uninhabitable()
-                            && !combination
-                                .iter()
-                                .any(|it| it.0.kind() == NaryRelationKind::Or)
-                        {
-                            ret.push((Predicate::Or(bslice()), abor));
-                        }
-                    }
-                }
-                ret
-            }
-        }
-        let mut ret: Box<dyn Iterator<Item = &(Predicate, PredicateAbstraction)>> =
-            Box::new(std::iter::empty());
-        let len = self.0.len();
-        for fuel in len..=fuel {
-            let exact = exact_fuel(self, fuel);
-            self.0.push(exact);
-        }
-        for fuel in len..=fuel {
-            ret = Box::new(ret.chain(self.0[fuel].iter()));
-        }
-        ret
-    }
+    // fn not(&self) -> Self {
+    //     Predicate::Not(Box::new(self.clone()))
+    // }
 }
 
 impl Abstraction for PredicateAbstraction {
@@ -164,8 +77,11 @@ impl Abstraction for PredicateAbstraction {
         }
     }
 
-    fn and(terms: impl Iterator<Item = Self> + Clone) -> Option<Self> {
-        let possible_events: Option<HashSet<EventKind>> = terms
+    fn and(
+        concterms: impl Fn() -> Box<[Self::R]>,
+        absterms: impl Iterator<Item = Self> + Clone,
+    ) -> Option<ConcAbst<Self>> {
+        let possible_events: Option<HashSet<EventKind>> = absterms
             .clone()
             .filter_map(|it| it.possible_events)
             .fold(None, |acc, it| {
@@ -176,21 +92,27 @@ impl Abstraction for PredicateAbstraction {
                 }
             });
         let predicate2powerbool =
-            terms.fold(HashMap::<Predicate, PowerBool>::default(), |mut acc, it| {
+            absterms.fold(HashMap::<Predicate, PowerBool>::default(), |mut acc, it| {
                 for (predicate, powerbool) in it.predicate2powerbool.iter() {
                     let entry = acc.entry(predicate.clone()).or_default();
                     entry.and(powerbool);
                 }
                 acc
             });
-        Some(Self {
-            possible_events,
-            predicate2powerbool,
-        })
+        Some((
+            Predicate::And(concterms()),
+            Self {
+                possible_events,
+                predicate2powerbool,
+            },
+        ))
     }
 
-    fn or(terms: impl Iterator<Item = Self> + Clone) -> Option<Self> {
-        let possible_events: Option<HashSet<EventKind>> = terms
+    fn or(
+        concterms: impl Fn() -> Box<[Self::R]>,
+        absterms: impl Iterator<Item = Self> + Clone,
+    ) -> Option<ConcAbst<Self>> {
+        let possible_events: Option<HashSet<EventKind>> = absterms
             .clone()
             .filter_map(|it| it.possible_events)
             .fold(None, |acc, it| {
@@ -201,7 +123,7 @@ impl Abstraction for PredicateAbstraction {
                 }
             });
         let predicate2powerbool =
-            terms.fold(HashMap::<Predicate, PowerBool>::default(), |mut acc, it| {
+            absterms.fold(HashMap::<Predicate, PowerBool>::default(), |mut acc, it| {
                 for (predicate, powerbool) in it.predicate2powerbool.iter() {
                     // do not keep entries that map to top after being or'ed
                     let entry = acc.entry(predicate.clone()).or_default();
@@ -212,14 +134,42 @@ impl Abstraction for PredicateAbstraction {
                 }
                 acc
             });
-        Some(Self {
-            possible_events,
-            predicate2powerbool,
-        })
+        Some((
+            Predicate::Or(concterms()),
+            Self {
+                possible_events,
+                predicate2powerbool,
+            },
+        ))
     }
 
-    fn not(&self) -> Option<Self> {
-        todo!()
+    fn not(&self, concterm: &Predicate) -> Option<ConcAbst<Self>> {
+        if matches!(concterm, &Predicate::EventIs(_)) {
+            // heuristic: usually is not helpful to match negations of eventis.
+            // note: we still hit all equivalence classes because not(some event) is the same as or(all other events), except with undesirably much lower fuel
+            return None;
+        }
+        let predicate2powerbool = self
+            .predicate2powerbool
+            .iter()
+            .map(|(predicate, powerbool)| (predicate.clone(), powerbool.not()))
+            .collect();
+        Some((
+            Predicate::Not(Box::new(concterm.clone())),
+            Self {
+                possible_events: None,
+                predicate2powerbool,
+            },
+        ))
+    }
+    fn uninhabitable(&self) -> bool {
+        self.possible_events
+            .as_ref()
+            .is_some_and(|it| it.is_empty())
+            || self
+                .predicate2powerbool
+                .iter()
+                .any(|(_, pb)| pb.uninhabitable())
     }
 }
 
@@ -236,26 +186,18 @@ impl PredicateAbstraction {
     // pub fn or(terms: impl Iterator<Item = PredicateAbstraction> + Clone) -> Self {
 
     // }
-    pub fn not(&self) -> Self {
-        let predicate2powerbool = self
-            .predicate2powerbool
-            .iter()
-            .map(|(predicate, powerbool)| (predicate.clone(), powerbool.not()))
-            .collect();
-        Self {
-            possible_events: None,
-            predicate2powerbool,
-        }
-    }
-    pub fn uninhabitable(&self) -> bool {
-        self.possible_events
-            .as_ref()
-            .is_some_and(|it| it.is_empty())
-            || self
-                .predicate2powerbool
-                .iter()
-                .any(|(_, pb)| pb.uninhabitable())
-    }
+    // pub fn not(&self) -> Self {
+
+    // }
+    // pub fn uninhabitable(&self) -> bool {
+    //     self.possible_events
+    //         .as_ref()
+    //         .is_some_and(|it| it.is_empty())
+    //         || self
+    //             .predicate2powerbool
+    //             .iter()
+    //             .any(|(_, pb)| pb.uninhabitable())
+    // }
 }
 
 mod tests {
@@ -263,7 +205,7 @@ mod tests {
 
     #[test]
     fn test_predicates_with_fuel() {
-        let mut predicates = ByFuel::default();
+        let mut predicates = ByFuel::<PredicateAbstraction>::default();
         let predicates: Vec<_> = predicates.advance(5).collect();
         // TODO: account for implications between atomic predicates. e.g., if a implies b, then or(a, b) is equivalent to b.
         let expect = expect_test::expect![[r#"

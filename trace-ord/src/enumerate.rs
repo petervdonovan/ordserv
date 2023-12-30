@@ -7,9 +7,9 @@ pub struct ByFuel<Ab: Abstraction>(pub Vec<Vec<(Ab::R, Ab)>>); // TODO: no pub
 pub trait NaryRelation: Sized + Clone {
     fn atoms() -> Vec<Self>;
     fn kind(&self) -> NaryRelationKind;
-    fn and(terms: Box<[Self]>) -> Self;
-    fn or(terms: Box<[Self]>) -> Self;
-    fn not(&self) -> Self;
+    // fn and(terms: Box<[Self]>) -> Self;
+    // fn or(terms: Box<[Self]>) -> Self;
+    // fn not(&self) -> Self;
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NaryRelationKind {
@@ -18,12 +18,21 @@ pub enum NaryRelationKind {
     Not,
     Other,
 }
-pub trait Abstraction: Sized {
+#[allow(type_alias_bounds)] // it looks like a bug that this is necessary
+pub type ConcAbst<Ab: Abstraction> = (Ab::R, Ab);
+pub trait Abstraction: Sized + Clone {
     type R: NaryRelation;
     fn fact(fact: &Self::R) -> Self;
-    fn and(terms: impl Iterator<Item = Self> + Clone) -> Option<Self>;
-    fn or(terms: impl Iterator<Item = Self> + Clone) -> Option<Self>;
-    fn not(&self) -> Option<Self>;
+    fn and(
+        concterms: impl Fn() -> Box<[Self::R]>,
+        absterms: impl Iterator<Item = Self> + Clone,
+    ) -> Option<ConcAbst<Self>>;
+    fn or(
+        concterms: impl Fn() -> Box<[Self::R]>,
+        absterms: impl Iterator<Item = Self> + Clone,
+    ) -> Option<ConcAbst<Self>>;
+    fn not(&self, concterm: &Self::R) -> Option<ConcAbst<Self>>;
+    fn uninhabitable(&self) -> bool;
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -35,6 +44,76 @@ pub struct PowerBool {
 impl<T: Abstraction> Default for ByFuel<T> {
     fn default() -> Self {
         Self(vec![])
+    }
+}
+
+impl<Ab: crate::enumerate::Abstraction> ByFuel<Ab> {
+    pub fn advance(&mut self, fuel: usize) -> impl Iterator<Item = &ConcAbst<Ab>> {
+        let mut ret: Box<dyn Iterator<Item = &ConcAbst<Ab>>> = Box::new(std::iter::empty());
+        let len = self.0.len();
+        for fuel in len..=fuel {
+            let exact = self.exact_fuel(fuel);
+            self.0.push(exact);
+        }
+        for fuel in len..=fuel {
+            ret = Box::new(ret.chain(self.0[fuel].iter()));
+        }
+        ret
+    }
+    fn exact_fuel(&self, fuel: usize) -> Vec<ConcAbst<Ab>> {
+        if fuel == 0 {
+            Ab::R::atoms()
+                .into_iter()
+                .map(|it| {
+                    let ab = Ab::fact(&it);
+                    (it, ab)
+                })
+                .collect()
+        } else {
+            let mut ret = vec![];
+            // add And, Or, and Not, but not IsFirst or BoundBinary
+            for (predicate, abstraction) in self.0[fuel - 1].iter().filter(|&(predicate, _)| {
+                // no double negation
+                predicate.kind() != NaryRelationKind::Not
+            }) {
+                if let Some(concabst) = abstraction.not(predicate) {
+                    ret.push(concabst);
+                }
+            }
+            let inexact_combinations = crate::enumerate::inexact_combinations(&self.0, fuel);
+            // println!("inexact_combinations: {:?}", inexact_combinations);
+            for combination in inexact_combinations.into_iter() {
+                let bslice = || {
+                    combination
+                        .iter()
+                        .map(|it| it.0.clone())
+                        .collect::<Vec<_>>()
+                        .into_boxed_slice()
+                };
+                let conniter = || combination.iter().map(|it| it.1.clone());
+                let concaband = Ab::and(bslice, conniter());
+                let concabor = Ab::or(bslice, conniter());
+                if let Some(concaband) = concaband {
+                    if !concaband.1.uninhabitable()
+                        && !combination
+                            .iter()
+                            .any(|it| it.0.kind() == NaryRelationKind::And)
+                    {
+                        ret.push(concaband);
+                    }
+                }
+                if let Some(concabor) = concabor {
+                    if !concabor.1.uninhabitable()
+                        && !combination
+                            .iter()
+                            .any(|it| it.0.kind() == NaryRelationKind::Or)
+                    {
+                        ret.push(concabor);
+                    }
+                }
+            }
+            ret
+        }
     }
 }
 
