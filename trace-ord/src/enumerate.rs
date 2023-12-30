@@ -4,12 +4,9 @@ use crate::{BinaryRelation, EventKind, Predicate, Rule};
 #[derive(Debug)]
 pub struct ByFuel<Ab: Abstraction>(pub Vec<Vec<(Ab::R, Ab)>>); // TODO: no pub
 
-pub trait NaryRelation: Sized + Clone {
+pub trait NaryRelation: Sized + Clone + std::fmt::Debug + std::hash::Hash + PartialEq + Eq {
     fn atoms() -> Vec<Self>;
     fn kind(&self) -> NaryRelationKind;
-    // fn and(terms: Box<[Self]>) -> Self;
-    // fn or(terms: Box<[Self]>) -> Self;
-    // fn not(&self) -> Self;
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NaryRelationKind {
@@ -24,15 +21,19 @@ pub trait Abstraction: Sized + Clone {
     type R: NaryRelation;
     fn fact(fact: &Self::R) -> Self;
     fn and(
-        concterms: impl Fn() -> Box<[Self::R]>,
+        concterms: impl Iterator<Item = Self::R> + Clone,
         absterms: impl Iterator<Item = Self> + Clone,
     ) -> Option<ConcAbst<Self>>;
     fn or(
-        concterms: impl Fn() -> Box<[Self::R]>,
+        concterms: impl Iterator<Item = Self::R> + Clone,
         absterms: impl Iterator<Item = Self> + Clone,
     ) -> Option<ConcAbst<Self>>;
     fn not(&self, concterm: &Self::R) -> Option<ConcAbst<Self>>;
     fn uninhabitable(&self) -> bool;
+}
+#[derive(Debug, Clone)]
+pub struct SimpleAbstraction<R: NaryRelation> {
+    pub predicate2powerbool: HashMap<R, PowerBool>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -44,6 +45,79 @@ pub struct PowerBool {
 impl<T: Abstraction> Default for ByFuel<T> {
     fn default() -> Self {
         Self(vec![])
+    }
+}
+
+impl<R: NaryRelation> Default for SimpleAbstraction<R> {
+    fn default() -> Self {
+        Self {
+            predicate2powerbool: HashMap::default(),
+        }
+    }
+}
+
+impl<R: NaryRelation> SimpleAbstraction<R> {
+    pub fn fact(fact: &R) -> Self {
+        Self {
+            predicate2powerbool: vec![(fact.clone(), PowerBool::new_true())]
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    pub fn and(
+        concterms: impl Iterator<Item = R> + Clone,
+        absterms: impl Iterator<Item = Self> + Clone,
+    ) -> Option<Self> {
+        let predicate2powerbool =
+            absterms.fold(HashMap::<R, PowerBool>::default(), |mut acc, it| {
+                for (predicate, powerbool) in it.predicate2powerbool.iter() {
+                    let entry = acc.entry(predicate.clone()).or_default();
+                    entry.and(powerbool);
+                }
+                acc
+            });
+        Some(Self {
+            predicate2powerbool,
+        })
+    }
+
+    pub fn or(
+        concterms: impl Iterator<Item = R> + Clone,
+        absterms: impl Iterator<Item = Self> + Clone,
+    ) -> Option<Self> {
+        let predicate2powerbool =
+            absterms.fold(HashMap::<R, PowerBool>::default(), |mut acc, it| {
+                for (predicate, powerbool) in it.predicate2powerbool.iter() {
+                    // do not keep entries that map to top after being or'ed
+                    let entry = acc.entry(predicate.clone()).or_default();
+                    entry.or(powerbool);
+                    if entry.is_top() {
+                        acc.remove(predicate);
+                    }
+                }
+                acc
+            });
+        Some(Self {
+            predicate2powerbool,
+        })
+    }
+
+    pub fn not(&self, concterm: &R) -> Option<Self> {
+        let predicate2powerbool = self
+            .predicate2powerbool
+            .iter()
+            .map(|(predicate, powerbool)| (predicate.clone(), powerbool.not()))
+            .collect();
+        Some(Self {
+            predicate2powerbool,
+        })
+    }
+
+    pub fn uninhabitable(&self) -> bool {
+        self.predicate2powerbool
+            .iter()
+            .any(|(_, pb)| pb.uninhabitable())
     }
 }
 
@@ -83,15 +157,9 @@ impl<Ab: crate::enumerate::Abstraction> ByFuel<Ab> {
             let inexact_combinations = crate::enumerate::inexact_combinations(&self.0, fuel);
             // println!("inexact_combinations: {:?}", inexact_combinations);
             for combination in inexact_combinations.into_iter() {
-                let bslice = || {
-                    combination
-                        .iter()
-                        .map(|it| it.0.clone())
-                        .collect::<Vec<_>>()
-                        .into_boxed_slice()
-                };
+                let bslice = combination.iter().map(|it| it.0.clone());
                 let conniter = || combination.iter().map(|it| it.1.clone());
-                let concaband = Ab::and(bslice, conniter());
+                let concaband = Ab::and(bslice.clone(), conniter());
                 let concabor = Ab::or(bslice, conniter());
                 if let Some(concaband) = concaband {
                     if !concaband.1.uninhabitable()
