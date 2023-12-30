@@ -12,6 +12,7 @@ use enum_iterator::Sequence;
 pub mod axioms;
 pub mod conninfo;
 pub mod enumerate;
+pub mod lfenumerate;
 pub mod serde;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Sequence)]
