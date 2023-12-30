@@ -11,3 +11,10 @@ expect-test = "1.4.1"
 lf-trace-reader = { version = "0.1.0", path = "../lf-trace-reader" }
 rmp-serde = "1.1.2"
 serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+criterion = "0.5.1"
+
+[[bench]]
+name = "bench"
+harness = false
