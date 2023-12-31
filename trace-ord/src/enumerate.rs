@@ -29,7 +29,6 @@ pub trait Abstraction: Sized + Clone {
         absterms: impl Iterator<Item = Self> + Clone,
     ) -> Option<ConcAbst<Self>>;
     fn not(&self, concterm: &Self::R) -> Option<ConcAbst<Self>>;
-    fn uninhabitable(&self) -> bool;
 }
 #[derive(Debug, Clone)]
 pub struct SimpleAbstraction<R: NaryRelation> {
@@ -181,9 +180,7 @@ impl<Ab: crate::enumerate::Abstraction> ByFuel<Ab> {
                 let concaband = Ab::and(bslice.clone(), conniter());
                 let concabor = Ab::or(bslice, conniter());
                 if let Some(concaband) = concaband {
-                    if !concaband.1.uninhabitable() {
-                        ret.push(concaband);
-                    }
+                    ret.push(concaband);
                 }
                 if let Some(concabor) = concabor {
                     ret.push(concabor);

@@ -72,12 +72,16 @@ impl Abstraction for PredicateAbstraction {
                 }
             });
         let sabs = SimpleAbstraction::and(concterms.clone(), absterms.map(|it| it.sabs))?;
+        let ret = Self {
+            possible_events,
+            sabs,
+        };
+        if ret.uninhabitable() {
+            return None;
+        }
         Some((
             Predicate::And(concterms.into_iter().collect::<Vec<_>>().into_boxed_slice()),
-            Self {
-                possible_events,
-                sabs,
-            },
+            ret,
         ))
     }
 
@@ -120,6 +124,9 @@ impl Abstraction for PredicateAbstraction {
             },
         ))
     }
+}
+
+impl PredicateAbstraction {
     fn uninhabitable(&self) -> bool {
         self.possible_events
             .as_ref()
