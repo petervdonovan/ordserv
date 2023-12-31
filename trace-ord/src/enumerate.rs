@@ -57,6 +57,7 @@ impl<R: NaryRelation> Default for SimpleAbstraction<R> {
 }
 
 impl<R: NaryRelation> SimpleAbstraction<R> {
+    // TODO: move the filtering into here. This includes uninhabitable filtering perhaps (not sure), and definitely and/or/not filtering. Move it here from the advance fn
     pub fn fact(fact: &R) -> Self {
         Self {
             predicate2powerbool: vec![(fact.clone(), PowerBool::new_true())]
@@ -69,14 +70,24 @@ impl<R: NaryRelation> SimpleAbstraction<R> {
         concterms: impl Iterator<Item = R> + Clone,
         absterms: impl Iterator<Item = Self> + Clone,
     ) -> Option<Self> {
-        let predicate2powerbool =
-            absterms.fold(HashMap::<R, PowerBool>::default(), |mut acc, it| {
-                for (predicate, powerbool) in it.predicate2powerbool.iter() {
-                    let entry = acc.entry(predicate.clone()).or_default();
-                    entry.and(powerbool);
+        let predicate2powerbool = absterms.zip(concterms).fold(
+            Some(HashMap::<R, PowerBool>::default()),
+            |mut acc, (abst, conct)| {
+                if conct.kind() == NaryRelationKind::And {
+                    return None;
+                }
+                if let Some(ref mut acc) = acc {
+                    for (predicate, powerbool) in abst.predicate2powerbool.iter() {
+                        let entry = acc.entry(predicate.clone()).or_default();
+                        entry.and(powerbool);
+                        if entry.uninhabitable() {
+                            return None;
+                        }
+                    }
                 }
                 acc
-            });
+            },
+        )?;
         Some(Self {
             predicate2powerbool,
         })
@@ -86,28 +97,39 @@ impl<R: NaryRelation> SimpleAbstraction<R> {
         concterms: impl Iterator<Item = R> + Clone,
         absterms: impl Iterator<Item = Self> + Clone,
     ) -> Option<Self> {
-        let predicate2powerbool =
-            absterms.fold(HashMap::<R, PowerBool>::default(), |mut acc, it| {
-                for (predicate, powerbool) in it.predicate2powerbool.iter() {
-                    // do not keep entries that map to top after being or'ed
-                    let entry = acc.entry(predicate.clone()).or_default();
-                    entry.or(powerbool);
-                    if entry.is_top() {
-                        acc.remove(predicate);
+        let predicate2powerbool = absterms.zip(concterms).fold(
+            Some(HashMap::<R, PowerBool>::default()),
+            |mut acc, (abst, conct)| {
+                if let Some(ref mut acc) = acc {
+                    if conct.kind() == NaryRelationKind::Or {
+                        return None;
+                    }
+                    for (predicate, powerbool) in abst.predicate2powerbool.iter() {
+                        // do not keep entries that map to top after being or'ed
+                        let entry = acc.entry(predicate.clone()).or_default();
+                        entry.or(powerbool);
+                        if entry.is_top() {
+                            acc.remove(predicate);
+                        }
                     }
                 }
                 acc
-            });
+            },
+        )?;
         Some(Self {
             predicate2powerbool,
         })
     }
 
     pub fn not(&self, concterm: &R) -> Option<Self> {
+        if concterm.kind() == NaryRelationKind::Not {
+            return None;
+        }
         let predicate2powerbool = self
             .predicate2powerbool
             .iter()
             .map(|(predicate, powerbool)| (predicate.clone(), powerbool.not()))
+            .filter(|(_, pb)| !pb.is_top())
             .collect();
         Some(Self {
             predicate2powerbool,
@@ -146,10 +168,7 @@ impl<Ab: crate::enumerate::Abstraction> ByFuel<Ab> {
         } else {
             let mut ret = vec![];
             // add And, Or, and Not, but not IsFirst or BoundBinary
-            for (predicate, abstraction) in self.0[fuel - 1].iter().filter(|&(predicate, _)| {
-                // no double negation
-                predicate.kind() != NaryRelationKind::Not
-            }) {
+            for (predicate, abstraction) in self.0[fuel - 1].iter() {
                 if let Some(concabst) = abstraction.not(predicate) {
                     ret.push(concabst);
                 }
@@ -162,22 +181,12 @@ impl<Ab: crate::enumerate::Abstraction> ByFuel<Ab> {
                 let concaband = Ab::and(bslice.clone(), conniter());
                 let concabor = Ab::or(bslice, conniter());
                 if let Some(concaband) = concaband {
-                    if !concaband.1.uninhabitable()
-                        && !combination
-                            .iter()
-                            .any(|it| it.0.kind() == NaryRelationKind::And)
-                    {
+                    if !concaband.1.uninhabitable() {
                         ret.push(concaband);
                     }
                 }
                 if let Some(concabor) = concabor {
-                    if !concabor.1.uninhabitable()
-                        && !combination
-                            .iter()
-                            .any(|it| it.0.kind() == NaryRelationKind::Or)
-                    {
-                        ret.push(concabor);
-                    }
+                    ret.push(concabor);
                 }
             }
             ret
