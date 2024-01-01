@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use lf_trace_reader::TraceRecord;
 use serde::{Deserialize, Serialize};
 
-use crate::{conninfo::ConnInfo, Event, OgRank};
+use crate::{conninfo::ConnInfo, lflib::Event, lflib::OgRank};
 
 /// A map from test name to a map from ogranks to the lists of preceding ogranks which can appear
 /// later.

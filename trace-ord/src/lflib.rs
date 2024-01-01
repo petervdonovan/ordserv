@@ -5,15 +5,9 @@ use std::{
     str::FromStr,
 };
 
+use crate::conninfo::{get_nonnegative_microstep, ConnInfo, Delay, FedId, Tag, NO_DELAY, STARTUP};
 use ::serde::{Deserialize, Serialize};
-use conninfo::{get_nonnegative_microstep, ConnInfo, Delay, FedId, Tag, NO_DELAY, STARTUP};
 use enum_iterator::Sequence;
-
-pub mod axioms;
-pub mod conninfo;
-pub mod enumerate;
-pub mod lfenumerate;
-pub mod serde;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Sequence)]
 pub enum EventKind {
@@ -45,20 +39,6 @@ pub struct Rule {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum BinaryRelation {
-    // TagPlusDelay2FedEquals,   // = Equals(TagPlusDelay(SmallestDelayBetween), Tag)
-    // TagPlusDelay2FedLessThan, // = LessThan(TagPlusDelay(SmallestDelayBetween), Tag)
-    // TagPlusDelay2FedLessThanOrEqual, // = LessThanOrEqual(TagPlusDelay(SmallestDelayBetween), Tag)
-    // TagGreaterThanOrEqual,    // = GreaterThanOrEqual(Tag, Tag)
-    // TagStrictPlusDelay2FedLessThan, // = LessThan(TagStrictPlusDelay(SmallestDelayBetween), Tag)
-    // TagPlusDelay2FedGreaterThanOrEquals, // = GreaterThanOrEqual(TagPlusDelay(SmallestDelayBetween), Tag)
-    // TagStrictPlusDelayFromSomeImmUpstreamFedGreaterThanOrEquals, // = GreaterThanOrEqual(TagStrictPlusDelay(LargestDelayFromSomeImmUpstreamFed), Tag)
-    // TagPlusDelayToAllImmDownstreamFedsLessThan, // = LessThan(TagPlusDelay(LargestDelayFromPreceding), Tag)
-    // TagPlusLargestDelayLessThan, // = LessThan(TagPlusDelay(LargestDelayFromPreceding), Tag)
-    // TagPlusLargestDelayLessThanOrEqual, // = LessThanOrEqual(TagPlusDelay(LargestDelayFromPreceding), Tag)
-    // TagPlusLargestDelayGreaterThanOrEqual, // = GreaterThanOrEqual(TagPlusDelay(LargestDelayFromPreceding), Tag)
-    // TagLessThan,                           // = LessThan(Tag, Tag)
-    // TagLessThanOrEqual,                    // = LessThanOrEqual(Tag, Tag)
-    // TagEquals,                             // = Equals(Tag, Tag)
     LessThan(Term, Term),
     LessThanOrEqual(Term, Term),
     GreaterThanOrEqual(Term, Term),
@@ -347,7 +327,7 @@ pub fn preceding_permutables_by_ogrank_from_dir(
         }
     }
     let conninfo = ConnInfo::from_strs(rti_conninfo, &fed_conninfos);
-    let axioms = axioms::axioms();
+    let axioms = crate::axioms::axioms();
     let trace = elaborated_from_trace_records(
         lf_trace_reader::trace_by_physical_time(&rti_csv),
         &axioms,
@@ -377,18 +357,6 @@ pub struct Unpermutables {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct OgRank(pub u32);
-// #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-// pub enum EventPerTraceUniqueId {
-//     Og(OgRank),
-//     First(Predicate),
-// }
-// #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-// pub struct Event {
-//     pub event: EventKind,
-//     pub tag: Tag,
-//     pub fedid: FedId,
-//     pub unique_id: EventPerTraceUniqueId,
-// }
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Event {
     Concrete {
@@ -779,62 +747,6 @@ impl BinaryRelation {
             }
         }
         match self {
-            // BinaryRelation::TagPlusDelay2FedEquals => {
-            //     compare_tags_given_delay(|a, b, d| *a + *d == *b)
-            // }
-            // BinaryRelation::TagPlusDelay2FedLessThan => {
-            //     compare_tags_given_delay(|a, b, d| *a + *d < *b)
-            // }
-            // BinaryRelation::TagPlusDelay2FedLessThanOrEqual => {
-            //     compare_tags_given_delay(|a, b, d| *a + *d <= *b)
-            // }
-            // BinaryRelation::TagPlusDelay2FedGreaterThanOrEquals => {
-            //     compare_tags_given_delay(|a, b, d| *a + *d >= *b)
-            // }
-            // BinaryRelation::TagPlusLargestDelayLessThan => {
-            //     neither_first_with_conninfo(|a, b, pfed, _fed, conninfo| {
-            //         if let Some(delay) = conninfo.largest_delay_out(*pfed) {
-            //             *a + delay < *b
-            //         } else {
-            //             false
-            //         }
-            //     })
-            // }
-            // BinaryRelation::TagPlusLargestDelayLessThanOrEqual => {
-            //     neither_first_with_conninfo(|a, b, pfed, _fed, conninfo| {
-            //         if let Some(delay) = conninfo.largest_delay_out(*pfed) {
-            //             *a + delay <= *b
-            //         } else {
-            //             false
-            //         }
-            //     })
-            // }
-            // BinaryRelation::TagPlusLargestDelayGreaterThanOrEqual => {
-            //     neither_first_with_conninfo(|a, b, pfed, _fed, conninfo| {
-            //         if let Some(delay) = conninfo.largest_delay_out(*pfed) {
-            //             *a + delay >= *b
-            //         } else {
-            //             false
-            //         }
-            //     })
-            // }
-            // BinaryRelation::TagGreaterThanOrEqual => compare_tags_given_delay(|a, b, d| *a >= *b),
-            // BinaryRelation::TagEquals => neither_first(|a, b, _, _, _| a == b),
-            // BinaryRelation::TagLessThan => neither_first(|a, b, _, _, _| a < b),
-            // BinaryRelation::TagLessThanOrEqual => neither_first(|a, b, _, _, _| a <= b),
-            // BinaryRelation::TagStrictPlusDelay2FedLessThan => {
-            //     compare_tags_given_delay(|a, b, d| a.strict_add(*d) < *b)
-            // }
-            // BinaryRelation::TagStrictPlusDelayFromSomeImmUpstreamFedGreaterThanOrEquals => {
-            //     compare_tags_given_all_downstream_delays(|a, b, delays| {
-            //         delays.iter().any(|(_, delay)| a.strict_add(*delay) >= *b)
-            //     })
-            // }
-            // BinaryRelation::TagPlusDelayToAllImmDownstreamFedsLessThan => {
-            //     compare_tags_given_all_downstream_delays(|a, b, delays| {
-            //         delays.iter().all(|(_, delay)| *a + *delay < *b)
-            //     })
-            // }
             BinaryRelation::FederateEquals => neither_first(|_, _, a, b, _| a == b),
             BinaryRelation::FederateZeroDelayDirectlyUpstreamOf => {
                 neither_first(|_, _, _pfed, _fed, delay| delay == Some(&NO_DELAY))

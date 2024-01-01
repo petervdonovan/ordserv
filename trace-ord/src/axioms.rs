@@ -1,15 +1,15 @@
-use crate::{EventKind, Rule};
+use crate::lflib::{EventKind, Rule};
 
-use crate::DelayTerm::*;
-use crate::Term::*;
+use crate::lflib::DelayTerm::*;
+use crate::lflib::Term::*;
 
-use crate::BinaryRelation::{
+use crate::lflib::BinaryRelation::{
     And, Equal, FederateDirectlyUpstreamOf, FederateEquals, FederateZeroDelayDirectlyUpstreamOf,
     GreaterThanOrEqual, LessThan, LessThanOrEqual, Unary,
 };
-use crate::EventKind::*;
-use crate::Predicate::*;
-use crate::{BinaryRelation, Predicate};
+use crate::lflib::EventKind::*;
+use crate::lflib::Predicate::*;
+use crate::lflib::{BinaryRelation, Predicate};
 pub fn axioms() -> Vec<Rule> {
     vec![
         // The following are for LTCs.

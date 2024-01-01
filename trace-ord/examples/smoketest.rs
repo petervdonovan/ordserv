@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use trace_ord::{tracerecords_to_string, Event};
+use trace_ord::lflib::{tracerecords_to_string, Event};
 
 const IGNORE_TESTS: [&str; 1] = [
     "DistributedNetworkOrder", // This test directly invokes send_timed_message, which is an implementation detail!  >:(
@@ -36,7 +36,7 @@ pub fn main() {
         //     continue;
         // }
         let (trace, conninfo, preceding_permutables) =
-            trace_ord::preceding_permutables_by_ogrank_from_dir(&path);
+            trace_ord::lflib::preceding_permutables_by_ogrank_from_dir(&path);
         let (ax2nuses, preceding_permutables) = preceding_permutables.unwrap_or_else(|err| {
             println!("Error: {}", err);
             panic!("Fatal error during processing of dataset from {:?}", path);

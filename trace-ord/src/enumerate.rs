@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{BinaryRelation, EventKind, Predicate, Rule};
+use crate::lflib::{BinaryRelation, EventKind, Predicate, Rule};
 #[derive(Debug)]
 pub struct ByFuel<Ab: Abstraction>(pub Vec<Vec<(Ab::R, Ab)>>); // TODO: no pub
 

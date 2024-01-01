@@ -1,9 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{
-    enumerate::{Abstraction, ByFuel, ConcAbst, NaryRelation, PowerBool, SimpleAbstraction},
-    BinaryRelation, EventKind, Predicate, Rule,
-};
+use crate::enumerate::{Abstraction, ByFuel, ConcAbst, NaryRelation, PowerBool, SimpleAbstraction};
+use crate::lflib::{BinaryRelation, EventKind, Predicate, Rule};
 
 #[derive(Debug, Default, Clone)]
 pub struct PredicateAbstraction {
