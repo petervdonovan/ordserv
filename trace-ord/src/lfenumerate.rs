@@ -1,7 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-use crate::enumerate::{Abstraction, ByFuel, Conc, ConcAbst, PowerBool, SimpleAbstraction};
-use crate::lflib::{BinaryRelation, BinaryRelationAtom, EventKind, Predicate, PredicateAtom, Rule};
+use crate::enumerate::{Abstraction, ByFuel, Conc, ConcAbst, SimpleAbstraction};
+use crate::lflib::{BinaryRelationAtom, EventKind, Predicate, PredicateAtom, Rule};
 
 #[derive(Debug, Default, Clone)]
 pub struct PredicateAbstraction {
@@ -10,38 +10,10 @@ pub struct PredicateAbstraction {
 }
 #[derive(Debug)]
 pub struct PredicatesWithBoundBinariesWithFuel(ByFuel<PredicateAbstraction>);
-// #[derive(Debug, Default)]
-// pub struct BinaryRelationsWithUnariesWithFuel(ByFuel<BinaryRelationAbstraction>);
 #[derive(Debug, Default)]
 pub struct RulesWithFuel {
     rules_by_fuel: Vec<Vec<Rule>>,
 }
-
-// impl NaryRelation for Predicate {
-//     // fn atoms() -> Vec<Self>
-//     // where
-//     //     Self: std::marker::Sized,
-//     // {
-//     //     let mut ret = vec![
-//     //         Predicate::FedHasNoneUpstreamWithDelayLessThanOrEqualCurrentTag,
-//     //         Predicate::TagNonzero,
-//     //         Predicate::TagFinite,
-//     //     ];
-//     //     for kind in enum_iterator::all::<EventKind>() {
-//     //         ret.push(Predicate::EventIs(kind));
-//     //     }
-//     //     ret
-//     // }
-
-//     // fn kind(&self) -> crate::enumerate::NaryRelationKind {
-//     //     match self {
-//     //         Predicate::And(_) => crate::enumerate::NaryRelationKind::And,
-//     //         Predicate::Or(_) => crate::enumerate::NaryRelationKind::Or,
-//     //         Predicate::Not(_) => crate::enumerate::NaryRelationKind::Not,
-//     //         _ => crate::enumerate::NaryRelationKind::Other,
-//     //     }
-//     // }
-// }
 
 impl Abstraction for PredicateAbstraction {
     // type R = Predicate;
@@ -150,6 +122,7 @@ impl PredicateAbstraction {
 }
 
 mod tests {
+    #[allow(unused_imports)]
     use super::*;
 
     #[test]

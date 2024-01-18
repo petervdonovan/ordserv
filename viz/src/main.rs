@@ -27,16 +27,16 @@ fn do_throughput_and_error_rate() {
 }
 
 fn all_permutables_from_preceding_permutables(
-    preceding_permutables: &Vec<Vec<trace_ord::OgRank>>,
+    preceding_permutables: &Vec<Vec<trace_ord::lflib::OgRank>>,
     ogtrace: &[lf_trace_reader::TraceRecord],
-) -> Vec<HashSet<trace_ord::OgRank>> {
+) -> Vec<HashSet<trace_ord::lflib::OgRank>> {
     let mut all_permutables = Vec::with_capacity(ogtrace.len());
     for _ in 0..ogtrace.len() {
         all_permutables.push(HashSet::new());
     }
     for (og, permutables) in preceding_permutables.iter().enumerate() {
         for ogr in permutables.iter() {
-            all_permutables[ogr.idx()].insert(trace_ord::OgRank(og as u32));
+            all_permutables[ogr.idx()].insert(trace_ord::lflib::OgRank(og as u32));
             all_permutables[og].insert(*ogr);
         }
     }
@@ -48,7 +48,7 @@ fn empirical_all_permutables_translated(
     ogog2og: &OgRank2CurRank,
     len: usize,
     sentinel: CurRank,
-) -> Vec<HashSet<trace_ord::OgRank>> {
+) -> Vec<HashSet<trace_ord::lflib::OgRank>> {
     let mut empirical_all_permutables = Vec::with_capacity(len);
     let mut hit_ogs = HashSet::new();
     for _ in 0..len {
@@ -61,16 +61,17 @@ fn empirical_all_permutables_translated(
             continue;
         }
         hit_ogs.insert(current_idx);
-        let current: &mut HashSet<trace_ord::OgRank> = &mut empirical_all_permutables[current_idx];
+        let current: &mut HashSet<trace_ord::lflib::OgRank> =
+            &mut empirical_all_permutables[current_idx];
         for permutable in ogr.iter().filter(|permutable| permutable.0 != sentinel.0) {
-            current.insert(trace_ord::OgRank(ogog2og.0[permutable.idx()].0));
+            current.insert(trace_ord::lflib::OgRank(ogog2og.0[permutable.idx()].0));
         }
     }
     // for (k, overapproximation) in empirical_all_permutables.iter_mut().enumerate() {
     //     if !hit_ogs.contains(&k) {
     //         *overapproximation = (0..k)
     //             .chain(k + 1..len)
-    //             .map(|it| trace_ord::OgRank(it as u32))
+    //             .map(|it| trace_ord::lflib::OgRank(it as u32))
     //             .collect();
     //     }
     // }
@@ -197,8 +198,11 @@ fn do_check_axioms() {
                     .into_iter()
                     .map(|(_, tr)| tr)
                     .collect::<Vec<_>>();
-                let elaborated =
-                    trace_ord::elaborated_from_trace_records(trace_records, &axioms, conninfo);
+                let elaborated = trace_ord::lflib::elaborated_from_trace_records(
+                    trace_records,
+                    &axioms,
+                    conninfo,
+                );
                 if let Err(e) = ax.check(&elaborated, conninfo) {
                     ok = false;
                     failures += 1;
@@ -234,6 +238,6 @@ fn main() {
     // do_throughput_and_error_rate();
     // do_describe_permutable_sets();
     // do_compare_permutable_sets();
-    do_computed_precedences();
-    // do_check_axioms();
+    // do_computed_precedences();
+    do_check_axioms();
 }

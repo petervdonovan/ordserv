@@ -1,27 +1,14 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use enum_iterator::Sequence;
 
-use crate::{
-    lflib::{BinaryRelation, EventKind, Rule},
-    Predicate,
-};
+use crate::Predicate;
 #[derive(Debug)]
 pub struct ByFuel<Ab: Abstraction>(pub Vec<Vec<(Conc<Ab>, Ab)>>); // TODO: no pub
 
-// pub trait NaryRelation: Sized + Clone + std::fmt::Debug + std::hash::Hash + PartialEq + Eq {
-//     // fn atoms() -> Vec<Self>;
-//     // fn kind(&self) -> NaryRelationKind;
-// }
-// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-// pub enum NaryRelationKind {
-//     And,
-//     Or,
-//     Not,
-//     Other,
-// }
 #[allow(type_alias_bounds)] // it looks like a bug that this is necessary
 pub type ConcAbst<Ab: Abstraction> = (Conc<Ab>, Ab);
+#[allow(type_alias_bounds)] // it looks like a bug that this is necessary
 pub type Conc<Ab: Abstraction> = Predicate<Ab::PAtom, Ab::BAtom, Ab::Event>;
 pub trait Abstraction: Sized + Clone {
     type PAtom: std::fmt::Debug + Clone + Eq + std::hash::Hash + Ord + Sequence;
@@ -176,7 +163,6 @@ impl<Ab: crate::enumerate::Abstraction> ByFuel<Ab> {
     fn exact_fuel(&self, fuel: usize) -> Vec<ConcAbst<Ab>> {
         if fuel == 0 {
             enum_iterator::all::<Ab::PAtom>()
-                .into_iter()
                 .map(|it| {
                     let it = Predicate::Atom(it);
                     let ab = Ab::fact(&it);
