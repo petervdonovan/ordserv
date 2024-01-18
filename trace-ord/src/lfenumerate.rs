@@ -1,12 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::enumerate::{Abstraction, ByFuel, ConcAbst, NaryRelation, PowerBool, SimpleAbstraction};
-use crate::lflib::{BinaryRelation, EventKind, Predicate, Rule};
+use crate::enumerate::{Abstraction, ByFuel, Conc, ConcAbst, PowerBool, SimpleAbstraction};
+use crate::lflib::{BinaryRelation, BinaryRelationAtom, EventKind, Predicate, PredicateAtom, Rule};
 
 #[derive(Debug, Default, Clone)]
 pub struct PredicateAbstraction {
     pub possible_events: Option<HashSet<EventKind>>,
-    pub sabs: SimpleAbstraction<Predicate>,
+    pub sabs: SimpleAbstraction<PredicateAbstraction>,
 }
 #[derive(Debug)]
 pub struct PredicatesWithBoundBinariesWithFuel(ByFuel<PredicateAbstraction>);
@@ -17,37 +17,44 @@ pub struct RulesWithFuel {
     rules_by_fuel: Vec<Vec<Rule>>,
 }
 
-impl NaryRelation for Predicate {
-    fn atoms() -> Vec<Self>
-    where
-        Self: std::marker::Sized,
-    {
-        let mut ret = vec![
-            Predicate::FedHasNoneUpstreamWithDelayLessThanOrEqualCurrentTag,
-            Predicate::TagNonzero,
-            Predicate::TagFinite,
-        ];
-        for kind in enum_iterator::all::<EventKind>() {
-            ret.push(Predicate::EventIs(kind));
-        }
-        ret
-    }
+// impl NaryRelation for Predicate {
+//     // fn atoms() -> Vec<Self>
+//     // where
+//     //     Self: std::marker::Sized,
+//     // {
+//     //     let mut ret = vec![
+//     //         Predicate::FedHasNoneUpstreamWithDelayLessThanOrEqualCurrentTag,
+//     //         Predicate::TagNonzero,
+//     //         Predicate::TagFinite,
+//     //     ];
+//     //     for kind in enum_iterator::all::<EventKind>() {
+//     //         ret.push(Predicate::EventIs(kind));
+//     //     }
+//     //     ret
+//     // }
 
-    fn kind(&self) -> crate::enumerate::NaryRelationKind {
-        match self {
-            Predicate::And(_) => crate::enumerate::NaryRelationKind::And,
-            Predicate::Or(_) => crate::enumerate::NaryRelationKind::Or,
-            Predicate::Not(_) => crate::enumerate::NaryRelationKind::Not,
-            _ => crate::enumerate::NaryRelationKind::Other,
-        }
-    }
-}
+//     // fn kind(&self) -> crate::enumerate::NaryRelationKind {
+//     //     match self {
+//     //         Predicate::And(_) => crate::enumerate::NaryRelationKind::And,
+//     //         Predicate::Or(_) => crate::enumerate::NaryRelationKind::Or,
+//     //         Predicate::Not(_) => crate::enumerate::NaryRelationKind::Not,
+//     //         _ => crate::enumerate::NaryRelationKind::Other,
+//     //     }
+//     // }
+// }
 
 impl Abstraction for PredicateAbstraction {
-    type R = Predicate;
+    // type R = Predicate;
+
+    type PAtom = PredicateAtom;
+
+    type BAtom = BinaryRelationAtom;
+
+    type Event = crate::lflib::Event;
+
     fn fact(predicate: &Predicate) -> Self {
         match predicate {
-            Predicate::EventIs(kind) => Self::event(*kind),
+            Predicate::Atom(PredicateAtom::EventIs(kind)) => Self::event(*kind),
             _ => Self {
                 possible_events: None,
                 sabs: SimpleAbstraction::fact(predicate),
@@ -56,7 +63,7 @@ impl Abstraction for PredicateAbstraction {
     }
 
     fn and(
-        concterms: impl Iterator<Item = Self::R> + Clone,
+        concterms: impl Iterator<Item = Conc<Self>> + Clone,
         absterms: impl Iterator<Item = Self> + Clone,
     ) -> Option<ConcAbst<Self>> {
         let possible_events: Option<HashSet<EventKind>> = absterms
@@ -84,7 +91,7 @@ impl Abstraction for PredicateAbstraction {
     }
 
     fn or(
-        concterms: impl Iterator<Item = Self::R> + Clone,
+        concterms: impl Iterator<Item = Conc<Self>> + Clone,
         absterms: impl Iterator<Item = Self> + Clone,
     ) -> Option<ConcAbst<Self>> {
         let possible_events: Option<HashSet<EventKind>> = absterms
@@ -108,7 +115,7 @@ impl Abstraction for PredicateAbstraction {
     }
 
     fn not(&self, concterm: &Predicate) -> Option<ConcAbst<Self>> {
-        if matches!(concterm, &Predicate::EventIs(_)) {
+        if matches!(concterm, &Predicate::Atom(PredicateAtom::EventIs(_))) {
             // heuristic: usually is not helpful to match negations of eventis.
             // note: we still hit all equivalence classes because not(some event) is the same as or(all other events), except with undesirably much lower fuel
             return None;

@@ -1,32 +1,34 @@
 use crate::lflib::{EventKind, Rule};
 
-use crate::lflib::DelayTerm::*;
-use crate::lflib::Term::*;
-
-use crate::lflib::BinaryRelation::{
-    And, Equal, FederateDirectlyUpstreamOf, FederateEquals, FederateZeroDelayDirectlyUpstreamOf,
-    GreaterThanOrEqual, LessThan, LessThanOrEqual, Unary,
+use crate::lflib::BinaryRelationAtom::{
+    Equal, FederateDirectlyUpstreamOf, FederateEquals, FederateZeroDelayDirectlyUpstreamOf,
+    GreaterThanOrEqual, LessThan, LessThanOrEqual,
 };
+use crate::lflib::DelayTerm::*;
 use crate::lflib::EventKind::*;
-use crate::lflib::Predicate::*;
-use crate::lflib::{BinaryRelation, Predicate};
+use crate::lflib::PredicateAtom::*;
+use crate::lflib::Term::*;
+use crate::BinaryRelation;
+use crate::BinaryRelation::{And, Unary};
+use crate::Predicate;
+use crate::Predicate::*;
 pub fn axioms() -> Vec<Rule> {
     vec![
         // The following are for LTCs.
         Rule {
             // LTCs to the same federate are monotonic
             preceding_event: And(Box::new([
-                Unary(Box::new(EventIs(RecvLtc))),
-                FederateEquals,
-                LessThan(Tag, Tag),
+                Unary(Box::new(Atom(EventIs(RecvLtc)))),
+                BinaryRelation::Atom(FederateEquals),
+                BinaryRelation::Atom(LessThan(Tag, Tag)),
             ])),
-            event: EventIs(RecvLtc),
+            event: Atom(EventIs(RecvLtc)),
         },
         // Rule {
         //     preceding_event: And(Box::new([
         //         Unary(Box::new(EventIs(RecvLtc))),
-        //         // Unary(Box::new(TagNonzero)),
-        //         FederateEquals,
+        //         // Unary(Box::new(Atom(TagNonzero))),
+        //         BinaryRelation::Atom(FederateEquals),
         //         TagStrictPlusDelayFromAllImmUpstreamFedsLessThan,
         //     ])),
         //     event: EventIs(RecvPortAbs),
@@ -34,7 +36,7 @@ pub fn axioms() -> Vec<Rule> {
         // Rule {
         //     preceding_event: And(Box::new([
         //         Unary(Box::new(EventIs(RecvLtc))),
-        //         FederateEquals,
+        //         BinaryRelation::Atom(FederateEquals),
         //         TagPlusDelayFromAllImmUpstreamFedsLessThan,
         //     ])),
         //     event: EventIs(RecvTaggedMsg),
@@ -44,73 +46,79 @@ pub fn axioms() -> Vec<Rule> {
             // you should have received a net or a ltc or something that lets you know that a TAG or PTAG is needed before you send one
             preceding_event: BinaryRelation::IsFirst(Box::new(And(Box::new([
                 BinaryRelation::Or(Box::new([
-                    Unary(Box::new(EventIs(SendStopGrn))),
-                    Unary(Box::new(EventIs(EventKind::RecvLtc))),
+                    Unary(Box::new(Atom(EventIs(SendStopGrn)))),
+                    Unary(Box::new(Atom(EventIs(EventKind::RecvLtc)))),
                     BinaryRelation::And(Box::new([
                         Unary(Box::new(Or(Box::new([
-                            EventIs(RecvNet),
-                            EventIs(SendTaggedMsg),
+                            Atom(EventIs(RecvNet)),
+                            Atom(EventIs(SendTaggedMsg)),
                         ])))),
-                        // FederateEquals,
+                        // BinaryRelation::Atom(FederateEquals),
                     ])),
                 ])),
-                Equal(Tag, Tag),
+                BinaryRelation::Atom(Equal(Tag, Tag)),
                 Unary(Box::new(Predicate::And(Box::new([
-                    TagFinite,
-                    TagNonzero, // instead of tag nonzero it should be "tag greater than min input delay to federate"
+                    Atom(TagFinite),
+                    Atom(TagNonzero), // instead of tag nonzero it should be "tag greater than min input delay to federate"
                 ])))),
             ])))),
             event: Predicate::And(Box::new([
-                Or(Box::new([EventIs(SendTag), EventIs(SendPtag)])),
-                // TagNonzero, // ???
+                Or(Box::new([Atom(EventIs(SendTag)), Atom(EventIs(SendPtag))])),
+                // Atom(TagNonzero), // ???
             ])),
         },
         Rule {
             // Once you receive an LTC for a tag, you will never receive a PortAbsent nor TaggedMessage for any earlier or equal tag
             preceding_event: And(Box::new([
                 Unary(Box::new(Predicate::Or(Box::new([
-                    EventIs(RecvPortAbs),
-                    EventIs(RecvTaggedMsg),
+                    Atom(EventIs(RecvPortAbs)),
+                    Atom(EventIs(RecvTaggedMsg)),
                 ])))),
-                FederateEquals,
-                LessThanOrEqual(Tag, Tag),
+                BinaryRelation::Atom(FederateEquals),
+                BinaryRelation::Atom(LessThanOrEqual(Tag, Tag)),
             ])),
-            event: Predicate::And(Box::new([EventIs(RecvLtc)])),
+            event: Predicate::And(Box::new([Atom(EventIs(RecvLtc))])),
         },
         Rule {
             // Once you receive an LTC for a tag, you will never receive a NET for any earlier or equal tag
             preceding_event: And(Box::new([
-                Unary(Box::new(EventIs(RecvNet))),
-                FederateEquals,
-                LessThanOrEqual(Tag, Tag),
+                Unary(Box::new(Atom(EventIs(RecvNet)))),
+                BinaryRelation::Atom(FederateEquals),
+                BinaryRelation::Atom(LessThanOrEqual(Tag, Tag)),
             ])),
-            event: Predicate::And(Box::new([EventIs(RecvLtc), TagNonzero])),
+            event: Predicate::And(Box::new([Atom(EventIs(RecvLtc)), Atom(TagNonzero)])),
         },
         // The following are for lower-bounding receive times or portabs and tagged messages.
         Rule {
             // Once you receive port absent or tagged message for a tag, you cannot receive an LTC for a tag that is so early that it plus the max delay of all outgoing connections is less than the tag of the port absent or tagged message
             preceding_event: And(Box::new([
-                Unary(Box::new(EventIs(RecvLtc))),
-                FederateEquals,
-                LessThan(TagPlusDelay(LargestDelayFrom), Tag),
+                Unary(Box::new(Atom(EventIs(RecvLtc)))),
+                BinaryRelation::Atom(FederateEquals),
+                BinaryRelation::Atom(LessThan(TagPlusDelay(LargestDelayFrom), Tag)),
             ])),
-            event: Predicate::Or(Box::new([EventIs(RecvPortAbs), EventIs(RecvTaggedMsg)])),
+            event: Predicate::Or(Box::new([
+                Atom(EventIs(RecvPortAbs)),
+                Atom(EventIs(RecvTaggedMsg)),
+            ])),
         },
         Rule {
             // Once you receive port absent or tagged message for a tag, you cannot send the very first tag/ptag for a tag that is so early that it plus the max delay of all outgoing connections is less than or equal to the tag of the port absent or tagged message
             preceding_event: BinaryRelation::IsFirst(Box::new(And(Box::new([
                 Unary(Box::new(Or(Box::new([
-                    EventIs(SendTag),
-                    EventIs(SendPtag),
+                    Atom(EventIs(SendTag)),
+                    Atom(EventIs(SendPtag)),
                 ])))),
-                FederateEquals,
-                GreaterThanOrEqual(TagPlusDelay(LargestDelayFrom), Tag),
+                BinaryRelation::Atom(FederateEquals),
+                BinaryRelation::Atom(GreaterThanOrEqual(TagPlusDelay(LargestDelayFrom), Tag)),
             ])))),
             event: Predicate::And(Box::new([
-                Predicate::Or(Box::new([EventIs(RecvPortAbs), EventIs(RecvTaggedMsg)])),
-                Not(Box::new(
+                Predicate::Or(Box::new([
+                    Atom(EventIs(RecvPortAbs)),
+                    Atom(EventIs(RecvTaggedMsg)),
+                ])),
+                Not(Box::new(Atom(
                     FedHasNoneUpstreamWithDelayLessThanOrEqualCurrentTag,
-                )),
+                ))),
             ])),
         },
         // The following is for handling of PTAGs and TAGs.
@@ -118,159 +126,165 @@ pub fn axioms() -> Vec<Rule> {
             // tags and ptags to the same federate are monotonic
             preceding_event: And(Box::new([
                 Unary(Box::new(Or(Box::new([
-                    EventIs(SendPtag),
-                    EventIs(SendTag),
+                    Atom(EventIs(SendPtag)),
+                    Atom(EventIs(SendTag)),
                 ])))),
-                FederateEquals,
-                LessThan(Tag, Tag),
+                BinaryRelation::Atom(FederateEquals),
+                BinaryRelation::Atom(LessThan(Tag, Tag)),
             ])),
-            event: Or(Box::new([EventIs(SendPtag), EventIs(SendTag)])),
+            event: Or(Box::new([Atom(EventIs(SendPtag)), Atom(EventIs(SendTag))])),
         },
         Rule {
             // PTAGs before TAGs
             preceding_event: And(Box::new([
-                Unary(Box::new(EventIs(SendPtag))),
-                FederateEquals,
-                LessThanOrEqual(Tag, Tag),
+                Unary(Box::new(Atom(EventIs(SendPtag)))),
+                BinaryRelation::Atom(FederateEquals),
+                BinaryRelation::Atom(LessThanOrEqual(Tag, Tag)),
             ])),
-            event: EventIs(SendTag),
+            event: Atom(EventIs(SendTag)),
         },
         Rule {
             // you can't grant a TAG until you have received a high enough LTC from any upstream federate or you have granted a strictly higher TAG to an upstream federate
             preceding_event: BinaryRelation::IsFirstForFederate(Box::new(BinaryRelation::Or(
                 Box::new([
                     And(Box::new([
-                        Unary(Box::new(EventIs(RecvLtc))),
-                        FederateZeroDelayDirectlyUpstreamOf,
-                        GreaterThanOrEqual(Tag, Tag),
+                        Unary(Box::new(Atom(EventIs(RecvLtc)))),
+                        BinaryRelation::Atom(FederateZeroDelayDirectlyUpstreamOf),
+                        BinaryRelation::Atom(GreaterThanOrEqual(Tag, Tag)),
                     ])),
                     And(Box::new([
                         Unary(Box::new(Or(Box::new([
-                            EventIs(SendTag),
-                            EventIs(RecvNet),
-                            EventIs(SendStopGrn),
+                            Atom(EventIs(SendTag)),
+                            Atom(EventIs(RecvNet)),
+                            Atom(EventIs(SendStopGrn)),
                         ])))),
-                        FederateZeroDelayDirectlyUpstreamOf,
-                        GreaterThanOrEqual(Tag, Tag),
+                        BinaryRelation::Atom(FederateZeroDelayDirectlyUpstreamOf),
+                        BinaryRelation::Atom(GreaterThanOrEqual(Tag, Tag)),
                     ])),
                 ]),
             ))),
-            event: Predicate::And(Box::new([EventIs(SendTag), TagNonzero])),
+            event: Predicate::And(Box::new([Atom(EventIs(SendTag)), Atom(TagNonzero)])),
         },
         Rule {
             // in particular, you can't send a PTAG until either you have sent an equal PTAG to an upstream federate that is upstream with only zero delay, or you have received an equal NET from the same federate
             preceding_event: BinaryRelation::IsFirst(Box::new(BinaryRelation::Or(Box::new([
                 And(Box::new([
-                    Unary(Box::new(EventIs(SendPtag))),
-                    FederateZeroDelayDirectlyUpstreamOf,
-                    Equal(Tag, Tag),
+                    Unary(Box::new(Atom(EventIs(SendPtag)))),
+                    BinaryRelation::Atom(FederateZeroDelayDirectlyUpstreamOf),
+                    BinaryRelation::Atom(Equal(Tag, Tag)),
                 ])),
                 And(Box::new([
                     Unary(Box::new(Or(Box::new([
-                        EventIs(RecvNet),
-                        EventIs(SendStopGrn),
+                        Atom(EventIs(RecvNet)),
+                        Atom(EventIs(SendStopGrn)),
                     ])))),
-                    BinaryRelation::Or(Box::new([FederateEquals, FederateDirectlyUpstreamOf])),
-                    Equal(Tag, Tag),
+                    BinaryRelation::Or(Box::new([
+                        BinaryRelation::Atom(FederateEquals),
+                        BinaryRelation::Atom(FederateDirectlyUpstreamOf),
+                    ])),
+                    BinaryRelation::Atom(Equal(Tag, Tag)),
                 ])),
             ])))),
-            event: Predicate::And(Box::new([EventIs(SendPtag), TagNonzero])),
+            event: Predicate::And(Box::new([Atom(EventIs(SendPtag)), Atom(TagNonzero)])),
         },
         // Rule {
         //     preceding_event: BinaryRelation::IsFirst(Box::new(And(Box::new([
         //         Unary(Box::new(Or(Box::new([
-        //             EventIs(SendTag),
-        //             EventIs(SendPtag),
+        //             Atom(EventIs(SendTag)),
+        //             Atom(EventIs(SendPtag)),
         //         ])))),
-        //         GreaterThanOrEqual(Tag, Tag),
-        //         FederateEquals,
+        //         GreaterThanOrBinaryRelation::Atom(Equal(Tag, Tag)),
+        //         BinaryRelation::Atom(FederateEquals),
         //     ])))),
-        //     event: Or(Box::new([EventIs(RecvPortAbs), EventIs(RecvTaggedMsg)])),
+        //     event: Or(Box::new([Atom(EventIs(RecvPortAbs)), Atom(EventIs(RecvTaggedMsg))])),
         // },
         // The following are for receive/forward dependencies.
         Rule {
             preceding_event: BinaryRelation::IsFirst(Box::new(And(Box::new([
-                Unary(Box::new(EventIs(RecvPortAbs))),
-                FederateZeroDelayDirectlyUpstreamOf,
-                Equal(Tag, Tag),
+                Unary(Box::new(Atom(EventIs(RecvPortAbs)))),
+                BinaryRelation::Atom(FederateZeroDelayDirectlyUpstreamOf),
+                BinaryRelation::Atom(Equal(Tag, Tag)),
             ])))),
-            event: EventIs(SendPortAbs),
+            event: Atom(EventIs(SendPortAbs)),
         },
         Rule {
             preceding_event: BinaryRelation::IsFirst(Box::new(And(Box::new([
-                Unary(Box::new(EventIs(RecvTaggedMsg))),
-                FederateDirectlyUpstreamOf,
-                Equal(Tag, Tag),
+                Unary(Box::new(Atom(EventIs(RecvTaggedMsg)))),
+                BinaryRelation::Atom(FederateDirectlyUpstreamOf),
+                BinaryRelation::Atom(Equal(Tag, Tag)),
             ])))),
-            event: EventIs(SendTaggedMsg),
+            event: Atom(EventIs(SendTaggedMsg)),
         },
         // The following pertain to when a federate can receive a message.
         Rule {
             preceding_event: And(Box::new([
                 Unary(Box::new(Or(Box::new([
-                    EventIs(RecvPortAbs),
-                    EventIs(RecvTaggedMsg),
+                    Atom(EventIs(RecvPortAbs)),
+                    Atom(EventIs(RecvTaggedMsg)),
                 ])))),
-                FederateEquals,
-                LessThanOrEqual(Tag, Tag), // Want: tag minus smallest delay less than or equal
+                BinaryRelation::Atom(FederateEquals),
+                BinaryRelation::Atom(LessThanOrEqual(Tag, Tag)), // Want: tag minus smallest delay less than or equal
             ])),
-            event: Or(Box::new([EventIs(RecvLtc)])),
+            event: Or(Box::new([Atom(EventIs(RecvLtc))])),
         },
         // Rule {
         //     preceding_event: And(Box::new([
-        //         Unary(Box::new(Or(Box::new([EventIs(RecvLtc)])))),
-        //         FederateEquals,
-        //         LessThan(Tag, Tag),
+        //         Unary(Box::new(Or(Box::new([Atom(EventIs(RecvLtc))])))),
+        //         BinaryRelation::Atom(FederateEquals),
+        //         BinaryRelation::Atom(LessThan(Tag, Tag)),
         //     ])),
-        //     event: Or(Box::new([EventIs(SendPortAbs), EventIs(SendTaggedMsg)])),
+        //     event: Or(Box::new([Atom(EventIs(SendPortAbs)), Atom(EventIs(SendTaggedMsg))])),
         // },  // Not true, even though it seems like maybe it should be (we have no backpressure, unbounded buffers?)
         // The following encode the startup sequence in which a federate connects to RTI.
         Rule {
             preceding_event: And(Box::new([
-                Unary(Box::new(EventIs(RecvFedId))),
-                FederateEquals,
+                Unary(Box::new(Atom(EventIs(RecvFedId)))),
+                BinaryRelation::Atom(FederateEquals),
             ])),
-            event: EventIs(SendAck),
+            event: Atom(EventIs(SendAck)),
         },
         Rule {
             preceding_event: And(Box::new([
-                Unary(Box::new(EventIs(SendAck))),
-                FederateEquals,
+                Unary(Box::new(Atom(EventIs(SendAck)))),
+                BinaryRelation::Atom(FederateEquals),
             ])),
-            event: EventIs(RecvTimestamp),
+            event: Atom(EventIs(RecvTimestamp)),
         },
         Rule {
             preceding_event: And(Box::new([
-                Unary(Box::new(EventIs(RecvTimestamp))),
-                FederateEquals,
+                Unary(Box::new(Atom(EventIs(RecvTimestamp)))),
+                BinaryRelation::Atom(FederateEquals),
             ])),
-            event: EventIs(SendTimestamp),
+            event: Atom(EventIs(SendTimestamp)),
         },
         Rule {
             preceding_event: And(Box::new([
-                Unary(Box::new(EventIs(SendTimestamp))),
-                FederateEquals,
+                Unary(Box::new(Atom(EventIs(SendTimestamp)))),
+                BinaryRelation::Atom(FederateEquals),
             ])),
-            event: Predicate::And(Box::new([EventIs(RecvNet), Not(Box::new(TagNonzero))])),
+            event: Predicate::And(Box::new([
+                Atom(EventIs(RecvNet)),
+                Not(Box::new(Atom(TagNonzero))),
+            ])),
         },
         Rule {
-            preceding_event: And(Box::new([Unary(Box::new(EventIs(RecvTimestamp)))])),
+            preceding_event: And(Box::new([Unary(Box::new(Atom(EventIs(RecvTimestamp))))])),
             // preceding_event: And(Box::new([Unary(Box::new(Predicate::And(Box::new([
-            //     EventIs(RecvNet),
-            //     Not(Box::new(TagNonzero)),
+            //     Atom(EventIs(RecvNet)),
+            //     Not(Box::new(Atom(TagNonzero))),
             // ]))))])),
             event: Or(Box::new([
-                EventIs(RecvLtc),
-                EventIs(RecvPortAbs),
-                EventIs(RecvTaggedMsg),
-                EventIs(SendTag),
-                EventIs(SendPtag),
-                EventIs(SendPortAbs),
-                EventIs(SendTaggedMsg),
-                EventIs(SendStopGrn),
-                EventIs(SendStopReq),
-                EventIs(RecvStopReq),
-                EventIs(RecvStopReqRep),
+                Atom(EventIs(RecvLtc)),
+                Atom(EventIs(RecvPortAbs)),
+                Atom(EventIs(RecvTaggedMsg)),
+                Atom(EventIs(SendTag)),
+                Atom(EventIs(SendPtag)),
+                Atom(EventIs(SendPortAbs)),
+                Atom(EventIs(SendTaggedMsg)),
+                Atom(EventIs(SendStopGrn)),
+                Atom(EventIs(SendStopReq)),
+                Atom(EventIs(RecvStopReq)),
+                Atom(EventIs(RecvStopReqRep)),
             ])),
         },
     ]

@@ -29,6 +29,9 @@ pub enum EventKind {
     RecvLtc,
 }
 
+pub type Predicate = crate::Predicate<PredicateAtom, BinaryRelationAtom, Event>;
+pub type BinaryRelation = crate::BinaryRelation<PredicateAtom, BinaryRelationAtom, Event>;
+
 /// If two events match a rule, then the rule says that there is a precedence relation between them
 /// (with the preceding event occurring first in all non-error traces).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -37,8 +40,8 @@ pub struct Rule {
     pub preceding_event: BinaryRelation,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum BinaryRelation {
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Sequence)]
+pub enum BinaryRelationAtom {
     LessThan(Term, Term),
     LessThanOrEqual(Term, Term),
     GreaterThanOrEqual(Term, Term),
@@ -47,11 +50,6 @@ pub enum BinaryRelation {
     FederateEquals,
     FederateZeroDelayDirectlyUpstreamOf,
     FederateDirectlyUpstreamOf,
-    IsFirst(Box<BinaryRelation>),
-    IsFirstForFederate(Box<BinaryRelation>),
-    And(Box<[BinaryRelation]>),
-    Or(Box<[BinaryRelation]>),
-    Unary(Box<Predicate>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Sequence)]
@@ -69,17 +67,12 @@ pub enum DelayTerm {
     LargestDelayFromSomeImmUpstreamFed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Predicate {
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Sequence)]
+pub enum PredicateAtom {
     FedHasNoneUpstreamWithDelayLessThanOrEqualCurrentTag,
     TagNonzero,
     TagFinite,
     EventIs(EventKind),
-    IsFirst(Box<Predicate>),
-    And(Box<[Predicate]>),
-    Or(Box<[Predicate]>),
-    Not(Box<Predicate>),
-    BoundBinary(Box<(Event, BinaryRelation)>),
 }
 
 impl Display for EventKind {
@@ -139,12 +132,14 @@ impl Display for Rule {
 impl Display for Predicate {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Predicate::TagNonzero => write!(f, "Tag ≠ 0"),
-            Predicate::FedHasNoneUpstreamWithDelayLessThanOrEqualCurrentTag => {
+            Predicate::Atom(PredicateAtom::TagNonzero) => write!(f, "Tag ≠ 0"),
+            Predicate::Atom(
+                PredicateAtom::FedHasNoneUpstreamWithDelayLessThanOrEqualCurrentTag,
+            ) => {
                 write!(f, "Fed has no upstream with delay ≤ Tag")
             }
-            Predicate::TagFinite => write!(f, "Tag finite"),
-            Predicate::EventIs(event) => write!(f, "{}", event),
+            Predicate::Atom(PredicateAtom::TagFinite) => write!(f, "Tag finite"),
+            Predicate::Atom(PredicateAtom::EventIs(event)) => write!(f, "{}", event),
             Predicate::IsFirst(relation) => write!(f, "(FIRST {})", relation),
             Predicate::And(relations) => {
                 write!(f, "({})", relations[0])?;
@@ -197,37 +192,13 @@ impl Display for DelayTerm {
 impl Display for BinaryRelation {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            // BinaryRelation::TagPlusDelay2FedEquals => write!(f, "Tag + Delay = Tag"),
-            // BinaryRelation::TagPlusDelay2FedLessThan => write!(f, "Tag + Delay < Tag"),
-            // BinaryRelation::TagPlusDelay2FedLessThanOrEqual => write!(f, "Tag + Delay ≤ Tag"),
-            // BinaryRelation::TagPlusDelay2FedGreaterThanOrEquals => {
-            //     write!(f, "Tag + Delay ≥ Tag")
-            // }
-            // BinaryRelation::TagStrictPlusDelay2FedLessThan => {
-            //     write!(f, "Tag strict+ All Delays < Tag")
-            // }
-            // BinaryRelation::TagStrictPlusDelayFromSomeImmUpstreamFedGreaterThanOrEquals => {
-            //     write!(f, "Tag strict+ Some Delay ≥ Tag")
-            // }
-            // BinaryRelation::TagPlusDelayToAllImmDownstreamFedsLessThan => {
-            //     write!(f, "Tag + All Delays < Tag")
-            // }
-            // BinaryRelation::TagPlusLargestDelayLessThan => write!(f, "Tag + Max Delay < Tag"),
-            // BinaryRelation::TagPlusLargestDelayLessThanOrEqual => {
-            //     write!(f, "Tag + Max Delay ≤ Tag")
-            // }
-            // BinaryRelation::TagPlusLargestDelayGreaterThanOrEqual => {
-            //     write!(f, "Tag + Max Delay ≥ Tag")
-            // }
-            // BinaryRelation::TagGreaterThanOrEqual => write!(f, "Tag ≥ Tag"),
-            // BinaryRelation::TagEquals => write!(f, "Tag = Tag"),
-            // BinaryRelation::TagLessThan => write!(f, "Tag < Tag"),
-            // BinaryRelation::TagLessThanOrEqual => write!(f, "Tag ≤ Tag"),
-            BinaryRelation::FederateEquals => write!(f, "Federate = Federate"),
-            BinaryRelation::FederateZeroDelayDirectlyUpstreamOf => {
+            BinaryRelation::Atom(BinaryRelationAtom::FederateEquals) => {
+                write!(f, "Federate = Federate")
+            }
+            BinaryRelation::Atom(BinaryRelationAtom::FederateZeroDelayDirectlyUpstreamOf) => {
                 write!(f, "Federate has zero delay directly upstream of")
             }
-            BinaryRelation::FederateDirectlyUpstreamOf => {
+            BinaryRelation::Atom(BinaryRelationAtom::FederateDirectlyUpstreamOf) => {
                 write!(f, "Federate is directly upstream of")
             }
             BinaryRelation::IsFirst(relation) => write!(f, "(FIRST {})", relation),
@@ -251,11 +222,19 @@ impl Display for BinaryRelation {
                 Ok(())
             }
             BinaryRelation::Unary(p) => write!(f, "{}", p),
-            BinaryRelation::LessThan(t0, t1) => write!(f, "{} < {}", t0, t1),
-            BinaryRelation::LessThanOrEqual(t0, t1) => write!(f, "{} ≤ {}", t0, t1),
-            BinaryRelation::GreaterThanOrEqual(t0, t1) => write!(f, "{} ≥ {}", t0, t1),
-            BinaryRelation::GreaterThan(t0, t1) => write!(f, "{} > {}", t0, t1),
-            BinaryRelation::Equal(t0, t1) => write!(f, "{} = {}", t0, t1),
+            BinaryRelation::Atom(BinaryRelationAtom::LessThan(t0, t1)) => {
+                write!(f, "{} < {}", t0, t1)
+            }
+            BinaryRelation::Atom(BinaryRelationAtom::LessThanOrEqual(t0, t1)) => {
+                write!(f, "{} ≤ {}", t0, t1)
+            }
+            BinaryRelation::Atom(BinaryRelationAtom::GreaterThanOrEqual(t0, t1)) => {
+                write!(f, "{} ≥ {}", t0, t1)
+            }
+            BinaryRelation::Atom(BinaryRelationAtom::GreaterThan(t0, t1)) => {
+                write!(f, "{} > {}", t0, t1)
+            }
+            BinaryRelation::Atom(BinaryRelationAtom::Equal(t0, t1)) => write!(f, "{} = {}", t0, t1),
         }
     }
 }
@@ -571,9 +550,9 @@ fn add_first_predicates_recursive(
         // | BinaryRelation::TagStrictPlusDelay2FedLessThan
         // | BinaryRelation::TagStrictPlusDelayFromSomeImmUpstreamFedGreaterThanOrEquals
         // | BinaryRelation::TagPlusDelayToAllImmDownstreamFedsLessThan
-        BinaryRelation::FederateEquals
-        | BinaryRelation::FederateZeroDelayDirectlyUpstreamOf
-        | BinaryRelation::FederateDirectlyUpstreamOf => {}
+        BinaryRelation::Atom(BinaryRelationAtom::FederateEquals)
+        | BinaryRelation::Atom(BinaryRelationAtom::FederateZeroDelayDirectlyUpstreamOf)
+        | BinaryRelation::Atom(BinaryRelationAtom::FederateDirectlyUpstreamOf) => {}
         BinaryRelation::IsFirst(rel) => {
             for e in concretes.iter().filter(|e| event.holds(e, conninfo)) {
                 predicates.insert(Predicate::BoundBinary(Box::new((e.clone(), *rel.clone()))));
@@ -616,11 +595,11 @@ fn add_first_predicates_recursive(
         BinaryRelation::Unary(prel) => {
             add_first_predicates_recursive_from_predicate(prel, predicates)
         }
-        BinaryRelation::LessThan(_, _)
-        | BinaryRelation::LessThanOrEqual(_, _)
-        | BinaryRelation::GreaterThanOrEqual(_, _)
-        | BinaryRelation::GreaterThan(_, _)
-        | BinaryRelation::Equal(_, _) => {
+        BinaryRelation::Atom(BinaryRelationAtom::LessThan(_, _))
+        | BinaryRelation::Atom(BinaryRelationAtom::LessThanOrEqual(_, _))
+        | BinaryRelation::Atom(BinaryRelationAtom::GreaterThanOrEqual(_, _))
+        | BinaryRelation::Atom(BinaryRelationAtom::GreaterThan(_, _))
+        | BinaryRelation::Atom(BinaryRelationAtom::Equal(_, _)) => {
             // do nothing; we have recursed below the level of predicates
         }
     }
@@ -631,10 +610,10 @@ fn add_first_predicates_recursive_from_predicate(
     predicates: &mut HashSet<Predicate>,
 ) {
     match prel {
-        Predicate::TagNonzero
-        | Predicate::TagFinite
-        | Predicate::EventIs(_)
-        | Predicate::FedHasNoneUpstreamWithDelayLessThanOrEqualCurrentTag => {}
+        Predicate::Atom(PredicateAtom::TagNonzero)
+        | Predicate::Atom(PredicateAtom::TagFinite)
+        | Predicate::Atom(PredicateAtom::EventIs(_))
+        | Predicate::Atom(PredicateAtom::FedHasNoneUpstreamWithDelayLessThanOrEqualCurrentTag) => {}
         Predicate::IsFirst(prel) => {
             predicates.insert(*prel.clone());
             add_first_predicates_recursive_from_predicate(prel, predicates);
@@ -656,14 +635,16 @@ fn add_first_predicates_recursive_from_predicate(
 impl Predicate {
     pub fn holds(&self, e: &Event, conninfo: &ConnInfo) -> bool {
         match self {
-            Predicate::TagNonzero => {
+            Predicate::Atom(PredicateAtom::TagNonzero) => {
                 if let Event::Concrete { tag, .. } = e {
                     tag != &Tag(0, 0)
                 } else {
                     false
                 }
             }
-            Predicate::FedHasNoneUpstreamWithDelayLessThanOrEqualCurrentTag => {
+            Predicate::Atom(
+                PredicateAtom::FedHasNoneUpstreamWithDelayLessThanOrEqualCurrentTag,
+            ) => {
                 if let Event::Concrete { fedid, tag, .. } = e {
                     conninfo
                         .min_delays2dest(*fedid)
@@ -672,14 +653,14 @@ impl Predicate {
                     false
                 }
             }
-            Predicate::TagFinite => {
+            Predicate::Atom(PredicateAtom::TagFinite) => {
                 if let Event::Concrete { tag, .. } = e {
                     tag.0.abs() < 1_000_000_000_000
                 } else {
                     false
                 }
             }
-            Predicate::EventIs(event) => {
+            Predicate::Atom(PredicateAtom::EventIs(event)) => {
                 if let Event::Concrete { event: other, .. } = e {
                     other == event
                 } else {
@@ -747,11 +728,13 @@ impl BinaryRelation {
             }
         }
         match self {
-            BinaryRelation::FederateEquals => neither_first(|_, _, a, b, _| a == b),
-            BinaryRelation::FederateZeroDelayDirectlyUpstreamOf => {
+            BinaryRelation::Atom(BinaryRelationAtom::FederateEquals) => {
+                neither_first(|_, _, a, b, _| a == b)
+            }
+            BinaryRelation::Atom(BinaryRelationAtom::FederateZeroDelayDirectlyUpstreamOf) => {
                 neither_first(|_, _, _pfed, _fed, delay| delay == Some(&NO_DELAY))
             }
-            BinaryRelation::FederateDirectlyUpstreamOf => {
+            BinaryRelation::Atom(BinaryRelationAtom::FederateDirectlyUpstreamOf) => {
                 neither_first(|_, _, _pfed, _fed, delay| delay.is_some())
             }
             BinaryRelation::IsFirst(r) => {
@@ -777,17 +760,21 @@ impl BinaryRelation {
                 .iter()
                 .any(|rel| rel.holds(e, preceding, conninfo)),
             BinaryRelation::Unary(p) => p.holds(preceding, conninfo),
-            BinaryRelation::LessThan(t0, t1) => evaluate(Tag::lt, t0, t1, e, preceding, conninfo),
-            BinaryRelation::LessThanOrEqual(t0, t1) => {
+            BinaryRelation::Atom(BinaryRelationAtom::LessThan(t0, t1)) => {
+                evaluate(Tag::lt, t0, t1, e, preceding, conninfo)
+            }
+            BinaryRelation::Atom(BinaryRelationAtom::LessThanOrEqual(t0, t1)) => {
                 evaluate(Tag::le, t0, t1, e, preceding, conninfo)
             }
-            BinaryRelation::GreaterThanOrEqual(t0, t1) => {
+            BinaryRelation::Atom(BinaryRelationAtom::GreaterThanOrEqual(t0, t1)) => {
                 evaluate(Tag::ge, t0, t1, e, preceding, conninfo)
             }
-            BinaryRelation::GreaterThan(t0, t1) => {
+            BinaryRelation::Atom(BinaryRelationAtom::GreaterThan(t0, t1)) => {
                 evaluate(Tag::gt, t0, t1, e, preceding, conninfo)
             }
-            BinaryRelation::Equal(t0, t1) => evaluate(Tag::eq, t0, t1, e, preceding, conninfo),
+            BinaryRelation::Atom(BinaryRelationAtom::Equal(t0, t1)) => {
+                evaluate(Tag::eq, t0, t1, e, preceding, conninfo)
+            }
         }
     }
 }

@@ -1,38 +1,47 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::lflib::{BinaryRelation, EventKind, Predicate, Rule};
-#[derive(Debug)]
-pub struct ByFuel<Ab: Abstraction>(pub Vec<Vec<(Ab::R, Ab)>>); // TODO: no pub
+use enum_iterator::Sequence;
 
-pub trait NaryRelation: Sized + Clone + std::fmt::Debug + std::hash::Hash + PartialEq + Eq {
-    fn atoms() -> Vec<Self>;
-    fn kind(&self) -> NaryRelationKind;
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum NaryRelationKind {
-    And,
-    Or,
-    Not,
-    Other,
-}
+use crate::{
+    lflib::{BinaryRelation, EventKind, Rule},
+    Predicate,
+};
+#[derive(Debug)]
+pub struct ByFuel<Ab: Abstraction>(pub Vec<Vec<(Conc<Ab>, Ab)>>); // TODO: no pub
+
+// pub trait NaryRelation: Sized + Clone + std::fmt::Debug + std::hash::Hash + PartialEq + Eq {
+//     // fn atoms() -> Vec<Self>;
+//     // fn kind(&self) -> NaryRelationKind;
+// }
+// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+// pub enum NaryRelationKind {
+//     And,
+//     Or,
+//     Not,
+//     Other,
+// }
 #[allow(type_alias_bounds)] // it looks like a bug that this is necessary
-pub type ConcAbst<Ab: Abstraction> = (Ab::R, Ab);
+pub type ConcAbst<Ab: Abstraction> = (Conc<Ab>, Ab);
+pub type Conc<Ab: Abstraction> = Predicate<Ab::PAtom, Ab::BAtom, Ab::Event>;
 pub trait Abstraction: Sized + Clone {
-    type R: NaryRelation;
-    fn fact(fact: &Self::R) -> Self;
+    type PAtom: std::fmt::Debug + Clone + Eq + std::hash::Hash + Ord + Sequence;
+    type BAtom: std::fmt::Debug + Clone + Eq + std::hash::Hash + Ord + Sequence;
+    type Event: std::fmt::Debug + Clone + Eq + std::hash::Hash + Ord;
+    // type R: Predicate<PAtom, BAtom, Event>;
+    fn fact(fact: &Conc<Self>) -> Self;
     fn and(
-        concterms: impl Iterator<Item = Self::R> + Clone,
+        concterms: impl Iterator<Item = Conc<Self>> + Clone,
         absterms: impl Iterator<Item = Self> + Clone,
     ) -> Option<ConcAbst<Self>>;
     fn or(
-        concterms: impl Iterator<Item = Self::R> + Clone,
+        concterms: impl Iterator<Item = Conc<Self>> + Clone,
         absterms: impl Iterator<Item = Self> + Clone,
     ) -> Option<ConcAbst<Self>>;
-    fn not(&self, concterm: &Self::R) -> Option<ConcAbst<Self>>;
+    fn not(&self, concterm: &Conc<Self>) -> Option<ConcAbst<Self>>;
 }
 #[derive(Debug, Clone)]
-pub struct SimpleAbstraction<R: NaryRelation> {
-    pub predicate2powerbool: HashMap<R, PowerBool>,
+pub struct SimpleAbstraction<Ab: Abstraction> {
+    pub predicate2powerbool: HashMap<Conc<Ab>, PowerBool>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -47,7 +56,7 @@ impl<T: Abstraction> Default for ByFuel<T> {
     }
 }
 
-impl<R: NaryRelation> Default for SimpleAbstraction<R> {
+impl<Ab: Abstraction> Default for SimpleAbstraction<Ab> {
     fn default() -> Self {
         Self {
             predicate2powerbool: HashMap::default(),
@@ -55,9 +64,9 @@ impl<R: NaryRelation> Default for SimpleAbstraction<R> {
     }
 }
 
-impl<R: NaryRelation> SimpleAbstraction<R> {
+impl<Ab: Abstraction> SimpleAbstraction<Ab> {
     // TODO: move the filtering into here. This includes uninhabitable filtering perhaps (not sure), and definitely and/or/not filtering. Move it here from the advance fn
-    pub fn fact(fact: &R) -> Self {
+    pub fn fact(fact: &Conc<Ab>) -> Self {
         Self {
             predicate2powerbool: vec![(fact.clone(), PowerBool::new_true())]
                 .into_iter()
@@ -66,13 +75,16 @@ impl<R: NaryRelation> SimpleAbstraction<R> {
     }
 
     pub fn and(
-        concterms: impl Iterator<Item = R> + Clone,
+        concterms: impl Iterator<Item = Conc<Ab>> + Clone,
         absterms: impl Iterator<Item = Self> + Clone,
     ) -> Option<Self> {
         let predicate2powerbool = absterms.zip(concterms).fold(
-            Some(HashMap::<R, PowerBool>::default()),
+            Some(HashMap::<Conc<Ab>, PowerBool>::default()),
             |mut acc, (abst, conct)| {
-                if conct.kind() == NaryRelationKind::And {
+                // if conct.kind() == NaryRelationKind::And {
+                //     return None;
+                // }
+                if let Predicate::And(_) = conct {
                     return None;
                 }
                 if let Some(ref mut acc) = acc {
@@ -93,14 +105,17 @@ impl<R: NaryRelation> SimpleAbstraction<R> {
     }
 
     pub fn or(
-        concterms: impl Iterator<Item = R> + Clone,
+        concterms: impl Iterator<Item = Conc<Ab>> + Clone,
         absterms: impl Iterator<Item = Self> + Clone,
     ) -> Option<Self> {
         let predicate2powerbool = absterms.zip(concterms).fold(
-            Some(HashMap::<R, PowerBool>::default()),
+            Some(HashMap::<Conc<Ab>, PowerBool>::default()),
             |mut acc, (abst, conct)| {
                 if let Some(ref mut acc) = acc {
-                    if conct.kind() == NaryRelationKind::Or {
+                    // if conct.kind() == NaryRelationKind::Or {
+                    //     return None;
+                    // }
+                    if let Predicate::Or(_) = conct {
                         return None;
                     }
                     for (predicate, powerbool) in abst.predicate2powerbool.iter() {
@@ -120,8 +135,11 @@ impl<R: NaryRelation> SimpleAbstraction<R> {
         })
     }
 
-    pub fn not(&self, concterm: &R) -> Option<Self> {
-        if concterm.kind() == NaryRelationKind::Not {
+    pub fn not(&self, concterm: &Conc<Ab>) -> Option<Self> {
+        // if concterm.kind() == NaryRelationKind::Not {
+        //     return None;
+        // }
+        if let Predicate::Not(_) = concterm {
             return None;
         }
         let predicate2powerbool = self
@@ -157,9 +175,10 @@ impl<Ab: crate::enumerate::Abstraction> ByFuel<Ab> {
     }
     fn exact_fuel(&self, fuel: usize) -> Vec<ConcAbst<Ab>> {
         if fuel == 0 {
-            Ab::R::atoms()
+            enum_iterator::all::<Ab::PAtom>()
                 .into_iter()
                 .map(|it| {
+                    let it = Predicate::Atom(it);
                     let ab = Ab::fact(&it);
                     (it, ab)
                 })
