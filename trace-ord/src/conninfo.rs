@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display, ops::Add, str::FromStr};
+use std::{collections::BTreeMap, fmt::Display, ops::Add, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 
@@ -147,7 +147,7 @@ pub struct ConnInfo {
     fed2uds: Vec<Fed2UpstreamDelays>,
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct SrcDestPair2Delay(HashMap<(FedId, FedId), Delay>, usize);
+struct SrcDestPair2Delay(BTreeMap<(FedId, FedId), Delay>, usize); // use BTreeMap instead of HashMap to make the order deterministic when serializing
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Fed2UpstreamDelays(FedId, Vec<Delay>);
 
@@ -158,7 +158,7 @@ impl FromStr for SrcDestPair2Delay {
     ///   number_of_scheduling_nodes
     ///   (enclave_id num_upstream (upstream_federate_id upstream_delay)*\n)*
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut conn_info = HashMap::new();
+        let mut conn_info = BTreeMap::new();
         let mut lines = s.lines();
         let num_nodes = lines
             .next()
