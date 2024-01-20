@@ -1,12 +1,12 @@
 use criterion::{criterion_group, criterion_main};
-use trace_ord::{enumerate::ByFuel, lfenumerate::PredicateAbstraction};
+use trace_ord::{enumerate::ByFuel, lfenumerate::UnaryRelationAbstraction};
 
 fn enumeration_benchmark(c: &mut criterion::Criterion) {
     let mut group = c.benchmark_group("enumerate");
     group.sample_size(10);
     group.bench_function("enumerate", |b| {
         b.iter(|| {
-            let mut predicates = ByFuel::<PredicateAbstraction>::default();
+            let mut predicates = ByFuel::<UnaryRelationAbstraction>::default();
             predicates.advance(5).cloned().collect::<Vec<_>>()
         })
     });

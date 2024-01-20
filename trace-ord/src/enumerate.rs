@@ -2,19 +2,19 @@ use std::collections::HashMap;
 
 use enum_iterator::Sequence;
 
-use crate::Predicate;
+use crate::{AtomTrait, EventTrait, UnaryRelation};
 #[derive(Debug)]
 pub struct ByFuel<Ab: Abstraction>(pub Vec<Vec<(Conc<Ab>, Ab)>>); // TODO: no pub
 
 #[allow(type_alias_bounds)] // it looks like a bug that this is necessary
 pub type ConcAbst<Ab: Abstraction> = (Conc<Ab>, Ab);
 #[allow(type_alias_bounds)] // it looks like a bug that this is necessary
-pub type Conc<Ab: Abstraction> = Predicate<Ab::PAtom, Ab::BAtom, Ab::Event>;
+pub type Conc<Ab: Abstraction> = UnaryRelation<Ab::AtomN, Ab::AtomM, Ab::Event>;
 pub trait Abstraction: Sized + Clone {
-    type PAtom: std::fmt::Debug + Clone + Eq + std::hash::Hash + Ord + Sequence;
-    type BAtom: std::fmt::Debug + Clone + Eq + std::hash::Hash + Ord + Sequence;
-    type Event: std::fmt::Debug + Clone + Eq + std::hash::Hash + Ord;
-    // type R: Predicate<PAtom, BAtom, Event>;
+    type AtomN: AtomTrait;
+    type AtomM: AtomTrait;
+    type Event: EventTrait;
+    // type R: UnaryRelation<AtomN, AtomM, Event>;
     fn fact(fact: &Conc<Self>) -> Self;
     fn and(
         concterms: impl Iterator<Item = Conc<Self>> + Clone,
@@ -71,7 +71,7 @@ impl<Ab: Abstraction> SimpleAbstraction<Ab> {
                 // if conct.kind() == NaryRelationKind::And {
                 //     return None;
                 // }
-                if let Predicate::And(_) = conct {
+                if let UnaryRelation::And(_) = conct {
                     return None;
                 }
                 if let Some(ref mut acc) = acc {
@@ -102,7 +102,7 @@ impl<Ab: Abstraction> SimpleAbstraction<Ab> {
                     // if conct.kind() == NaryRelationKind::Or {
                     //     return None;
                     // }
-                    if let Predicate::Or(_) = conct {
+                    if let UnaryRelation::Or(_) = conct {
                         return None;
                     }
                     for (predicate, powerbool) in abst.predicate2powerbool.iter() {
@@ -126,7 +126,7 @@ impl<Ab: Abstraction> SimpleAbstraction<Ab> {
         // if concterm.kind() == NaryRelationKind::Not {
         //     return None;
         // }
-        if let Predicate::Not(_) = concterm {
+        if let UnaryRelation::Not(_) = concterm {
             return None;
         }
         let predicate2powerbool = self
@@ -162,9 +162,9 @@ impl<Ab: crate::enumerate::Abstraction> ByFuel<Ab> {
     }
     fn exact_fuel(&self, fuel: usize) -> Vec<ConcAbst<Ab>> {
         if fuel == 0 {
-            enum_iterator::all::<Ab::PAtom>()
+            enum_iterator::all::<Ab::AtomN>()
                 .map(|it| {
-                    let it = Predicate::Atom(it);
+                    let it = UnaryRelation::Atom(it);
                     let ab = Ab::fact(&it);
                     (it, ab)
                 })

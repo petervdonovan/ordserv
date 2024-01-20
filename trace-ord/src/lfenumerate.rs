@@ -1,32 +1,32 @@
 use std::collections::HashSet;
 
 use crate::enumerate::{Abstraction, ByFuel, Conc, ConcAbst, SimpleAbstraction};
-use crate::lflib::{BinaryRelationAtom, EventKind, Predicate, PredicateAtom, Rule};
+use crate::lflib::{BinaryRelationAtom, EventKind, Rule, UnaryRelation, UnaryRelationAtom};
 
 #[derive(Debug, Default, Clone)]
-pub struct PredicateAbstraction {
+pub struct UnaryRelationAbstraction {
     pub possible_events: Option<HashSet<EventKind>>,
-    pub sabs: SimpleAbstraction<PredicateAbstraction>,
+    pub sabs: SimpleAbstraction<UnaryRelationAbstraction>,
 }
 #[derive(Debug)]
-pub struct PredicatesWithBoundBinariesWithFuel(ByFuel<PredicateAbstraction>);
+pub struct UnaryRelationsWithBoundBinariesWithFuel(ByFuel<UnaryRelationAbstraction>);
 #[derive(Debug, Default)]
 pub struct RulesWithFuel {
     rules_by_fuel: Vec<Vec<Rule>>,
 }
 
-impl Abstraction for PredicateAbstraction {
-    // type R = Predicate;
+impl Abstraction for UnaryRelationAbstraction {
+    // type R = UnaryRelation;
 
-    type PAtom = PredicateAtom;
+    type AtomN = UnaryRelationAtom;
 
-    type BAtom = BinaryRelationAtom;
+    type AtomM = BinaryRelationAtom;
 
     type Event = crate::lflib::Event;
 
-    fn fact(predicate: &Predicate) -> Self {
+    fn fact(predicate: &UnaryRelation) -> Self {
         match predicate {
-            Predicate::Atom(PredicateAtom::EventIs(kind)) => Self::event(*kind),
+            UnaryRelation::Atom(UnaryRelationAtom::EventIs(kind)) => Self::event(*kind),
             _ => Self {
                 possible_events: None,
                 sabs: SimpleAbstraction::fact(predicate),
@@ -57,7 +57,7 @@ impl Abstraction for PredicateAbstraction {
             return None;
         }
         Some((
-            Predicate::And(concterms.into_iter().collect::<Vec<_>>().into_boxed_slice()),
+            UnaryRelation::And(concterms.into_iter().collect::<Vec<_>>().into_boxed_slice()),
             ret,
         ))
     }
@@ -78,7 +78,7 @@ impl Abstraction for PredicateAbstraction {
             });
         let sabs = SimpleAbstraction::or(concterms.clone(), absterms.map(|it| it.sabs))?;
         Some((
-            Predicate::Or(concterms.into_iter().collect::<Vec<_>>().into_boxed_slice()),
+            UnaryRelation::Or(concterms.into_iter().collect::<Vec<_>>().into_boxed_slice()),
             Self {
                 possible_events,
                 sabs,
@@ -86,15 +86,18 @@ impl Abstraction for PredicateAbstraction {
         ))
     }
 
-    fn not(&self, concterm: &Predicate) -> Option<ConcAbst<Self>> {
-        if matches!(concterm, &Predicate::Atom(PredicateAtom::EventIs(_))) {
+    fn not(&self, concterm: &UnaryRelation) -> Option<ConcAbst<Self>> {
+        if matches!(
+            concterm,
+            &UnaryRelation::Atom(UnaryRelationAtom::EventIs(_))
+        ) {
             // heuristic: usually is not helpful to match negations of eventis.
             // note: we still hit all equivalence classes because not(some event) is the same as or(all other events), except with undesirably much lower fuel
             return None;
         }
         let sabs = self.sabs.not(concterm)?;
         Some((
-            Predicate::Not(Box::new(concterm.clone())),
+            UnaryRelation::Not(Box::new(concterm.clone())),
             Self {
                 possible_events: None,
                 sabs,
@@ -103,7 +106,7 @@ impl Abstraction for PredicateAbstraction {
     }
 }
 
-impl PredicateAbstraction {
+impl UnaryRelationAbstraction {
     fn uninhabitable(&self) -> bool {
         self.possible_events
             .as_ref()
@@ -112,7 +115,7 @@ impl PredicateAbstraction {
     }
 }
 
-impl PredicateAbstraction {
+impl UnaryRelationAbstraction {
     fn event(kind: EventKind) -> Self {
         Self {
             possible_events: Some(vec![kind].into_iter().collect()),
@@ -127,7 +130,7 @@ mod tests {
 
     #[test]
     fn test_predicates_with_fuel() {
-        let mut predicates = ByFuel::<PredicateAbstraction>::default();
+        let mut predicates = ByFuel::<UnaryRelationAbstraction>::default();
         let predicates: Vec<_> = predicates.advance(5).collect();
         // TODO: account for implications between atomic predicates. e.g., if a implies b, then or(a, b) is equivalent to b.
         let expect = expect_test::expect![[r#"
