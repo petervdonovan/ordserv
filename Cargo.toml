@@ -15,5 +15,4 @@ members = [
 incremental = false
 
 [profile.release]
-# panic = 'abort'
 incremental = false

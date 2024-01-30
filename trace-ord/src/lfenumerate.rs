@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use crate::conninfo::ConnInfo;
 use crate::enumerate::{Abstraction, ByFuel, Conc, ConcAbst, SimpleAbstraction};
 use crate::lflib::{BinaryRelationAtom, EventKind, Rule, UnaryRelation, UnaryRelationAtom};
 
@@ -16,13 +17,17 @@ pub struct RulesWithFuel {
 }
 
 impl Abstraction for UnaryRelationAbstraction {
-    // type R = UnaryRelation;
-
     type AtomN = UnaryRelationAtom;
 
     type AtomM = BinaryRelationAtom;
 
     type Event = crate::lflib::Event;
+
+    const N: usize = 1;
+
+    const M: usize = 2;
+
+    type Ctx = ConnInfo;
 
     fn fact(predicate: &UnaryRelation) -> Self {
         match predicate {

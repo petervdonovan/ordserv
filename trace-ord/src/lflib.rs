@@ -5,7 +5,10 @@ use std::{
     str::FromStr,
 };
 
-use crate::conninfo::{get_nonnegative_microstep, ConnInfo, Delay, FedId, Tag, NO_DELAY, STARTUP};
+use crate::{
+    conninfo::{get_nonnegative_microstep, ConnInfo, Delay, FedId, Tag, NO_DELAY, STARTUP},
+    AtomTrait, Nary,
+};
 use ::serde::{Deserialize, Serialize};
 use enum_iterator::Sequence;
 
@@ -29,8 +32,10 @@ pub enum EventKind {
     RecvLtc,
 }
 
-pub type UnaryRelation = crate::UnaryRelation<UnaryRelationAtom, BinaryRelationAtom, Event>;
-pub type BinaryRelation = crate::BinaryRelation<UnaryRelationAtom, BinaryRelationAtom, Event>;
+pub type UnaryRelation =
+    crate::UnaryRelation<UnaryRelationAtom, BinaryRelationAtom, Event, ConnInfo>;
+pub type BinaryRelation =
+    crate::BinaryRelation<UnaryRelationAtom, BinaryRelationAtom, Event, ConnInfo>;
 
 /// If two events match a rule, then the rule says that there is a precedence relation between them
 /// (with the preceding event occurring first in all non-error traces).
@@ -138,6 +143,25 @@ impl Display for UnaryRelationAtom {
             UnaryRelationAtom::TagNonzero => write!(f, "Tag ≠ 0"),
             UnaryRelationAtom::TagFinite => write!(f, "Tag finite"),
             UnaryRelationAtom::EventIs(event) => write!(f, "{}", event),
+        }
+    }
+}
+
+impl Display for BinaryRelationAtom {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BinaryRelationAtom::FederateEquals => write!(f, "Federate = Federate"),
+            BinaryRelationAtom::FederateZeroDelayDirectlyUpstreamOf => {
+                write!(f, "Federate has zero delay directly upstream of")
+            }
+            BinaryRelationAtom::FederateDirectlyUpstreamOf => {
+                write!(f, "Federate is directly upstream of")
+            }
+            BinaryRelationAtom::LessThan(t0, t1) => write!(f, "{} < {}", t0, t1),
+            BinaryRelationAtom::LessThanOrEqual(t0, t1) => write!(f, "{} ≤ {}", t0, t1),
+            BinaryRelationAtom::GreaterThanOrEqual(t0, t1) => write!(f, "{} ≥ {}", t0, t1),
+            BinaryRelationAtom::GreaterThan(t0, t1) => write!(f, "{} > {}", t0, t1),
+            BinaryRelationAtom::Equal(t0, t1) => write!(f, "{} = {}", t0, t1),
         }
     }
 }
@@ -455,7 +479,7 @@ pub fn elaborated_from_trace_records(
     let (predicates, federate_wise_predicates) = get_first_predicates(axioms, &concretes, conninfo);
     for p in predicates {
         for (ogr, record) in concretes.iter().enumerate() {
-            if p.holds(record, conninfo) {
+            if p.holds(&[record.clone()], conninfo) {
                 firsts[ogr].push(Event::First(p.clone()));
                 break;
             }
@@ -465,7 +489,7 @@ pub fn elaborated_from_trace_records(
         let mut federates_hit = HashSet::new();
         for (ogr, record) in concretes.iter().enumerate() {
             if let Event::Concrete { fedid, .. } = record {
-                if p.holds(record, conninfo) && !federates_hit.contains(fedid) {
+                if p.holds(&[record.clone()], conninfo) && !federates_hit.contains(fedid) {
                     firsts[ogr].push(Event::FirstForFederate(*fedid, p.clone()));
                     federates_hit.insert(*fedid);
                     if federates_hit.len() == conninfo.n_federates() {
@@ -515,25 +539,14 @@ fn add_first_predicates_recursive(
     conninfo: &ConnInfo,
 ) {
     match brel {
-        // BinaryRelation::TagPlusDelay2FedEquals
-        // | BinaryRelation::TagPlusDelay2FedLessThan
-        // | BinaryRelation::TagPlusDelay2FedLessThanOrEqual
-        // | BinaryRelation::TagPlusDelay2FedGreaterThanOrEquals
-        // | BinaryRelation::TagPlusLargestDelayLessThan
-        // | BinaryRelation::TagPlusLargestDelayLessThanOrEqual
-        // | BinaryRelation::TagPlusLargestDelayGreaterThanOrEqual
-        // | BinaryRelation::TagGreaterThanOrEqual
-        // | BinaryRelation::TagEquals
-        // | BinaryRelation::TagLessThan
-        // | BinaryRelation::TagLessThanOrEqual
-        // | BinaryRelation::TagStrictPlusDelay2FedLessThan
-        // | BinaryRelation::TagStrictPlusDelayFromSomeImmUpstreamFedGreaterThanOrEquals
-        // | BinaryRelation::TagPlusDelayToAllImmDownstreamFedsLessThan
-        BinaryRelation::Atom(BinaryRelationAtom::FederateEquals)
-        | BinaryRelation::Atom(BinaryRelationAtom::FederateZeroDelayDirectlyUpstreamOf)
-        | BinaryRelation::Atom(BinaryRelationAtom::FederateDirectlyUpstreamOf) => {}
-        BinaryRelation::IsFirst(rel) => {
-            for e in concretes.iter().filter(|e| event.holds(e, conninfo)) {
+        Nary::Atom(_) => {
+            // do nothing; we have recursed below the level of predicates
+        }
+        Nary::IsFirst(rel) => {
+            for e in concretes
+                .iter()
+                .filter(|e| event.holds(&[(*e).clone()], conninfo))
+            {
                 predicates.insert(UnaryRelation::BoundMary(Box::new((
                     [e.clone()],
                     *rel.clone(),
@@ -548,8 +561,11 @@ fn add_first_predicates_recursive(
                 conninfo,
             );
         }
-        BinaryRelation::IsFirstForFederate(rel) => {
-            for e in concretes.iter().filter(|e| event.holds(e, conninfo)) {
+        Nary::IsFirstForFederate(rel) => {
+            for e in concretes
+                .iter()
+                .filter(|e| event.holds(&[(*e).clone()], conninfo))
+            {
                 federate_wise_predicates.insert(UnaryRelation::BoundMary(Box::new((
                     [e.clone()],
                     *rel.clone(),
@@ -564,7 +580,7 @@ fn add_first_predicates_recursive(
                 conninfo,
             );
         }
-        BinaryRelation::And(rels) | BinaryRelation::Or(rels) => {
+        Nary::And(rels) | Nary::Or(rels) => {
             for rel in &**rels {
                 add_first_predicates_recursive(
                     event,
@@ -576,15 +592,11 @@ fn add_first_predicates_recursive(
                 );
             }
         }
-        BinaryRelation::BoundMary(prel) => {
-            add_first_predicates_recursive_from_predicate(&((*prel).as_ref()).1, predicates)
+        Nary::Not(_rel) => {
+            panic!("this might never be necessary to implement")
         }
-        BinaryRelation::Atom(BinaryRelationAtom::LessThan(_, _))
-        | BinaryRelation::Atom(BinaryRelationAtom::LessThanOrEqual(_, _))
-        | BinaryRelation::Atom(BinaryRelationAtom::GreaterThanOrEqual(_, _))
-        | BinaryRelation::Atom(BinaryRelationAtom::GreaterThan(_, _))
-        | BinaryRelation::Atom(BinaryRelationAtom::Equal(_, _)) => {
-            // do nothing; we have recursed below the level of predicates
+        Nary::BoundMary(prel) => {
+            add_first_predicates_recursive_from_predicate(&((*prel).as_ref()).1, predicates)
         }
     }
 }
@@ -594,44 +606,40 @@ fn add_first_predicates_recursive_from_predicate(
     predicates: &mut HashSet<UnaryRelation>,
 ) {
     match prel {
-        UnaryRelation::Atom(UnaryRelationAtom::TagNonzero)
-        | UnaryRelation::Atom(UnaryRelationAtom::TagFinite)
-        | UnaryRelation::Atom(UnaryRelationAtom::EventIs(_))
-        | UnaryRelation::Atom(
-            UnaryRelationAtom::FedHasNoneUpstreamWithDelayLessThanOrEqualCurrentTag,
-        ) => {}
-        UnaryRelation::IsFirst(prel) => {
+        Nary::Atom(_) => {}
+        Nary::IsFirst(prel) => {
             predicates.insert(*prel.clone());
             add_first_predicates_recursive_from_predicate(prel, predicates);
         }
-        UnaryRelation::And(prels) | UnaryRelation::Or(prels) => {
+        Nary::And(prels) | Nary::Or(prels) => {
             for prel in &**prels {
                 add_first_predicates_recursive_from_predicate(prel, predicates);
             }
         }
-        UnaryRelation::Not(prel) => {
+        Nary::Not(prel) => {
             add_first_predicates_recursive_from_predicate(prel, predicates);
         }
-        UnaryRelation::BoundMary(_) => {
+        Nary::BoundMary(_) => {
             panic!("it never makes sense to use a bound binary inside a predicate inside a bound binary in user-facing rules");
+        }
+        Nary::IsFirstForFederate(_) => {
+            panic!("this might never be necessary to implement")
         }
     }
 }
 
-impl UnaryRelation {
-    pub fn holds(&self, e: &Event, conninfo: &ConnInfo) -> bool {
+impl AtomTrait<1, Event, ConnInfo> for UnaryRelationAtom {
+    fn holds(&self, e: &[Event; 1], conninfo: &ConnInfo) -> bool {
         match self {
-            UnaryRelation::Atom(UnaryRelationAtom::TagNonzero) => {
-                if let Event::Concrete { tag, .. } = e {
+            UnaryRelationAtom::TagNonzero => {
+                if let [Event::Concrete { tag, .. }] = e {
                     tag != &Tag(0, 0)
                 } else {
                     false
                 }
             }
-            UnaryRelation::Atom(
-                UnaryRelationAtom::FedHasNoneUpstreamWithDelayLessThanOrEqualCurrentTag,
-            ) => {
-                if let Event::Concrete { fedid, tag, .. } = e {
+            UnaryRelationAtom::FedHasNoneUpstreamWithDelayLessThanOrEqualCurrentTag => {
+                if let [Event::Concrete { fedid, tag, .. }] = e {
                     conninfo
                         .min_delays2dest(*fedid)
                         .all(|(_, delay)| STARTUP + *delay > *tag)
@@ -639,37 +647,26 @@ impl UnaryRelation {
                     false
                 }
             }
-            UnaryRelation::Atom(UnaryRelationAtom::TagFinite) => {
-                if let Event::Concrete { tag, .. } = e {
+            UnaryRelationAtom::TagFinite => {
+                if let [Event::Concrete { tag, .. }] = e {
                     tag.0.abs() < 1_000_000_000_000
                 } else {
                     false
                 }
             }
-            UnaryRelation::Atom(UnaryRelationAtom::EventIs(event)) => {
-                if let Event::Concrete { event: other, .. } = e {
+            UnaryRelationAtom::EventIs(event) => {
+                if let [Event::Concrete { event: other, .. }] = e {
                     other == event
                 } else {
                     false
                 }
             }
-            UnaryRelation::IsFirst(relation) => {
-                if let Event::First(other) = &e {
-                    other == &**relation // TODO: consider logical equivalence?
-                } else {
-                    false
-                }
-            }
-            UnaryRelation::And(relations) => relations.iter().all(|rel| rel.holds(e, conninfo)),
-            UnaryRelation::Or(relations) => relations.iter().any(|rel| rel.holds(e, conninfo)),
-            UnaryRelation::Not(relation) => !relation.holds(e, conninfo),
-            UnaryRelation::BoundBinary(bound) => bound.1.holds(&bound.0, e, conninfo),
         }
     }
 }
 
-impl BinaryRelation {
-    pub fn holds(&self, e: &Event, preceding: &Event, conninfo: &ConnInfo) -> bool {
+impl AtomTrait<2, Event, ConnInfo> for BinaryRelationAtom {
+    fn holds(&self, e: &[Event; 2], conninfo: &ConnInfo) -> bool {
         let neither_first = |f: fn(&Tag, &Tag, &FedId, &FedId, Option<&Delay>) -> bool| {
             if let (
                 Event::Concrete {
@@ -678,7 +675,7 @@ impl BinaryRelation {
                     ..
                 },
                 Event::Concrete { tag, fedid, .. },
-            ) = (preceding, e)
+            ) = (&e[0], &e[1])
             {
                 f(ptag, tag, pfedid, fedid, conninfo.get(*pfedid, *fedid))
             } else {
@@ -689,8 +686,7 @@ impl BinaryRelation {
             f: fn(&Tag, &Tag) -> bool,
             t0: &Term,
             t1: &Term,
-            e: &Event,
-            preceding: &Event,
+            e: &[Event; 2],
             conninfo: &ConnInfo,
         ) -> bool {
             if let (
@@ -700,7 +696,7 @@ impl BinaryRelation {
                     ..
                 },
                 Event::Concrete { tag, fedid, .. },
-            ) = (preceding, e)
+            ) = (&e[0], &e[1])
             {
                 let t0 = t0.eval(*pfedid, *ptag, (*pfedid, *fedid), conninfo);
                 let t1 = t1.eval(*fedid, *tag, (*pfedid, *fedid), conninfo);
@@ -714,53 +710,20 @@ impl BinaryRelation {
             }
         }
         match self {
-            BinaryRelation::Atom(BinaryRelationAtom::FederateEquals) => {
-                neither_first(|_, _, a, b, _| a == b)
-            }
-            BinaryRelation::Atom(BinaryRelationAtom::FederateZeroDelayDirectlyUpstreamOf) => {
+            BinaryRelationAtom::FederateEquals => neither_first(|_, _, a, b, _| a == b),
+            BinaryRelationAtom::FederateZeroDelayDirectlyUpstreamOf => {
                 neither_first(|_, _, _pfed, _fed, delay| delay == Some(&NO_DELAY))
             }
-            BinaryRelation::Atom(BinaryRelationAtom::FederateDirectlyUpstreamOf) => {
+            BinaryRelationAtom::FederateDirectlyUpstreamOf => {
                 neither_first(|_, _, _pfed, _fed, delay| delay.is_some())
             }
-            BinaryRelation::IsFirst(r) => {
-                if let Event::First(other) = &preceding {
-                    other == &UnaryRelation::BoundBinary(Box::new((e.clone(), *r.clone())))
-                // maybe not the most efficient
-                // TODO: consider logical equivalence?
-                } else {
-                    false
-                }
+            BinaryRelationAtom::LessThan(t0, t1) => evaluate(Tag::lt, t0, t1, e, conninfo),
+            BinaryRelationAtom::LessThanOrEqual(t0, t1) => evaluate(Tag::le, t0, t1, e, conninfo),
+            BinaryRelationAtom::GreaterThanOrEqual(t0, t1) => {
+                evaluate(Tag::ge, t0, t1, e, conninfo)
             }
-            BinaryRelation::IsFirstForFederate(r) => {
-                if let Event::FirstForFederate(_, other_r) = &preceding {
-                    other_r == &UnaryRelation::BoundBinary(Box::new((e.clone(), *r.clone())))
-                } else {
-                    false
-                }
-            }
-            BinaryRelation::And(relations) => relations
-                .iter()
-                .all(|rel| rel.holds(e, preceding, conninfo)),
-            BinaryRelation::Or(relations) => relations
-                .iter()
-                .any(|rel| rel.holds(e, preceding, conninfo)),
-            BinaryRelation::Unary(p) => p.holds(preceding, conninfo),
-            BinaryRelation::Atom(BinaryRelationAtom::LessThan(t0, t1)) => {
-                evaluate(Tag::lt, t0, t1, e, preceding, conninfo)
-            }
-            BinaryRelation::Atom(BinaryRelationAtom::LessThanOrEqual(t0, t1)) => {
-                evaluate(Tag::le, t0, t1, e, preceding, conninfo)
-            }
-            BinaryRelation::Atom(BinaryRelationAtom::GreaterThanOrEqual(t0, t1)) => {
-                evaluate(Tag::ge, t0, t1, e, preceding, conninfo)
-            }
-            BinaryRelation::Atom(BinaryRelationAtom::GreaterThan(t0, t1)) => {
-                evaluate(Tag::gt, t0, t1, e, preceding, conninfo)
-            }
-            BinaryRelation::Atom(BinaryRelationAtom::Equal(t0, t1)) => {
-                evaluate(Tag::eq, t0, t1, e, preceding, conninfo)
-            }
+            BinaryRelationAtom::GreaterThan(t0, t1) => evaluate(Tag::gt, t0, t1, e, conninfo),
+            BinaryRelationAtom::Equal(t0, t1) => evaluate(Tag::eq, t0, t1, e, conninfo),
         }
     }
 }
@@ -826,7 +789,7 @@ impl Unpermutables {
                     .zip(&trace[ogrank + 1..])
                     .filter(|(_, tr)| {
                         // println!("DEBUG: {}\n    {},    {}", tr, rel, rel.holds(tr, conninfo));
-                        rel.holds(tr, conninfo)
+                        rel.holds(&[(*tr).clone()], conninfo)
                             && !matches!(tr, Event::First(_))
                             && !matches!(tr, Event::FirstForFederate(_, _))
                             && if let (Event::Concrete { fedid: other, .. }, Some(fedid)) =
@@ -935,11 +898,14 @@ impl Unpermutables {
         after: &[Event],
         conninfo: &ConnInfo,
     ) -> Result<HashSet<OgRank>, String> {
-        if !rule.event.holds(e, conninfo) {
+        if !rule.event.holds(&[(*e).clone()], conninfo) {
             return Ok(HashSet::new());
         }
-        let p = UnaryRelation::BoundBinary(Box::new((e.clone(), rule.preceding_event.clone())));
-        if let Some(other) = after.iter().find(|tr_after| p.holds(tr_after, conninfo)) {
+        let p = UnaryRelation::BoundMary(Box::new(([e.clone()], rule.preceding_event.clone())));
+        if let Some(other) = after
+            .iter()
+            .find(|tr_after| p.holds(&[(*tr_after).clone()], conninfo))
+        {
             return Result::Err(format!(
                 "Observed\n{}\n★ {}\n{}\nTracepoint:\n    {}\nfollowed by:\n    {}\nis a counterexample to the axiom:\n{}",
                 tracerecords_to_string(before, false, |_| false), e, tracerecords_to_string(after, false, |it| it == other), e, other, rule
@@ -948,7 +914,7 @@ impl Unpermutables {
         Ok(before
             .iter()
             .enumerate()
-            .filter(|(_, tr_before)| p.holds(tr_before, conninfo))
+            .filter(|(_, tr_before)| p.holds(&[(*tr_before).clone()], conninfo))
             .map(|(ogr, _)| OgRank(ogr as u32))
             .collect())
     }
@@ -961,11 +927,14 @@ fn check_rule(
     rule: &Rule,
     conninfo: &ConnInfo,
 ) -> Result<(), String> {
-    if !rule.event.holds(&e, conninfo) {
+    if !rule.event.holds(&[e.clone()], conninfo) {
         return Ok(());
     }
-    let p = UnaryRelation::BoundBinary(Box::new((e.clone(), rule.preceding_event.clone())));
-    if let Some(other) = after.iter().find(|tr_after| p.holds(tr_after, conninfo)) {
+    let p = UnaryRelation::BoundMary(Box::new(([e.clone()], rule.preceding_event.clone())));
+    if let Some(other) = after
+        .iter()
+        .find(|tr_after| p.holds(&[(*tr_after).clone()], conninfo))
+    {
         return Result::Err(format!(
                 "Observed\n{}\n★ {}\n{}\nTracepoint:\n    {}\nfollowed by:\n    {}\nis a counterexample to the axiom:\n{}",
                 tracerecords_to_string(before, false, |_| false), e, tracerecords_to_string(after, false, |it| it == other), e, other, rule

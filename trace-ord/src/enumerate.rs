@@ -1,33 +1,61 @@
 use std::collections::HashMap;
 
-use enum_iterator::Sequence;
-
-use crate::{AtomTrait, EventTrait, UnaryRelation};
+use crate::{AtomTrait, EventTrait, Nary};
 #[derive(Debug)]
-pub struct ByFuel<Ab: Abstraction>(pub Vec<Vec<(Conc<Ab>, Ab)>>); // TODO: no pub
+pub struct ByFuel<Ab: Abstraction>(pub Vec<Vec<(Conc<Ab>, Ab)>>)
+where
+    [(); Ab::N - 1]:,
+    [(); Ab::M - 1]:; // TODO: no pub
 
 #[allow(type_alias_bounds)] // it looks like a bug that this is necessary
 pub type ConcAbst<Ab: Abstraction> = (Conc<Ab>, Ab);
 #[allow(type_alias_bounds)] // it looks like a bug that this is necessary
-pub type Conc<Ab: Abstraction> = UnaryRelation<Ab::AtomN, Ab::AtomM, Ab::Event>;
+pub type Conc<Ab: Abstraction>
+where
+    [(); Ab::N - 1]:,
+    [(); Ab::M - 1]:,
+= Nary<Ab::AtomN, Ab::AtomM, Ab::Event, { Ab::N }, { Ab::M }, Ab::Ctx>;
 pub trait Abstraction: Sized + Clone {
-    type AtomN: AtomTrait;
-    type AtomM: AtomTrait;
     type Event: EventTrait;
+    type Ctx: std::fmt::Debug + Clone;
+    type AtomN: AtomTrait<{ Self::N }, Self::Event, Self::Ctx>
+    where
+        [(); Self::N]:;
+    type AtomM: AtomTrait<{ Self::M }, Self::Event, Self::Ctx>
+    where
+        [(); Self::M]:;
+    const N: usize;
+    const M: usize;
     // type R: UnaryRelation<AtomN, AtomM, Event>;
-    fn fact(fact: &Conc<Self>) -> Self;
+    fn fact(fact: &Conc<Self>) -> Self
+    where
+        [(); Self::N - 1]:,
+        [(); Self::M - 1]:;
     fn and(
         concterms: impl Iterator<Item = Conc<Self>> + Clone,
         absterms: impl Iterator<Item = Self> + Clone,
-    ) -> Option<ConcAbst<Self>>;
+    ) -> Option<ConcAbst<Self>>
+    where
+        [(); Self::N - 1]:,
+        [(); Self::M - 1]:;
     fn or(
         concterms: impl Iterator<Item = Conc<Self>> + Clone,
         absterms: impl Iterator<Item = Self> + Clone,
-    ) -> Option<ConcAbst<Self>>;
-    fn not(&self, concterm: &Conc<Self>) -> Option<ConcAbst<Self>>;
+    ) -> Option<ConcAbst<Self>>
+    where
+        [(); Self::N - 1]:,
+        [(); Self::M - 1]:;
+    fn not(&self, concterm: &Conc<Self>) -> Option<ConcAbst<Self>>
+    where
+        [(); Self::N - 1]:,
+        [(); Self::M - 1]:;
 }
 #[derive(Debug, Clone)]
-pub struct SimpleAbstraction<Ab: Abstraction> {
+pub struct SimpleAbstraction<Ab: Abstraction>
+where
+    [(); Ab::N - 1]:,
+    [(); Ab::M - 1]:,
+{
     pub predicate2powerbool: HashMap<Conc<Ab>, PowerBool>,
 }
 
@@ -37,13 +65,23 @@ pub struct PowerBool {
     pub maybe_false: bool,
 }
 
-impl<T: Abstraction> Default for ByFuel<T> {
+impl<T: Abstraction> Default for ByFuel<T>
+where
+    [(); T::N - 1]:,
+    [(); T::M - 1]:,
+    [(); T::N]:,
+    [(); T::M]:,
+{
     fn default() -> Self {
         Self(vec![])
     }
 }
 
-impl<Ab: Abstraction> Default for SimpleAbstraction<Ab> {
+impl<Ab: Abstraction> Default for SimpleAbstraction<Ab>
+where
+    [(); Ab::N - 1]:,
+    [(); Ab::M - 1]:,
+{
     fn default() -> Self {
         Self {
             predicate2powerbool: HashMap::default(),
@@ -51,7 +89,11 @@ impl<Ab: Abstraction> Default for SimpleAbstraction<Ab> {
     }
 }
 
-impl<Ab: Abstraction> SimpleAbstraction<Ab> {
+impl<Ab: Abstraction> SimpleAbstraction<Ab>
+where
+    [(); Ab::N - 1]:,
+    [(); Ab::M - 1]:,
+{
     // TODO: move the filtering into here. This includes uninhabitable filtering perhaps (not sure), and definitely and/or/not filtering. Move it here from the advance fn
     pub fn fact(fact: &Conc<Ab>) -> Self {
         Self {
@@ -71,7 +113,7 @@ impl<Ab: Abstraction> SimpleAbstraction<Ab> {
                 // if conct.kind() == NaryRelationKind::And {
                 //     return None;
                 // }
-                if let UnaryRelation::And(_) = conct {
+                if let Nary::And(_) = conct {
                     return None;
                 }
                 if let Some(ref mut acc) = acc {
@@ -102,7 +144,7 @@ impl<Ab: Abstraction> SimpleAbstraction<Ab> {
                     // if conct.kind() == NaryRelationKind::Or {
                     //     return None;
                     // }
-                    if let UnaryRelation::Or(_) = conct {
+                    if let Nary::Or(_) = conct {
                         return None;
                     }
                     for (predicate, powerbool) in abst.predicate2powerbool.iter() {
@@ -126,7 +168,7 @@ impl<Ab: Abstraction> SimpleAbstraction<Ab> {
         // if concterm.kind() == NaryRelationKind::Not {
         //     return None;
         // }
-        if let UnaryRelation::Not(_) = concterm {
+        if let Nary::Not(_) = concterm {
             return None;
         }
         let predicate2powerbool = self
@@ -147,7 +189,11 @@ impl<Ab: Abstraction> SimpleAbstraction<Ab> {
     }
 }
 
-impl<Ab: crate::enumerate::Abstraction> ByFuel<Ab> {
+impl<Ab: crate::enumerate::Abstraction> ByFuel<Ab>
+where
+    [(); Ab::N - 1]:,
+    [(); Ab::M - 1]:,
+{
     pub fn advance(&mut self, fuel: usize) -> impl Iterator<Item = &ConcAbst<Ab>> {
         let mut ret: Box<dyn Iterator<Item = &ConcAbst<Ab>>> = Box::new(std::iter::empty());
         let len = self.0.len();
@@ -160,11 +206,15 @@ impl<Ab: crate::enumerate::Abstraction> ByFuel<Ab> {
         }
         ret
     }
-    fn exact_fuel(&self, fuel: usize) -> Vec<ConcAbst<Ab>> {
+    fn exact_fuel(&self, fuel: usize) -> Vec<ConcAbst<Ab>>
+    where
+        [(); Ab::N - 1]:,
+        [(); Ab::M - 1]:,
+    {
         if fuel == 0 {
             enum_iterator::all::<Ab::AtomN>()
                 .map(|it| {
-                    let it = UnaryRelation::Atom(it);
+                    let it = Nary::Atom(it);
                     let ab = Ab::fact(&it);
                     (it, ab)
                 })

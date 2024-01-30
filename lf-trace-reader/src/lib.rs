@@ -48,14 +48,14 @@ impl TraceRecord {
     pub fn mock() -> Self {
         let rng = &mut rand::thread_rng();
         Self {
-            event: vec!["A", "B", "C", "D"].choose(rng).unwrap().to_string(),
-            reactor: vec!["R", "S", "T", "U"].choose(rng).unwrap().to_string(),
+            event: ["A", "B", "C", "D"].choose(rng).unwrap().to_string(),
+            reactor: ["R", "S", "T", "U"].choose(rng).unwrap().to_string(),
             source: rand::random(),
             destination: rand::random(),
             elapsed_logical_time: rand::random(),
             microstep: rand::random(),
             elapsed_physical_time: rand::random(),
-            trigger: vec!["W", "X", "Y", "Z"].choose(rng).unwrap().to_string(),
+            trigger: ["W", "X", "Y", "Z"].choose(rng).unwrap().to_string(),
             extra_delay: rand::random(),
             file_index: rand::random::<u32>() % 10,
             line_number: rand::random::<u32>() % 10,
@@ -65,14 +65,14 @@ impl TraceRecord {
     // pub fn mock() -> Self {
     //     let rng = &mut rand::thread_rng();
     //     Self {
-    //         event: vec!["A", "B"].choose(rng).unwrap().to_string(),
-    //         reactor: vec!["R"].choose(rng).unwrap().to_string(),
+    //         event: ["A", "B"].choose(rng).unwrap().to_string(),
+    //         reactor: ["R"].choose(rng).unwrap().to_string(),
     //         source: 0,
     //         destination: 0,
     //         elapsed_logical_time: 0,
     //         microstep: 0,
     //         elapsed_physical_time: 0,
-    //         trigger: vec!["W"].choose(rng).unwrap().to_string(),
+    //         trigger: ["W"].choose(rng).unwrap().to_string(),
     //         extra_delay: 0,
     //         file_index: rand::random::<u32>() % 10,
     //         line_number: rand::random::<u32>() % 10,
