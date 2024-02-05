@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use trace_ord::lflib::{tracerecords_to_string, Event};
+use trace_ord::lflib::{tracerecords_to_string, ConcEvent};
 
 const IGNORE_TESTS: [&str; 1] = [
     "DistributedNetworkOrder", // This test directly invokes send_timed_message, which is an implementation detail!  >:(

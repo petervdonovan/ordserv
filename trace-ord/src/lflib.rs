@@ -33,9 +33,10 @@ pub enum EventKind {
 }
 
 pub type UnaryRelation =
-    crate::UnaryRelation<UnaryRelationAtom, BinaryRelationAtom, Event, ConnInfo>;
+    crate::UnaryRelation<UnaryRelationAtom, BinaryRelationAtom, ConcEvent, ConnInfo>;
 pub type BinaryRelation =
-    crate::BinaryRelation<UnaryRelationAtom, BinaryRelationAtom, Event, ConnInfo>;
+    crate::BinaryRelation<UnaryRelationAtom, BinaryRelationAtom, ConcEvent, ConnInfo>;
+pub type Event = crate::event::Event<UnaryRelation, ConcEvent, FedId>;
 
 /// If two events match a rule, then the rule says that there is a precedence relation between them
 /// (with the preceding event occurring first in all non-error traces).
@@ -192,56 +193,6 @@ impl Display for DelayTerm {
     }
 }
 
-// impl Display for BinaryRelation {
-//     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-//         match self {
-//             BinaryRelation::Atom(BinaryRelationAtom::FederateEquals) => {
-//                 write!(f, "Federate = Federate")
-//             }
-//             BinaryRelation::Atom(BinaryRelationAtom::FederateZeroDelayDirectlyUpstreamOf) => {
-//                 write!(f, "Federate has zero delay directly upstream of")
-//             }
-//             BinaryRelation::Atom(BinaryRelationAtom::FederateDirectlyUpstreamOf) => {
-//                 write!(f, "Federate is directly upstream of")
-//             }
-//             BinaryRelation::IsFirst(relation) => write!(f, "(FIRST {})", relation),
-//             BinaryRelation::IsFirstForFederate(relation) => {
-//                 write!(f, "(FedwiseFIRST {})", relation)
-//             }
-//             BinaryRelation::And(relations) => {
-//                 write!(f, "({})", relations[0])?;
-//                 for relation in &relations[1..] {
-//                     write!(f, " ∧ {}", relation)?;
-//                 }
-//                 write!(f, ")")?;
-//                 Ok(())
-//             }
-//             BinaryRelation::Or(relations) => {
-//                 write!(f, "({}", relations[0])?;
-//                 for relation in &relations[1..] {
-//                     write!(f, " ∨ {}", relation)?;
-//                 }
-//                 write!(f, ")")?;
-//                 Ok(())
-//             }
-//             BinaryRelation::Unary(p) => write!(f, "{}", p),
-//             BinaryRelation::Atom(BinaryRelationAtom::LessThan(t0, t1)) => {
-//                 write!(f, "{} < {}", t0, t1)
-//             }
-//             BinaryRelation::Atom(BinaryRelationAtom::LessThanOrEqual(t0, t1)) => {
-//                 write!(f, "{} ≤ {}", t0, t1)
-//             }
-//             BinaryRelation::Atom(BinaryRelationAtom::GreaterThanOrEqual(t0, t1)) => {
-//                 write!(f, "{} ≥ {}", t0, t1)
-//             }
-//             BinaryRelation::Atom(BinaryRelationAtom::GreaterThan(t0, t1)) => {
-//                 write!(f, "{} > {}", t0, t1)
-//             }
-//             BinaryRelation::Atom(BinaryRelationAtom::Equal(t0, t1)) => write!(f, "{} = {}", t0, t1),
-//         }
-//     }
-// }
-
 impl Term {
     pub fn eval(
         &self,
@@ -340,29 +291,30 @@ pub struct Unpermutables {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct OgRank(pub u32);
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Event {
-    Concrete {
-        event: EventKind,
-        tag: Tag,
-        fedid: FedId,
-        ogrank: OgRank,
-    },
-    First(UnaryRelation),
-    FirstForFederate(FedId, UnaryRelation),
+pub struct ConcEvent {
+    // Concrete {
+    event: EventKind,
+    tag: Tag,
+    fedid: FedId,
+    ogrank: OgRank,
+    // },
+    // First(UnaryRelation),
+    // FirstForFederate(FedId, UnaryRelation),
 }
 
-impl Display for Event {
+impl Display for ConcEvent {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Event::Concrete {
-                event,
-                tag,
-                fedid,
-                ogrank,
-            } => write!(f, "{} {} @ {:?} (src={})", event, tag, fedid, ogrank.0),
-            Event::First(p) => write!(f, "(FIRST {})", p),
-            Event::FirstForFederate(fedid, p) => write!(f, "(FedwiseFIRST {} {})", fedid.0, p),
-        }
+        todo!("possibly need to overhaul all this display stuff to migrate to serde")
+        // match self {
+        //     ConcEvent::Concrete {
+        //         event,
+        //         tag,
+        //         fedid,
+        //         ogrank,
+        //     } => write!(f, "{} {} @ {:?} (src={})", event, tag, fedid, ogrank.0),
+        //     ConcEvent::First(p) => write!(f, "(FIRST {})", p),
+        //     ConcEvent::FirstForFederate(fedid, p) => write!(f, "(FedwiseFIRST {} {})", fedid.0, p),
+        // }
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -372,32 +324,33 @@ pub enum EventParseError {
     InvalidFedId,
     InvalidUniqueId,
 }
-impl FromStr for Event {
+impl FromStr for ConcEvent {
     type Err = EventParseError;
     /// Inverse of Display::fmt
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut s = s.split(" @ ");
-        let event_and_tag = s.next().unwrap();
-        let (event, tag) = event_and_tag.split_at(event_and_tag.find('(').unwrap());
-        let event = EventKind::from_str(event).map_err(|_| EventParseError::InvalidEventKind)?;
-        let tag = Tag::from_str(tag).map_err(|_| EventParseError::InvalidTag)?;
-        let mut s = s.next().unwrap().split(' ');
-        let fedid =
-            FedId::from_str(s.next().unwrap()).map_err(|_| EventParseError::InvalidFedId)?;
-        let mut s = s.next().unwrap().split("(src=");
-        s.next().unwrap(); // should be error, not panic, ditto everywhere else
-        let mut s = s.next().unwrap().split(')');
-        let unique_id = s
-            .next()
-            .unwrap()
-            .parse()
-            .map_err(|_| EventParseError::InvalidUniqueId)?;
-        Ok(Self::Concrete {
-            event,
-            tag,
-            fedid,
-            ogrank: OgRank(unique_id),
-        })
+        todo!()
+        // let mut s = s.split(" @ ");
+        // let event_and_tag = s.next().unwrap();
+        // let (event, tag) = event_and_tag.split_at(event_and_tag.find('(').unwrap());
+        // let event = EventKind::from_str(event).map_err(|_| EventParseError::InvalidEventKind)?;
+        // let tag = Tag::from_str(tag).map_err(|_| EventParseError::InvalidTag)?;
+        // let mut s = s.next().unwrap().split(' ');
+        // let fedid =
+        //     FedId::from_str(s.next().unwrap()).map_err(|_| EventParseError::InvalidFedId)?;
+        // let mut s = s.next().unwrap().split("(src=");
+        // s.next().unwrap(); // should be error, not panic, ditto everywhere else
+        // let mut s = s.next().unwrap().split(')');
+        // let unique_id = s
+        //     .next()
+        //     .unwrap()
+        //     .parse()
+        //     .map_err(|_| EventParseError::InvalidUniqueId)?;
+        // Ok(Self::Concrete {
+        //     event,
+        //     tag,
+        //     fedid,
+        //     ogrank: OgRank(unique_id),
+        // })
     }
 }
 
@@ -415,9 +368,9 @@ impl FromStr for FedId {
 }
 
 pub fn tracerecords_to_string(
-    trace: &[Event],
+    trace: &[ConcEvent],
     numbering: bool,
-    put_marker_if: impl Fn(&Event) -> bool,
+    put_marker_if: impl Fn(&ConcEvent) -> bool,
 ) -> String {
     trace
         .iter()
@@ -441,7 +394,7 @@ pub fn tracerecords_to_string(
         })
 }
 
-impl Event {
+impl ConcEvent {
     pub fn from_lf_trace_record(
         lf_trace_record: &lf_trace_reader::TraceRecord,
         ogrank: OgRank,
@@ -453,7 +406,7 @@ impl Event {
             get_nonnegative_microstep(lf_trace_record.microstep),
         );
         let source = lf_trace_record.destination;
-        Self::Concrete {
+        Self {
             event,
             tag,
             fedid: FedId(source),
@@ -470,7 +423,7 @@ pub fn elaborated_from_trace_records(
     let concretes = trace_records
         .iter()
         .enumerate()
-        .map(|(ogr, record)| Event::from_lf_trace_record(record, OgRank(ogr as u32)))
+        .map(|(ogr, record)| ConcEvent::from_lf_trace_record(record, OgRank(ogr as u32)))
         .collect::<Vec<_>>();
     let mut firsts = Vec::<Vec<Event>>::new();
     for _ in 0..concretes.len() {
@@ -488,13 +441,15 @@ pub fn elaborated_from_trace_records(
     for p in federate_wise_predicates {
         let mut federates_hit = HashSet::new();
         for (ogr, record) in concretes.iter().enumerate() {
-            if let Event::Concrete { fedid, .. } = record {
-                if p.holds(&[record.clone()], conninfo) && !federates_hit.contains(fedid) {
-                    firsts[ogr].push(Event::FirstForFederate(*fedid, p.clone()));
-                    federates_hit.insert(*fedid);
-                    if federates_hit.len() == conninfo.n_federates() {
-                        break;
-                    }
+            let ConcEvent { fedid, .. } = record;
+            if p.holds(&[record.clone()], conninfo) && !federates_hit.contains(fedid) {
+                firsts[ogr].push(Event::FirstInEquivClass {
+                    proj: *fedid,
+                    set: p.clone(),
+                });
+                federates_hit.insert(*fedid);
+                if federates_hit.len() == conninfo.n_federates() {
+                    break;
                 }
             }
         }
@@ -506,14 +461,14 @@ pub fn elaborated_from_trace_records(
         for first in firsts {
             ret.push(first);
         }
-        ret.push(e);
+        ret.push(Event::Concrete(e));
     }
     ret
 }
 
 fn get_first_predicates(
     axioms: &[Rule],
-    concretes: &[Event],
+    concretes: &[ConcEvent],
     conninfo: &ConnInfo,
 ) -> (HashSet<UnaryRelation>, HashSet<UnaryRelation>) {
     let mut ret = (HashSet::new(), HashSet::new());
@@ -533,7 +488,7 @@ fn get_first_predicates(
 fn add_first_predicates_recursive(
     event: &UnaryRelation,
     brel: &BinaryRelation,
-    concretes: &[Event],
+    concretes: &[ConcEvent],
     predicates: &mut HashSet<UnaryRelation>,
     federate_wise_predicates: &mut HashSet<UnaryRelation>,
     conninfo: &ConnInfo,
@@ -628,18 +583,18 @@ fn add_first_predicates_recursive_from_predicate(
     }
 }
 
-impl AtomTrait<1, Event, ConnInfo> for UnaryRelationAtom {
+impl AtomTrait<1, ConcEvent, ConnInfo> for UnaryRelationAtom {
     fn holds(&self, e: &[Event; 1], conninfo: &ConnInfo) -> bool {
         match self {
             UnaryRelationAtom::TagNonzero => {
-                if let [Event::Concrete { tag, .. }] = e {
+                if let [Event::Concrete(ConcEvent { tag, .. })] = e {
                     tag != &Tag(0, 0)
                 } else {
                     false
                 }
             }
             UnaryRelationAtom::FedHasNoneUpstreamWithDelayLessThanOrEqualCurrentTag => {
-                if let [Event::Concrete { fedid, tag, .. }] = e {
+                if let [Event::Concrete(ConcEvent { fedid, tag, .. })] = e {
                     conninfo
                         .min_delays2dest(*fedid)
                         .all(|(_, delay)| STARTUP + *delay > *tag)
@@ -648,14 +603,14 @@ impl AtomTrait<1, Event, ConnInfo> for UnaryRelationAtom {
                 }
             }
             UnaryRelationAtom::TagFinite => {
-                if let [Event::Concrete { tag, .. }] = e {
+                if let [Event::Concrete(ConcEvent { tag, .. })] = e {
                     tag.0.abs() < 1_000_000_000_000
                 } else {
                     false
                 }
             }
             UnaryRelationAtom::EventIs(event) => {
-                if let [Event::Concrete { event: other, .. }] = e {
+                if let [Event::Concrete(ConcEvent { event: other, .. })] = e {
                     other == event
                 } else {
                     false
@@ -665,16 +620,16 @@ impl AtomTrait<1, Event, ConnInfo> for UnaryRelationAtom {
     }
 }
 
-impl AtomTrait<2, Event, ConnInfo> for BinaryRelationAtom {
-    fn holds(&self, e: &[Event; 2], conninfo: &ConnInfo) -> bool {
+impl AtomTrait<2, ConcEvent, ConnInfo> for BinaryRelationAtom {
+    fn holds(&self, e: &[ConcEvent; 2], conninfo: &ConnInfo) -> bool {
         let neither_first = |f: fn(&Tag, &Tag, &FedId, &FedId, Option<&Delay>) -> bool| {
             if let (
-                Event::Concrete {
+                ConcEvent::Concrete {
                     tag: ptag,
                     fedid: pfedid,
                     ..
                 },
-                Event::Concrete { tag, fedid, .. },
+                ConcEvent::Concrete { tag, fedid, .. },
             ) = (&e[0], &e[1])
             {
                 f(ptag, tag, pfedid, fedid, conninfo.get(*pfedid, *fedid))
@@ -686,16 +641,16 @@ impl AtomTrait<2, Event, ConnInfo> for BinaryRelationAtom {
             f: fn(&Tag, &Tag) -> bool,
             t0: &Term,
             t1: &Term,
-            e: &[Event; 2],
+            e: &[ConcEvent; 2],
             conninfo: &ConnInfo,
         ) -> bool {
             if let (
-                Event::Concrete {
+                ConcEvent::Concrete {
                     tag: ptag,
                     fedid: pfedid,
                     ..
                 },
-                Event::Concrete { tag, fedid, .. },
+                ConcEvent::Concrete { tag, fedid, .. },
             ) = (&e[0], &e[1])
             {
                 let t0 = t0.eval(*pfedid, *ptag, (*pfedid, *fedid), conninfo);
@@ -769,12 +724,12 @@ impl Unpermutables {
     /// which it matches, excluding itself, appears before it.
     fn add_precedences_for_firsts(
         ogrank2immediatepredecessors: &mut [HashSet<OgRank>],
-        trace: &[Event],
+        trace: &[ConcEvent],
         conninfo: &ConnInfo,
     ) {
         for (ogrank, tr) in trace.iter().enumerate() {
-            if let Event::First(ref rel) | Event::FirstForFederate(_, ref rel) = &tr {
-                let fedid = if let Event::FirstForFederate(fedid, _) = &tr {
+            if let ConcEvent::First(ref rel) | ConcEvent::FirstForFederate(_, ref rel) = &tr {
+                let fedid = if let ConcEvent::FirstForFederate(fedid, _) = &tr {
                     Some(*fedid)
                 } else {
                     None
@@ -790,9 +745,9 @@ impl Unpermutables {
                     .filter(|(_, tr)| {
                         // println!("DEBUG: {}\n    {},    {}", tr, rel, rel.holds(tr, conninfo));
                         rel.holds(&[(*tr).clone()], conninfo)
-                            && !matches!(tr, Event::First(_))
-                            && !matches!(tr, Event::FirstForFederate(_, _))
-                            && if let (Event::Concrete { fedid: other, .. }, Some(fedid)) =
+                            && !matches!(tr, ConcEvent::First(_))
+                            && !matches!(tr, ConcEvent::FirstForFederate(_, _))
+                            && if let (ConcEvent::Concrete { fedid: other, .. }, Some(fedid)) =
                                 (tr, fedid)
                             {
                                 *other == fedid
@@ -893,9 +848,9 @@ impl Unpermutables {
     }
     fn apply_rule(
         rule: &Rule,
-        e: &Event,
-        before: &[Event],
-        after: &[Event],
+        e: &ConcEvent,
+        before: &[ConcEvent],
+        after: &[ConcEvent],
         conninfo: &ConnInfo,
     ) -> Result<HashSet<OgRank>, String> {
         if !rule.event.holds(&[(*e).clone()], conninfo) {
@@ -921,9 +876,9 @@ impl Unpermutables {
 }
 
 fn check_rule(
-    before: &[Event],
-    e: Event,
-    after: &[Event],
+    before: &[ConcEvent],
+    e: ConcEvent,
+    after: &[ConcEvent],
     rule: &Rule,
     conninfo: &ConnInfo,
 ) -> Result<(), String> {
@@ -944,7 +899,7 @@ fn check_rule(
 }
 
 impl Rule {
-    pub fn check(&self, trace: &[Event], conninfo: &ConnInfo) -> Result<(), String> {
+    pub fn check(&self, trace: &[ConcEvent], conninfo: &ConnInfo) -> Result<(), String> {
         for (ogrank, e) in trace.iter().enumerate() {
             check_rule(
                 &trace[..ogrank],

@@ -1,5 +1,6 @@
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
+#![feature(const_trait_impl)]
 
 use std::fmt::{Display, Formatter};
 
@@ -8,6 +9,7 @@ use enum_iterator::Sequence;
 pub mod axioms;
 pub mod conninfo;
 pub mod enumerate;
+pub mod event;
 pub mod lfenumerate;
 pub mod lflib;
 pub mod serde;
@@ -159,26 +161,30 @@ where
         }
     }
 }
-pub type UnaryRelation<Atom1, Atom2, Event, Ctx> = Nary<Atom1, Atom2, Event, 1, 2, Ctx>;
-pub type BinaryRelation<Atom1, Atom2, Event, Ctx> = Nary<Atom2, Atom1, Event, 2, 1, Ctx>;
+pub type UnaryRelation<Atom1, Atom2, ConcEvent, Ctx> = Nary<Atom1, Atom2, ConcEvent, 1, 2, Ctx>;
+pub type BinaryRelation<Atom1, Atom2, ConcEvent, Ctx> = Nary<Atom2, Atom1, ConcEvent, 2, 1, Ctx>;
 pub trait EventTrait: std::fmt::Debug + Clone + Eq + std::hash::Hash + Ord + Display {}
 impl<T> EventTrait for T where T: std::fmt::Debug + Clone + Eq + std::hash::Hash + Ord + Display {}
-pub trait AtomTrait<const N: usize, Event: EventTrait, Ctx>:
+pub trait AtomTrait<const N: usize, ConcEvent: EventTrait, Ctx>:
     std::fmt::Debug + Clone + Eq + std::hash::Hash + Ord + Display + Sequence
 {
-    fn holds(&self, e: &[Event; N], ctx: &Ctx) -> bool;
+    fn holds(
+        &self,
+        e: &[crate::event::Event<UnaryRelation, ConcEvent, ProjectTo>; N],
+        ctx: &Ctx,
+    ) -> bool;
 }
 // impl<T> AtomTrait for T where
 //     T: std::fmt::Debug + Clone + Eq + std::hash::Hash + Ord + Display + Sequence
 // {
 // }
 
-impl<AtomN, AtomM, Event, const N: usize, const M: usize, Ctx> Display
-    for Nary<AtomN, AtomM, Event, N, M, Ctx>
+impl<AtomN, AtomM, ConcEvent, const N: usize, const M: usize, Ctx> Display
+    for Nary<AtomN, AtomM, ConcEvent, N, M, Ctx>
 where
-    AtomN: AtomTrait<N, Event, Ctx>,
-    AtomM: AtomTrait<M, Event, Ctx>,
-    Event: EventTrait,
+    AtomN: AtomTrait<N, ConcEvent, Ctx>,
+    AtomM: AtomTrait<M, ConcEvent, Ctx>,
+    ConcEvent: EventTrait,
     [(); N - 1]:,
     [(); M - 1]:,
 {

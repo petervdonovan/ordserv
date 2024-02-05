@@ -14,19 +14,18 @@ pub type Conc<Ab: Abstraction>
 where
     [(); Ab::N - 1]:,
     [(); Ab::M - 1]:,
-= Nary<Ab::AtomN, Ab::AtomM, Ab::Event, { Ab::N }, { Ab::M }, Ab::Ctx>;
+= Nary<Ab::AtomN, Ab::AtomM, Ab::ConcEvent, { Ab::N }, { Ab::M }, Ab::Ctx>;
 pub trait Abstraction: Sized + Clone {
-    type Event: EventTrait;
+    type ConcEvent: EventTrait;
     type Ctx: std::fmt::Debug + Clone;
-    type AtomN: AtomTrait<{ Self::N }, Self::Event, Self::Ctx>
+    type AtomN: AtomTrait<{ Self::N }, Self::ConcEvent, Self::Ctx>
     where
         [(); Self::N]:;
-    type AtomM: AtomTrait<{ Self::M }, Self::Event, Self::Ctx>
+    type AtomM: AtomTrait<{ Self::M }, Self::ConcEvent, Self::Ctx>
     where
         [(); Self::M]:;
     const N: usize;
     const M: usize;
-    // type R: UnaryRelation<AtomN, AtomM, Event>;
     fn fact(fact: &Conc<Self>) -> Self
     where
         [(); Self::N - 1]:,
@@ -141,9 +140,6 @@ where
             Some(HashMap::<Conc<Ab>, PowerBool>::default()),
             |mut acc, (abst, conct)| {
                 if let Some(ref mut acc) = acc {
-                    // if conct.kind() == NaryRelationKind::Or {
-                    //     return None;
-                    // }
                     if let Nary::Or(_) = conct {
                         return None;
                     }
@@ -165,9 +161,6 @@ where
     }
 
     pub fn not(&self, concterm: &Conc<Ab>) -> Option<Self> {
-        // if concterm.kind() == NaryRelationKind::Not {
-        //     return None;
-        // }
         if let Nary::Not(_) = concterm {
             return None;
         }

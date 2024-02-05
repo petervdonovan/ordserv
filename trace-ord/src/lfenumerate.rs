@@ -21,7 +21,7 @@ impl Abstraction for UnaryRelationAbstraction {
 
     type AtomM = BinaryRelationAtom;
 
-    type Event = crate::lflib::Event;
+    type ConcEvent = crate::lflib::ConcEvent;
 
     const N: usize = 1;
 
