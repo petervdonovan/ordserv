@@ -3,7 +3,11 @@ use std::collections::HashSet;
 use lf_trace_reader::TraceRecord;
 use serde::{Deserialize, Serialize};
 
-use crate::{conninfo::ConnInfo, lflib::ConcEvent, lflib::OgRank};
+use crate::{
+    conninfo::ConnInfo,
+    lflib::ConcEvent,
+    lflib::{Event, OgRank},
+};
 
 /// A map from test name to a map from ogranks to the lists of preceding ogranks which can appear
 /// later.
@@ -16,7 +20,7 @@ impl ComputedPrecedences {
         &mut self,
         test_name: String,
         ogtrace: Vec<TraceRecord>,
-        etrace: Vec<ConcEvent>,
+        etrace: Vec<Event>,
         permutables: Vec<HashSet<OgRank>>,
         conninfo: ConnInfo,
     ) {
@@ -28,7 +32,7 @@ impl ComputedPrecedences {
                 let mut collected = ogrs
                     .into_iter()
                     .filter_map(|ogr| match etrace[ogr.idx()] {
-                        ConcEvent { ogrank, .. } => Some(ogrank),
+                        Event::Concrete(ConcEvent { ogrank, .. }) => Some(ogrank),
                         _ => None,
                     })
                     .collect::<Vec<_>>();

@@ -28,8 +28,8 @@ where
     [(); M - 1]:,
 {
     Atom(AtomN),
-    IsFirst(Box<Self>),
-    IsFirstForFederate(Box<Self>),
+    IsFirst(Box<Nary<Atom2, Atom1, ConcEvent, 2, 1, Ctx, ProjectTo, Atom1, Atom2>>),
+    IsFirstForFederate(Box<Nary<Atom2, Atom1, ConcEvent, 2, 1, Ctx, ProjectTo, Atom1, Atom2>>),
     And(Box<[Self]>),
     Or(Box<[Self]>),
     Not(Box<Self>),
@@ -299,14 +299,13 @@ where
             Nary::IsFirst(r) => {
                 if let crate::event::Event::First(other) = &chronological_events[0] {
                     // let rest = chronological_events[1..M];
-                    // let rest: &[crate::event::Event<
-                    //     UnaryRelation<Atom1, Atom2, ConcEvent, Ctx, ProjectTo>,
-                    //     ConcEvent,
-                    //     ProjectTo,
-                    // >; M - 1] = (chronological_events[1..M]).try_into().unwrap();
-                    // let rest = rest.clone();
-                    // other == &Nary::BoundMary(Box::new((rest, (**r).clone())))
-                    other == r
+                    let rest: &[crate::event::Event<
+                        UnaryRelation<Atom1, Atom2, ConcEvent, Ctx, ProjectTo>,
+                        ConcEvent,
+                        ProjectTo,
+                    >; 1] = (chronological_events[1..M]).try_into().unwrap();
+                    let rest = rest.clone();
+                    other == &Nary::BoundMary(Box::new((rest, (**r).clone())))
                     // maybe not the most efficient
                     // TODO: consider logical equivalence?
                 } else {
@@ -314,18 +313,17 @@ where
                 }
             }
             Nary::IsFirstForFederate(r) => {
-                // if true
                 if let crate::event::Event::FirstInEquivClass {
                     proj: _,
                     set: other_r,
                 } = &chronological_events[0]
                 {
-                    // true
-                    other_r
-                        == &UnaryRelation::BoundMary(Box::new((
-                            [chronological_events[1..]],
-                            *r.clone(),
-                        )))
+                    let rest: &[crate::event::Event<
+                        UnaryRelation<Atom1, Atom2, ConcEvent, Ctx, ProjectTo>,
+                        ConcEvent,
+                        ProjectTo,
+                    >; 1] = chronological_events[1..].try_into().unwrap();
+                    other_r == &UnaryRelation::BoundMary(Box::new((rest.clone(), *r.clone())))
                 } else {
                     false
                 }

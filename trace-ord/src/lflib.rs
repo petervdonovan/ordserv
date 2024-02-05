@@ -564,9 +564,10 @@ fn add_first_predicates_recursive_from_predicate(
 ) {
     match prel {
         Nary::Atom(_) => {}
-        Nary::IsFirst(prel) => {
-            predicates.insert(*prel.clone());
-            add_first_predicates_recursive_from_predicate(prel, predicates);
+        Nary::IsFirst(_prel) => {
+            panic!("it never makes sense to have an IsFirst unary relation")
+            // predicates.insert(*prel.clone());
+            // add_first_predicates_recursive_from_predicate(prel, predicates);
         }
         Nary::And(prels) | Nary::Or(prels) => {
             for prel in &**prels {
