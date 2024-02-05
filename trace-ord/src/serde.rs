@@ -23,12 +23,12 @@ impl ComputedPrecedences {
         let filtered = permutables
             .into_iter()
             .zip(etrace.iter())
-            .filter(|(_, e)| matches!(e, ConcEvent::Concrete { .. }))
+            // .filter(|(_, e)| matches!(e, crate::event::Event::Concrete { .. }))
             .map(|(ogrs, _)| {
                 let mut collected = ogrs
                     .into_iter()
                     .filter_map(|ogr| match etrace[ogr.idx()] {
-                        ConcEvent::Concrete { ogrank, .. } => Some(ogrank),
+                        ConcEvent { ogrank, .. } => Some(ogrank),
                         _ => None,
                     })
                     .collect::<Vec<_>>();

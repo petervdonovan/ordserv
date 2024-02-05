@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::conninfo::ConnInfo;
+use crate::conninfo::{ConnInfo, FedId};
 use crate::enumerate::{Abstraction, ByFuel, Conc, ConcAbst, SimpleAbstraction};
 use crate::lflib::{BinaryRelationAtom, EventKind, Rule, UnaryRelation, UnaryRelationAtom};
 
@@ -28,6 +28,12 @@ impl Abstraction for UnaryRelationAbstraction {
     const M: usize = 2;
 
     type Ctx = ConnInfo;
+
+    type ProjectTo = FedId;
+
+    type Atom1 = UnaryRelationAtom;
+
+    type Atom2 = BinaryRelationAtom;
 
     fn fact(predicate: &UnaryRelation) -> Self {
         match predicate {

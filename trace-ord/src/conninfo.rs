@@ -151,6 +151,12 @@ struct SrcDestPair2Delay(BTreeMap<(FedId, FedId), Delay>, usize); // use BTreeMa
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Fed2UpstreamDelays(FedId, Vec<Delay>);
 
+impl Display for FedId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "FedId({})", self.0)
+    }
+}
+
 impl FromStr for SrcDestPair2Delay {
     type Err = String;
 

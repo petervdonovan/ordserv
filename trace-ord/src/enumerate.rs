@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{AtomTrait, EventTrait, Nary};
+use crate::{event::ProjectToTrait, AtomTrait, EventTrait, Nary};
 #[derive(Debug)]
 pub struct ByFuel<Ab: Abstraction>(pub Vec<Vec<(Conc<Ab>, Ab)>>)
 where
@@ -14,14 +14,41 @@ pub type Conc<Ab: Abstraction>
 where
     [(); Ab::N - 1]:,
     [(); Ab::M - 1]:,
-= Nary<Ab::AtomN, Ab::AtomM, Ab::ConcEvent, { Ab::N }, { Ab::M }, Ab::Ctx>;
+= Nary<
+    Ab::AtomN,
+    Ab::AtomM,
+    Ab::ConcEvent,
+    { Ab::N },
+    { Ab::M },
+    Ab::Ctx,
+    Ab::ProjectTo,
+    Ab::Atom1,
+    Ab::Atom2,
+>;
 pub trait Abstraction: Sized + Clone {
     type ConcEvent: EventTrait;
     type Ctx: std::fmt::Debug + Clone;
-    type AtomN: AtomTrait<{ Self::N }, Self::ConcEvent, Self::Ctx>
+    type ProjectTo: ProjectToTrait;
+    type Atom1: AtomTrait<1, Self::ConcEvent, Self::Ctx, Self::ProjectTo, Self::Atom1, Self::Atom2>;
+    type Atom2: AtomTrait<2, Self::ConcEvent, Self::Ctx, Self::ProjectTo, Self::Atom1, Self::Atom2>;
+    type AtomN: AtomTrait<
+        { Self::N },
+        Self::ConcEvent,
+        Self::Ctx,
+        Self::ProjectTo,
+        Self::Atom1,
+        Self::Atom2,
+    >
     where
         [(); Self::N]:;
-    type AtomM: AtomTrait<{ Self::M }, Self::ConcEvent, Self::Ctx>
+    type AtomM: AtomTrait<
+        { Self::M },
+        Self::ConcEvent,
+        Self::Ctx,
+        Self::ProjectTo,
+        Self::Atom1,
+        Self::Atom2,
+    >
     where
         [(); Self::M]:;
     const N: usize;

@@ -5,6 +5,7 @@
 use std::fmt::{Display, Formatter};
 
 use enum_iterator::Sequence;
+use event::{CtxTrait, ProjectToTrait};
 
 pub mod axioms;
 pub mod conninfo;
@@ -14,11 +15,15 @@ pub mod lfenumerate;
 pub mod lflib;
 pub mod serde;
 #[derive(Debug, Clone)]
-pub enum Nary<AtomN, AtomM, Event, const N: usize, const M: usize, Ctx>
+pub enum Nary<AtomN, AtomM, ConcEvent, const N: usize, const M: usize, Ctx, ProjectTo, Atom1, Atom2>
 where
-    AtomN: AtomTrait<N, Event, Ctx>,
-    AtomM: AtomTrait<M, Event, Ctx>,
-    Event: EventTrait,
+    AtomN: AtomTrait<N, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    AtomM: AtomTrait<M, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Atom1: AtomTrait<1, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Atom2: AtomTrait<2, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Ctx: CtxTrait,
+    ConcEvent: EventTrait,
+    ProjectTo: ProjectToTrait,
     [(); N - 1]:,
     [(); M - 1]:,
 {
@@ -28,14 +33,27 @@ where
     And(Box<[Self]>),
     Or(Box<[Self]>),
     Not(Box<Self>),
-    BoundMary(Box<([Event; M - 1], Nary<AtomM, AtomN, Event, M, N, Ctx>)>),
+    BoundMary(
+        Box<(
+            [crate::event::Event<
+                UnaryRelation<Atom1, Atom2, ConcEvent, Ctx, ProjectTo>,
+                ConcEvent,
+                ProjectTo,
+            >; M - 1],
+            Nary<AtomM, AtomN, ConcEvent, M, N, Ctx, ProjectTo, Atom1, Atom2>,
+        )>,
+    ),
 }
-impl<AtomN, AtomM, Event, const N: usize, const M: usize, Ctx> PartialEq
-    for Nary<AtomN, AtomM, Event, N, M, Ctx>
+impl<AtomN, AtomM, ConcEvent, const N: usize, const M: usize, Ctx, ProjectTo, Atom1, Atom2>
+    PartialEq for Nary<AtomN, AtomM, ConcEvent, N, M, Ctx, ProjectTo, Atom1, Atom2>
 where
-    AtomN: AtomTrait<N, Event, Ctx>,
-    AtomM: AtomTrait<M, Event, Ctx>,
-    Event: EventTrait,
+    AtomN: AtomTrait<N, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    AtomM: AtomTrait<M, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Atom1: AtomTrait<1, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Atom2: AtomTrait<2, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Ctx: CtxTrait,
+    ConcEvent: EventTrait,
+    ProjectTo: ProjectToTrait,
     [(); N - 1]:,
     [(); M - 1]:,
 {
@@ -52,22 +70,30 @@ where
         }
     }
 }
-impl<AtomN, AtomM, Event, const N: usize, const M: usize, Ctx> Eq
-    for Nary<AtomN, AtomM, Event, N, M, Ctx>
+impl<AtomN, AtomM, ConcEvent, const N: usize, const M: usize, Ctx, ProjectTo, Atom1, Atom2> Eq
+    for Nary<AtomN, AtomM, ConcEvent, N, M, Ctx, ProjectTo, Atom1, Atom2>
 where
-    AtomN: AtomTrait<N, Event, Ctx>,
-    AtomM: AtomTrait<M, Event, Ctx>,
-    Event: EventTrait,
+    AtomN: AtomTrait<N, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    AtomM: AtomTrait<M, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Atom1: AtomTrait<1, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Atom2: AtomTrait<2, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Ctx: CtxTrait,
+    ConcEvent: EventTrait,
+    ProjectTo: ProjectToTrait,
     [(); N - 1]:,
     [(); M - 1]:,
 {
 }
-impl<AtomN, AtomM, Event, const N: usize, const M: usize, Ctx> std::hash::Hash
-    for Nary<AtomN, AtomM, Event, N, M, Ctx>
+impl<AtomN, AtomM, ConcEvent, const N: usize, const M: usize, Ctx, ProjectTo, Atom1, Atom2>
+    std::hash::Hash for Nary<AtomN, AtomM, ConcEvent, N, M, Ctx, ProjectTo, Atom1, Atom2>
 where
-    AtomN: AtomTrait<N, Event, Ctx>,
-    AtomM: AtomTrait<M, Event, Ctx>,
-    Event: EventTrait,
+    AtomN: AtomTrait<N, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    AtomM: AtomTrait<M, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Atom1: AtomTrait<1, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Atom2: AtomTrait<2, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Ctx: CtxTrait,
+    ConcEvent: EventTrait,
+    ProjectTo: ProjectToTrait,
     [(); N - 1]:,
     [(); M - 1]:,
 {
@@ -104,11 +130,16 @@ where
         }
     }
 }
-impl<AtomN, AtomM, Event, const N: usize, const M: usize, Ctx> Nary<AtomN, AtomM, Event, N, M, Ctx>
+impl<AtomN, AtomM, ConcEvent, const N: usize, const M: usize, Ctx, ProjectTo, Atom1, Atom2>
+    Nary<AtomN, AtomM, ConcEvent, N, M, Ctx, ProjectTo, Atom1, Atom2>
 where
-    AtomN: AtomTrait<N, Event, Ctx>,
-    AtomM: AtomTrait<M, Event, Ctx>,
-    Event: EventTrait,
+    AtomN: AtomTrait<N, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    AtomM: AtomTrait<M, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Atom1: AtomTrait<1, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Atom2: AtomTrait<2, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Ctx: CtxTrait,
+    ConcEvent: EventTrait,
+    ProjectTo: ProjectToTrait,
     [(); N - 1]:,
     [(); M - 1]:,
 {
@@ -124,12 +155,16 @@ where
         }
     }
 }
-impl<AtomN, AtomM, Event, const N: usize, const M: usize, Ctx> PartialOrd
-    for Nary<AtomN, AtomM, Event, N, M, Ctx>
+impl<AtomN, AtomM, ConcEvent, const N: usize, const M: usize, Ctx, ProjectTo, Atom1, Atom2>
+    PartialOrd for Nary<AtomN, AtomM, ConcEvent, N, M, Ctx, ProjectTo, Atom1, Atom2>
 where
-    AtomN: AtomTrait<N, Event, Ctx>,
-    AtomM: AtomTrait<M, Event, Ctx>,
-    Event: EventTrait,
+    AtomN: AtomTrait<N, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    AtomM: AtomTrait<M, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Atom1: AtomTrait<1, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Atom2: AtomTrait<2, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Ctx: CtxTrait,
+    ConcEvent: EventTrait,
+    ProjectTo: ProjectToTrait,
     [(); N - 1]:,
     [(); M - 1]:,
 {
@@ -137,12 +172,16 @@ where
         Some(self.cmp(other))
     }
 }
-impl<AtomN, AtomM, Event, const N: usize, const M: usize, Ctx> Ord
-    for Nary<AtomN, AtomM, Event, N, M, Ctx>
+impl<AtomN, AtomM, ConcEvent, const N: usize, const M: usize, Ctx, ProjectTo, Atom1, Atom2> Ord
+    for Nary<AtomN, AtomM, ConcEvent, N, M, Ctx, ProjectTo, Atom1, Atom2>
 where
-    AtomN: AtomTrait<N, Event, Ctx>,
-    AtomM: AtomTrait<M, Event, Ctx>,
-    Event: EventTrait,
+    AtomN: AtomTrait<N, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    AtomM: AtomTrait<M, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Atom1: AtomTrait<1, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Atom2: AtomTrait<2, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Ctx: CtxTrait,
+    ConcEvent: EventTrait,
+    ProjectTo: ProjectToTrait,
     [(); N - 1]:,
     [(); M - 1]:,
 {
@@ -161,16 +200,27 @@ where
         }
     }
 }
-pub type UnaryRelation<Atom1, Atom2, ConcEvent, Ctx> = Nary<Atom1, Atom2, ConcEvent, 1, 2, Ctx>;
-pub type BinaryRelation<Atom1, Atom2, ConcEvent, Ctx> = Nary<Atom2, Atom1, ConcEvent, 2, 1, Ctx>;
+pub type UnaryRelation<Atom1, Atom2, ConcEvent, Ctx, ProjectTo> =
+    Nary<Atom1, Atom2, ConcEvent, 1, 2, Ctx, ProjectTo, Atom1, Atom2>;
+pub type BinaryRelation<Atom1, Atom2, ConcEvent, Ctx, ProjectTo> =
+    Nary<Atom2, Atom1, ConcEvent, 2, 1, Ctx, ProjectTo, Atom1, Atom2>;
 pub trait EventTrait: std::fmt::Debug + Clone + Eq + std::hash::Hash + Ord + Display {}
 impl<T> EventTrait for T where T: std::fmt::Debug + Clone + Eq + std::hash::Hash + Ord + Display {}
-pub trait AtomTrait<const N: usize, ConcEvent: EventTrait, Ctx>:
+pub trait AtomTrait<const N: usize, ConcEvent: EventTrait, Ctx, ProjectTo, Atom1, Atom2>:
     std::fmt::Debug + Clone + Eq + std::hash::Hash + Ord + Display + Sequence
+where
+    Atom1: AtomTrait<1, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Atom2: AtomTrait<2, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    ProjectTo: ProjectToTrait,
+    Ctx: CtxTrait,
 {
     fn holds(
         &self,
-        e: &[crate::event::Event<UnaryRelation, ConcEvent, ProjectTo>; N],
+        e: &[crate::event::Event<
+            UnaryRelation<Atom1, Atom2, ConcEvent, Ctx, ProjectTo>,
+            ConcEvent,
+            ProjectTo,
+        >; N],
         ctx: &Ctx,
     ) -> bool;
 }
@@ -179,12 +229,16 @@ pub trait AtomTrait<const N: usize, ConcEvent: EventTrait, Ctx>:
 // {
 // }
 
-impl<AtomN, AtomM, ConcEvent, const N: usize, const M: usize, Ctx> Display
-    for Nary<AtomN, AtomM, ConcEvent, N, M, Ctx>
+impl<AtomN, AtomM, ConcEvent, const N: usize, const M: usize, Ctx, ProjectTo, Atom1, Atom2> Display
+    for Nary<AtomN, AtomM, ConcEvent, N, M, Ctx, ProjectTo, Atom1, Atom2>
 where
-    AtomN: AtomTrait<N, ConcEvent, Ctx>,
-    AtomM: AtomTrait<M, ConcEvent, Ctx>,
+    AtomN: AtomTrait<N, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    AtomM: AtomTrait<M, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Atom1: AtomTrait<1, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Atom2: AtomTrait<2, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Ctx: CtxTrait,
     ConcEvent: EventTrait,
+    ProjectTo: ProjectToTrait,
     [(); N - 1]:,
     [(); M - 1]:,
 {
@@ -218,22 +272,41 @@ where
         }
     }
 }
-impl<AtomN, AtomM, Event, const N: usize, const M: usize, Ctx> Nary<AtomN, AtomM, Event, N, M, Ctx>
+impl<AtomN, AtomM, ConcEvent, const N: usize, const M: usize, Ctx, ProjectTo, Atom1, Atom2>
+    Nary<AtomN, AtomM, ConcEvent, N, M, Ctx, ProjectTo, Atom1, Atom2>
 where
-    AtomN: AtomTrait<N, Event, Ctx>,
-    AtomM: AtomTrait<M, Event, Ctx>,
-    Event: EventTrait,
+    AtomN: AtomTrait<N, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    AtomM: AtomTrait<M, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Atom1: AtomTrait<1, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Atom2: AtomTrait<2, ConcEvent, Ctx, ProjectTo, Atom1, Atom2>,
+    Ctx: CtxTrait,
+    ConcEvent: EventTrait,
+    ProjectTo: ProjectToTrait,
     [(); N - 1]:,
     [(); M - 1]:,
 {
-    pub fn holds(&self, chronological_events: &[Event; N], ctx: &Ctx) -> bool {
+    pub fn holds(
+        &self,
+        chronological_events: &[crate::event::Event<
+            UnaryRelation<Atom1, Atom2, ConcEvent, Ctx, ProjectTo>,
+            ConcEvent,
+            ProjectTo,
+        >; N],
+        ctx: &Ctx,
+    ) -> bool {
         match self {
             Nary::Atom(atom) => atom.holds(chronological_events, ctx),
             Nary::IsFirst(r) => {
-                if true
-                //let Event::First(other) = &chronological_events[0]
-                {
-                    // other == &Nary::BoundMary(Box::new(([chronological_events[1..]], *r.clone())))
+                if let crate::event::Event::First(other) = &chronological_events[0] {
+                    // let rest = chronological_events[1..M];
+                    // let rest: &[crate::event::Event<
+                    //     UnaryRelation<Atom1, Atom2, ConcEvent, Ctx, ProjectTo>,
+                    //     ConcEvent,
+                    //     ProjectTo,
+                    // >; M - 1] = (chronological_events[1..M]).try_into().unwrap();
+                    // let rest = rest.clone();
+                    // other == &Nary::BoundMary(Box::new((rest, (**r).clone())))
+                    other == r
                     // maybe not the most efficient
                     // TODO: consider logical equivalence?
                 } else {
@@ -241,15 +314,18 @@ where
                 }
             }
             Nary::IsFirstForFederate(r) => {
-                if true
-                //let Event::FirstForFederate(_, other_r) = &chronological_events[0]
+                // if true
+                if let crate::event::Event::FirstInEquivClass {
+                    proj: _,
+                    set: other_r,
+                } = &chronological_events[0]
                 {
-                    true
-                    // other_r
-                    //     == &UnaryRelation::BoundMary(Box::new((
-                    //         [chronological_events[1..]],
-                    //         *r.clone(),
-                    //     )))
+                    // true
+                    other_r
+                        == &UnaryRelation::BoundMary(Box::new((
+                            [chronological_events[1..]],
+                            *r.clone(),
+                        )))
                 } else {
                     false
                 }

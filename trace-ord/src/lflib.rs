@@ -33,9 +33,9 @@ pub enum EventKind {
 }
 
 pub type UnaryRelation =
-    crate::UnaryRelation<UnaryRelationAtom, BinaryRelationAtom, ConcEvent, ConnInfo>;
+    crate::UnaryRelation<UnaryRelationAtom, BinaryRelationAtom, ConcEvent, ConnInfo, FedId>;
 pub type BinaryRelation =
-    crate::BinaryRelation<UnaryRelationAtom, BinaryRelationAtom, ConcEvent, ConnInfo>;
+    crate::BinaryRelation<UnaryRelationAtom, BinaryRelationAtom, ConcEvent, ConnInfo, FedId>;
 pub type Event = crate::event::Event<UnaryRelation, ConcEvent, FedId>;
 
 /// If two events match a rule, then the rule says that there is a precedence relation between them
@@ -293,10 +293,10 @@ pub struct OgRank(pub u32);
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ConcEvent {
     // Concrete {
-    event: EventKind,
-    tag: Tag,
-    fedid: FedId,
-    ogrank: OgRank,
+    pub event: EventKind,
+    pub tag: Tag,
+    pub fedid: FedId,
+    pub ogrank: OgRank,
     // },
     // First(UnaryRelation),
     // FirstForFederate(FedId, UnaryRelation),
@@ -368,9 +368,9 @@ impl FromStr for FedId {
 }
 
 pub fn tracerecords_to_string(
-    trace: &[ConcEvent],
+    trace: &[Event],
     numbering: bool,
-    put_marker_if: impl Fn(&ConcEvent) -> bool,
+    put_marker_if: impl Fn(&Event) -> bool,
 ) -> String {
     trace
         .iter()
@@ -432,7 +432,7 @@ pub fn elaborated_from_trace_records(
     let (predicates, federate_wise_predicates) = get_first_predicates(axioms, &concretes, conninfo);
     for p in predicates {
         for (ogr, record) in concretes.iter().enumerate() {
-            if p.holds(&[record.clone()], conninfo) {
+            if p.holds(&[Event::Concrete(record.clone())], conninfo) {
                 firsts[ogr].push(Event::First(p.clone()));
                 break;
             }
@@ -442,7 +442,9 @@ pub fn elaborated_from_trace_records(
         let mut federates_hit = HashSet::new();
         for (ogr, record) in concretes.iter().enumerate() {
             let ConcEvent { fedid, .. } = record;
-            if p.holds(&[record.clone()], conninfo) && !federates_hit.contains(fedid) {
+            if p.holds(&[Event::Concrete(record.clone())], conninfo)
+                && !federates_hit.contains(fedid)
+            {
                 firsts[ogr].push(Event::FirstInEquivClass {
                     proj: *fedid,
                     set: p.clone(),
@@ -500,10 +502,10 @@ fn add_first_predicates_recursive(
         Nary::IsFirst(rel) => {
             for e in concretes
                 .iter()
-                .filter(|e| event.holds(&[(*e).clone()], conninfo))
+                .filter(|e| event.holds(&[Event::Concrete((*e).clone())], conninfo))
             {
                 predicates.insert(UnaryRelation::BoundMary(Box::new((
-                    [e.clone()],
+                    [Event::Concrete(e.clone())],
                     *rel.clone(),
                 ))));
             }
@@ -519,10 +521,10 @@ fn add_first_predicates_recursive(
         Nary::IsFirstForFederate(rel) => {
             for e in concretes
                 .iter()
-                .filter(|e| event.holds(&[(*e).clone()], conninfo))
+                .filter(|e| event.holds(&[Event::Concrete((*e).clone())], conninfo))
             {
                 federate_wise_predicates.insert(UnaryRelation::BoundMary(Box::new((
-                    [e.clone()],
+                    [Event::Concrete(e.clone())],
                     *rel.clone(),
                 ))));
             }
@@ -583,7 +585,9 @@ fn add_first_predicates_recursive_from_predicate(
     }
 }
 
-impl AtomTrait<1, ConcEvent, ConnInfo> for UnaryRelationAtom {
+impl AtomTrait<1, ConcEvent, ConnInfo, FedId, UnaryRelationAtom, BinaryRelationAtom>
+    for UnaryRelationAtom
+{
     fn holds(&self, e: &[Event; 1], conninfo: &ConnInfo) -> bool {
         match self {
             UnaryRelationAtom::TagNonzero => {
@@ -620,16 +624,18 @@ impl AtomTrait<1, ConcEvent, ConnInfo> for UnaryRelationAtom {
     }
 }
 
-impl AtomTrait<2, ConcEvent, ConnInfo> for BinaryRelationAtom {
-    fn holds(&self, e: &[ConcEvent; 2], conninfo: &ConnInfo) -> bool {
+impl AtomTrait<2, ConcEvent, ConnInfo, FedId, UnaryRelationAtom, BinaryRelationAtom>
+    for BinaryRelationAtom
+{
+    fn holds(&self, e: &[Event; 2], conninfo: &ConnInfo) -> bool {
         let neither_first = |f: fn(&Tag, &Tag, &FedId, &FedId, Option<&Delay>) -> bool| {
             if let (
-                ConcEvent::Concrete {
+                Event::Concrete(ConcEvent {
                     tag: ptag,
                     fedid: pfedid,
                     ..
-                },
-                ConcEvent::Concrete { tag, fedid, .. },
+                }),
+                Event::Concrete(ConcEvent { tag, fedid, .. }),
             ) = (&e[0], &e[1])
             {
                 f(ptag, tag, pfedid, fedid, conninfo.get(*pfedid, *fedid))
@@ -641,16 +647,16 @@ impl AtomTrait<2, ConcEvent, ConnInfo> for BinaryRelationAtom {
             f: fn(&Tag, &Tag) -> bool,
             t0: &Term,
             t1: &Term,
-            e: &[ConcEvent; 2],
+            e: &[Event; 2],
             conninfo: &ConnInfo,
         ) -> bool {
             if let (
-                ConcEvent::Concrete {
+                Event::Concrete(ConcEvent {
                     tag: ptag,
                     fedid: pfedid,
                     ..
-                },
-                ConcEvent::Concrete { tag, fedid, .. },
+                }),
+                Event::Concrete(ConcEvent { tag, fedid, .. }),
             ) = (&e[0], &e[1])
             {
                 let t0 = t0.eval(*pfedid, *ptag, (*pfedid, *fedid), conninfo);
@@ -724,12 +730,16 @@ impl Unpermutables {
     /// which it matches, excluding itself, appears before it.
     fn add_precedences_for_firsts(
         ogrank2immediatepredecessors: &mut [HashSet<OgRank>],
-        trace: &[ConcEvent],
+        trace: &[Event],
         conninfo: &ConnInfo,
     ) {
         for (ogrank, tr) in trace.iter().enumerate() {
-            if let ConcEvent::First(ref rel) | ConcEvent::FirstForFederate(_, ref rel) = &tr {
-                let fedid = if let ConcEvent::FirstForFederate(fedid, _) = &tr {
+            if let Event::First(ref set) | Event::FirstInEquivClass { proj: _, ref set } = &tr {
+                let fedid = if let Event::FirstInEquivClass {
+                    proj: fedid,
+                    set: _,
+                } = &tr
+                {
                     Some(*fedid)
                 } else {
                     None
@@ -744,11 +754,13 @@ impl Unpermutables {
                     .zip(&trace[ogrank + 1..])
                     .filter(|(_, tr)| {
                         // println!("DEBUG: {}\n    {},    {}", tr, rel, rel.holds(tr, conninfo));
-                        rel.holds(&[(*tr).clone()], conninfo)
-                            && !matches!(tr, ConcEvent::First(_))
-                            && !matches!(tr, ConcEvent::FirstForFederate(_, _))
-                            && if let (ConcEvent::Concrete { fedid: other, .. }, Some(fedid)) =
-                                (tr, fedid)
+                        set.holds(&[(*tr).clone()], conninfo)
+                            && !matches!(tr, Event::First(_))
+                            && !matches!(tr, Event::FirstInEquivClass { .. })
+                            && if let (
+                                Event::Concrete(ConcEvent { fedid: other, .. }),
+                                Some(fedid),
+                            ) = (tr, fedid)
                             {
                                 *other == fedid
                             } else {
@@ -848,9 +860,9 @@ impl Unpermutables {
     }
     fn apply_rule(
         rule: &Rule,
-        e: &ConcEvent,
-        before: &[ConcEvent],
-        after: &[ConcEvent],
+        e: &Event,
+        before: &[Event],
+        after: &[Event],
         conninfo: &ConnInfo,
     ) -> Result<HashSet<OgRank>, String> {
         if !rule.event.holds(&[(*e).clone()], conninfo) {
@@ -876,9 +888,9 @@ impl Unpermutables {
 }
 
 fn check_rule(
-    before: &[ConcEvent],
-    e: ConcEvent,
-    after: &[ConcEvent],
+    before: &[Event],
+    e: Event,
+    after: &[Event],
     rule: &Rule,
     conninfo: &ConnInfo,
 ) -> Result<(), String> {
@@ -899,7 +911,7 @@ fn check_rule(
 }
 
 impl Rule {
-    pub fn check(&self, trace: &[ConcEvent], conninfo: &ConnInfo) -> Result<(), String> {
+    pub fn check(&self, trace: &[Event], conninfo: &ConnInfo) -> Result<(), String> {
         for (ogrank, e) in trace.iter().enumerate() {
             check_rule(
                 &trace[..ogrank],
