@@ -299,11 +299,14 @@ where
             Nary::IsFirst(r) => {
                 if let crate::event::Event::First(other) = &chronological_events[0] {
                     // let rest = chronological_events[1..M];
+                    if N != 2 {
+                        panic!("IsFirst only makes sense when N = 2, but N = {}", N);
+                    }
                     let rest: &[crate::event::Event<
                         UnaryRelation<Atom1, Atom2, ConcEvent, Ctx, ProjectTo>,
                         ConcEvent,
                         ProjectTo,
-                    >; 1] = (chronological_events[1..M]).try_into().unwrap();
+                    >; 1] = (chronological_events[1..N]).try_into().unwrap();
                     let rest = rest.clone();
                     other == &Nary::BoundMary(Box::new((rest, (**r).clone())))
                     // maybe not the most efficient
@@ -318,11 +321,17 @@ where
                     set: other_r,
                 } = &chronological_events[0]
                 {
+                    if N != 2 {
+                        panic!(
+                            "IsFirstForFederate only makes sense when N = 2, but N = {}",
+                            N
+                        );
+                    }
                     let rest: &[crate::event::Event<
                         UnaryRelation<Atom1, Atom2, ConcEvent, Ctx, ProjectTo>,
                         ConcEvent,
                         ProjectTo,
-                    >; 1] = chronological_events[1..].try_into().unwrap();
+                    >; 1] = chronological_events[1..N].try_into().unwrap();
                     other_r == &UnaryRelation::BoundMary(Box::new((rest.clone(), *r.clone())))
                 } else {
                     false
@@ -334,7 +343,7 @@ where
             Nary::Or(relations) => relations
                 .iter()
                 .any(|rel| rel.holds(chronological_events, ctx)),
-            Nary::Not(_relation) => panic!("this might never be necessary to implement"),
+            Nary::Not(relation) => !relation.holds(chronological_events, ctx),
             Nary::BoundMary(p) => {
                 let mut all = chronological_events.to_vec();
                 all.extend_from_slice(&p.0);

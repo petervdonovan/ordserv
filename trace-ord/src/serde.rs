@@ -27,7 +27,7 @@ impl ComputedPrecedences {
         let filtered = permutables
             .into_iter()
             .zip(etrace.iter())
-            // .filter(|(_, e)| matches!(e, crate::event::Event::Concrete { .. }))
+            .filter(|(_, e)| matches!(e, crate::event::Event::Concrete { .. }))
             .map(|(ogrs, _)| {
                 let mut collected = ogrs
                     .into_iter()
