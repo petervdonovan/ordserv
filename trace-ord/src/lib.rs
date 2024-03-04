@@ -246,25 +246,23 @@ where
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Nary::Atom(atom) => write!(f, "{}", atom),
-            Nary::IsFirst(relation) => write!(f, "(FIRST {})", relation),
-            Nary::IsFirstForFederate(relation) => write!(f, "(FedwiseFIRST {})", relation),
+            Nary::IsFirst(relation) => write!(f, "(FIRST ({}))", relation),
+            Nary::IsFirstForFederate(relation) => write!(f, "(FedwiseFIRST ({}))", relation),
             Nary::And(relations) => {
                 write!(f, "({})", relations[0])?;
                 for relation in &relations[1..] {
-                    write!(f, " ∧ {}", relation)?;
+                    write!(f, " ∧ ({})", relation)?;
                 }
-                write!(f, ")")?;
                 Ok(())
             }
             Nary::Or(relations) => {
-                write!(f, "({}", relations[0])?;
+                write!(f, "({})", relations[0])?;
                 for relation in &relations[1..] {
-                    write!(f, " ∨ {}", relation)?;
+                    write!(f, " ∨ ({})", relation)?;
                 }
-                write!(f, ")")?;
                 Ok(())
             }
-            Nary::Not(relation) => write!(f, "¬{}", relation),
+            Nary::Not(relation) => write!(f, "¬({})", relation),
             Nary::BoundMary(bound) if M == 2 => {
                 write!(f, "(for e = {}, {})", bound.0[0], bound.1)
             }

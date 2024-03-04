@@ -144,7 +144,7 @@ impl Display for Rule {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let preceding_event = self.preceding_event.to_string().replace("eXXX", "e1");
         let event = self.event.to_string().replace("eXXX", "e2");
-        write!(f, "{} ∧ {} ⇒ e1 ≺ e2", preceding_event, event)
+        write!(f, "(({}) ∧ ({})) ⇒ (e1 ≺ e2)", preceding_event, event)
     }
 }
 
@@ -222,7 +222,7 @@ impl Display for DelayTerm {
             ),
             DelayTerm::SmallestDelayFrom => write!(
                 f,
-                "(the smallest delay of a connection going out of the federate of e1)"
+                "(the smallest delay of a connection going out of the federate of eXXX)"
             ),
             DelayTerm::SmallestDelayFromSomeImmUpstreamFed => {
                 write!(
@@ -232,12 +232,12 @@ impl Display for DelayTerm {
             }
             DelayTerm::LargestDelayFrom => write!(
                 f,
-                "(largest delay of a connection from the federate of e1 to the federate of e2)"
+                "(largest delay of a connection going out of the federate of eXXX)"
             ),
             DelayTerm::LargestDelayFromSomeImmUpstreamFed => {
                 write!(
                     f,
-                    "(largest delay of a connection going in to the federate of eXXX)"
+                    "(largest possible delay of any connection going in to the federate of eXXX)"
                 )
             }
         }

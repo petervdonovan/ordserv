@@ -212,7 +212,7 @@ pub fn axioms() -> Vec<Rule> {
         Rule {
             preceding_event: IsFirst(Box::new(And(Box::new([
                 BoundMary(Box::new(([], Atom(EventIs(RecvPortAbs))))),
-                Atom(FederateZeroDelayDirectlyUpstreamOf),
+                Atom(FederateDirectlyUpstreamOf),
                 Atom(Equal(Tag, Tag)),
             ])))),
             event: Atom(EventIs(SendPortAbs)),
