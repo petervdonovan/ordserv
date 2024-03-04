@@ -13,6 +13,8 @@ axioms = (
 )
 axioms = [a for a in axioms if len(a) > 0]
 
+# Federated programs execute as multiple concurrent processes in "real life," which means that not all events in the execution of federated programs are causally related in the real world, and not all events have a fixed order with respect to each other in physical time. However, they are designed to behave in a way that is consistent with an abstract model that is described in terms of logical time.
+
 lf_context = """
 A Tag is basically like a logical time, so it makes sense to add a logical delay to a Tag.
 
@@ -41,6 +43,8 @@ A given message is of one of the following types:
 12. LTC (Logical Tag Complete): This message is sent from a federate to the RTI to declare that the federate is finished executing a particular tag.
 """
 
+# Messages convey information about real-life processes (federates, or the RTI) and contain information about the current physical state of the executing processes as well as information about the relationship between this current physical state and the abstract model that involves logical time.
+
 syntax_explanation = """
 e1 ≺ e2 means that it is not possible, under any execution of the federated program, for e1 to occur after e2.
 
@@ -55,8 +59,7 @@ An expression of the form (FedwiseFIRST X), where X is some predicate, says that
 Expressions like that use FIRST and FedwiseFIRST are useful for describing the first event e1 that could possibly cause some other event e2. When we know that e2 must have a cause, but there are multiple events that could have caused e2, we know that the first possible cause of e2 would have had to happen before e2. For example, when we write (FIRST (X e1)), where X is some predicate, probably the set of events that make X true is the set of events that could potentially cause some other event e2, and (FIRST (X e1)) denotes the first event that could potentially cause e2.
 """
 
-
-# There are multiple possible reasons why the guarantee provided by some sentence might be correct. Sometimes, the guarantee made by a sentence is always correct because the RTI has to ensure that it is true in order to prevent STP violations. In other cases, the guarantee is always correct because it describes an ordering between events that occur in a single federate, and federates are designed to do things in a certain order. And in other cases, the guarantee is always correct because it describes events that are causally related, and causal relationships imply ordering relationships which may be observable within the RTI.
+# There are multiple possible reasons why we might expect a given sentence to provide a correct guarantee about the behavior of federated programs. Sometimes, the guarantee made by a sentence is always correct because the RTI has to ensure that it is true in order to prevent STP violations. In other cases, the guarantee is always correct because it describes a pair of "real life" events e1 and e2 that are causally related in the physical, "real life" execution of the federated program, and whenever an event e1 causes e2, we know that e1 has to occur before e2.
 
 context = f"""
 {lf_context}
@@ -77,6 +80,8 @@ Then, use your analysis of the subexpressions to carefully state what would need
 
 Then, use the meaning of the message types to briefly describe why we should expect the sentence to provide a correct guarantee about the behavior of federated programs.
 """
+
+# Either state this expectation in terms of a causal relationship, or explain why we need it to be true in order for the federated program to comply with its basic rules of operation.
 
 
 def get_explanation(axiom):
@@ -100,7 +105,7 @@ def get_explanation(axiom):
                 """,
             },
         ],
-        temperature=0.3,
+        temperature=0.3,  # 0.3 has been recommended for code comment generation, which is kind of like what we are doing here. However, it is not clear how much performance actually depends on temperature for this use case.
     )
 
 
@@ -118,7 +123,7 @@ print()
 print("## Preliminary Syntax Explanation")
 print()
 print(syntax_explanation)
-for i, axiom in enumerate(axioms[10:14], start=1):
+for i, axiom in enumerate(axioms[8:12], start=1):
     print(f"## Sentence {i}\n")
     print(f"Sentence {i} states:\n{axiom}\n")
     # print(
