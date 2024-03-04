@@ -44,7 +44,9 @@ A given message is of one of the following types:
 syntax_explanation = """
 e1 ≺ e2 means that it is not possible, under any execution of the federated program, for e1 to occur after e2.
 
-Propositions are stated in an S-expression-like format. For example, where we write (f e1), we mean "f of e1".
+Sentences are stated in an S-expression-like format. For example, where we write (f e1), we mean "f of e1".
+
+All events are described from the perspective of the RTI. For example, where we write (e1 is (Receiving PORT_ABS)), we mean that e1 is an event in which the RTI receives a PORT_ABS message from a federate; in other words, the federate informed the RTI about when a port is going to be absent. Similarly, where we write ((e1 is (Sending PORT_ABS))), we mean that e1 is an event in which the RTI is sending a PORT_ABS to a federate; in other words, the RTI is informing the federate about when one of the ports of that federate is going to be absent.
 
 An expression of the form (FIRST X), where X is some predicate, says that e1 is the first event e1 such that the predicate X is true of e1 and e2.
 
@@ -52,6 +54,9 @@ An expression of the form (FedwiseFIRST X), where X is some predicate, says that
 
 Expressions like that use FIRST and FedwiseFIRST are useful for describing the first event e1 that could possibly cause some other event e2. When we know that e2 must have a cause, but there are multiple events that could have caused e2, we know that the first possible cause of e2 would have had to happen before e2. For example, when we write (FIRST (X e1)), where X is some predicate, probably the set of events that make X true is the set of events that could potentially cause some other event e2, and (FIRST (X e1)) denotes the first event that could potentially cause e2.
 """
+
+
+# There are multiple possible reasons why the guarantee provided by some sentence might be correct. Sometimes, the guarantee made by a sentence is always correct because the RTI has to ensure that it is true in order to prevent STP violations. In other cases, the guarantee is always correct because it describes an ordering between events that occur in a single federate, and federates are designed to do things in a certain order. And in other cases, the guarantee is always correct because it describes events that are causally related, and causal relationships imply ordering relationships which may be observable within the RTI.
 
 context = f"""
 {lf_context}
@@ -95,7 +100,7 @@ def get_explanation(axiom):
                 """,
             },
         ],
-        temperature=0.6,
+        temperature=0.3,
     )
 
 
@@ -113,7 +118,7 @@ print()
 print("## Preliminary Syntax Explanation")
 print()
 print(syntax_explanation)
-for i, axiom in enumerate(axioms[10:11], start=1):
+for i, axiom in enumerate(axioms[10:14], start=1):
     print(f"## Sentence {i}\n")
     print(f"Sentence {i} states:\n{axiom}\n")
     # print(
@@ -121,7 +126,7 @@ for i, axiom in enumerate(axioms[10:11], start=1):
     # )
     # print("\n")
     print(
-        f"Here is an LLM's explanation of when proposition {i} will make a guarantee about two events, e1 and e2:\n"
+        f"Here is an LLM's explanation of when sentence {i} will make a guarantee about two events, e1 and e2:\n"
     )
     print(indent(get_explanation(axiom).choices[0].message.content))
     print("\n")
