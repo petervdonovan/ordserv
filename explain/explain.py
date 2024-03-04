@@ -3,6 +3,7 @@
 from openai import OpenAI
 
 import subprocess
+import re
 
 client = OpenAI()
 
@@ -74,6 +75,8 @@ The rule is only applicable if the proposition listed below is true. Answer the 
 """
 
 full_explanation_prompt = """
+In the following tasks, use some LaTeX where appropriate.
+
 Start by listing out all of the subexpressions that appear in the sentence, and while you do that, state the conditions under which the subexpression is true.
 
 Then, use your analysis of the subexpressions to carefully state what would need to be true in order for the sentence to guarantee that in any execution of the program where e1 and e2 both happen in the RTI, e1 must occur before e2. Note that the sentence makes this guarantee whenever its largest subexpression (the expression preceding the ⇒ symbol) is true.
@@ -112,8 +115,28 @@ def get_explanation(axiom):
 # axioms_sorted = sorted(axioms, key=lambda x: -len(x))
 
 
-def indent(s):
-    return "  " + s.replace("\n", "\n  ")
+def repair_latex(text):
+    # Define a regular expression pattern to find \text{} macros
+    text_macro_pattern = re.compile(r"\\text\{([^{}]*)\}")
+
+    # Find all matches of \text{} macros in the input text
+    matches = text_macro_pattern.finditer(text)
+
+    # Iterate through matches and escape underscores inside \text{} macros
+    for match in matches:
+        text_inside_macro = match.group(1)
+        repaired_text_inside_macro = text_inside_macro.replace("_", r"\_")
+        repaired_macro = f"\\text{{{repaired_text_inside_macro}}}"
+        text = text.replace(match.group(0), repaired_macro)
+
+    return text
+
+
+def format_llm_output(s):
+    ret = "  " + s.replace("\n", "\n  ").replace("\(", "$").replace("\)", "$").replace(
+        "\[", "$"
+    ).replace("\]", "$")
+    return repair_latex(ret)
 
 
 print("## Background: LF Federated Execution")
@@ -123,7 +146,7 @@ print()
 print("## Preliminary Syntax Explanation")
 print()
 print(syntax_explanation)
-for i, axiom in enumerate(axioms[8:12], start=1):
+for i, axiom in enumerate(axioms, start=1):
     print(f"## Sentence {i}\n")
     print(f"Sentence {i} states:\n{axiom}\n")
     # print(
@@ -133,7 +156,7 @@ for i, axiom in enumerate(axioms[8:12], start=1):
     print(
         f"Here is an LLM's explanation of when sentence {i} will make a guarantee about two events, e1 and e2:\n"
     )
-    print(indent(get_explanation(axiom).choices[0].message.content))
+    print(format_llm_output(get_explanation(axiom).choices[0].message.content))
     print("\n")
 
 # ((e1 is (Receiving TIMESTAMP))) ∧ ((e2 is (Receiving LTC))) ∨ ((e2 is (Receiving PORT_ABS))) ∨ ((e2 is (Receiving TAGGED_MSG))) ∨ ((e2 is (Sending TAG))) ∨ ((e2 is (Sending PTAG))) ∨ ((e2 is (Sending PORT_ABS))) ∨ ((e2 is (Sending TAGGED_MSG))) ∨ ((e2 is (Sending STOP_GRN))) ∨ ((e2 is (Sending STOP_REQ))) ∨ ((e2 is (Receiving STOP_REQ))) ∨ ((e2 is (Receiving STOP_REQ_REP))) ⇒ e1 ≺ e2
