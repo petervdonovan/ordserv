@@ -14,6 +14,7 @@ pub mod event;
 pub mod lfenumerate;
 pub mod lflib;
 pub mod serde;
+
 #[derive(Debug, Clone)]
 pub enum Nary<AtomN, AtomM, ConcEvent, const N: usize, const M: usize, Ctx, ProjectTo, Atom1, Atom2>
 where

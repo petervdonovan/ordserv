@@ -12,6 +12,17 @@ use crate::{
 use ::serde::{Deserialize, Serialize};
 use enum_iterator::Sequence;
 
+pub fn syntax_explanation_for_llm() -> String {
+    "A Tag is basically like a time, so it makes sense to add a delay to a Tag.
+
+Throughout, e1 and e2 will denote events occurring in a process called the RTI. Every event involves the RTI either sending a message to a federate, or receiving a message from a federate. So, if Federate(e1) = f, then that means that e1 is an event in which the RTI either sends a message to f or receives a message from f.
+
+Different federates are connected to each other, possibly using multiple connections, and every connection has a delay associated with it.
+
+e1 ≺ e2 means that it is not possible, under any execution of the federated program, for e1 to occur after e2.
+".to_string()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Sequence)]
 pub enum EventKind {
     RecvFedId,
@@ -131,7 +142,9 @@ impl FromStr for EventKind {
 
 impl Display for Rule {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} ≺ {}", self.preceding_event, self.event)
+        let preceding_event = self.preceding_event.to_string().replace("eXXX", "e1");
+        let event = self.event.to_string().replace("eXXX", "e2");
+        write!(f, "{} ∧ {} ⇒ e1 ≺ e2", preceding_event, event)
     }
 }
 
@@ -139,11 +152,11 @@ impl Display for UnaryRelationAtom {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             UnaryRelationAtom::FedHasNoneUpstreamWithDelayLessThanOrEqualCurrentTag => {
-                write!(f, "Fed has no upstream with delay ≤ Tag")
+                write!(f, "(Fed eXXX) has no upstream with delay ≤ (Tag eXXX)")
             }
-            UnaryRelationAtom::TagNonzero => write!(f, "Tag ≠ 0"),
-            UnaryRelationAtom::TagFinite => write!(f, "Tag finite"),
-            UnaryRelationAtom::EventIs(event) => write!(f, "{}", event),
+            UnaryRelationAtom::TagNonzero => write!(f, "(Tag eXXX) ≠ 0"),
+            UnaryRelationAtom::TagFinite => write!(f, "(Tag eXXX) finite"),
+            UnaryRelationAtom::EventIs(event) => write!(f, "(eXXX is ({}))", event),
         }
     }
 }
@@ -151,18 +164,41 @@ impl Display for UnaryRelationAtom {
 impl Display for BinaryRelationAtom {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            BinaryRelationAtom::FederateEquals => write!(f, "Federate = Federate"),
+            BinaryRelationAtom::FederateEquals => write!(f, "Federate(e1) = Federate(e2)"),
             BinaryRelationAtom::FederateZeroDelayDirectlyUpstreamOf => {
-                write!(f, "Federate has zero delay directly upstream of")
+                write!(
+                    f,
+                    "(Federate of e1 is upstream of federate of e2 via a zero-delay connection)"
+                )
             }
             BinaryRelationAtom::FederateDirectlyUpstreamOf => {
-                write!(f, "Federate is directly upstream of")
+                write!(f, "(Federate of e1 is directly upstream of federate of e2)")
             }
-            BinaryRelationAtom::LessThan(t0, t1) => write!(f, "{} < {}", t0, t1),
-            BinaryRelationAtom::LessThanOrEqual(t0, t1) => write!(f, "{} ≤ {}", t0, t1),
-            BinaryRelationAtom::GreaterThanOrEqual(t0, t1) => write!(f, "{} ≥ {}", t0, t1),
-            BinaryRelationAtom::GreaterThan(t0, t1) => write!(f, "{} > {}", t0, t1),
-            BinaryRelationAtom::Equal(t0, t1) => write!(f, "{} = {}", t0, t1),
+            BinaryRelationAtom::LessThan(t0, t1)
+            | BinaryRelationAtom::LessThanOrEqual(t0, t1)
+            | BinaryRelationAtom::GreaterThanOrEqual(t0, t1)
+            | BinaryRelationAtom::GreaterThan(t0, t1)
+            | BinaryRelationAtom::Equal(t0, t1) => {
+                let (t0, t1) = (
+                    t0.to_string().replace("eXXX", "e1"),
+                    t1.to_string().replace("eXXX", "e2"),
+                );
+                let op = match self {
+                    BinaryRelationAtom::LessThan(_, _) => "<",
+                    BinaryRelationAtom::LessThanOrEqual(_, _) => "≤",
+                    BinaryRelationAtom::GreaterThanOrEqual(_, _) => "≥",
+                    BinaryRelationAtom::GreaterThan(_, _) => ">",
+                    BinaryRelationAtom::Equal(_, _) => "=",
+                    _ => unreachable!(),
+                };
+                write!(f, "{t0} {op} {t1}")
+            } // BinaryRelationAtom::LessThan(t0, t1) => write!(f, "({} e1) < ({} e2)", t0, t1),
+              // BinaryRelationAtom::LessThanOrEqual(t0, t1) => write!(f, "({} e1) ≤ ({} e2)", t0, t1),
+              // BinaryRelationAtom::GreaterThanOrEqual(t0, t1) => {
+              //     write!(f, "({} e1) ≥ ({} e2)", t0, t1)
+              // }
+              // BinaryRelationAtom::GreaterThan(t0, t1) => write!(f, "({} e1) > ({} e2)", t0, t1),
+              // BinaryRelationAtom::Equal(t0, t1) => write!(f, "({} e1) = ({} e2)", t0, t1),
         }
     }
 }
@@ -170,9 +206,9 @@ impl Display for BinaryRelationAtom {
 impl Display for Term {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Term::Tag => write!(f, "Tag"),
-            Term::TagPlusDelay(delay) => write!(f, "Tag + {}", delay),
-            Term::TagStrictPlusDelay(delay) => write!(f, "Tag strict+ {}", delay),
+            Term::Tag => write!(f, "(Tag eXXX)"),
+            Term::TagPlusDelay(delay) => write!(f, "(Tag eXXX) + {}", delay),
+            Term::TagStrictPlusDelay(delay) => write!(f, "(Tag eXXX) strict+ {}", delay),
         }
     }
 }
@@ -180,14 +216,29 @@ impl Display for Term {
 impl Display for DelayTerm {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            DelayTerm::SmallestDelayBetween => write!(f, "SmallestDelayBetween"),
-            DelayTerm::SmallestDelayFrom => write!(f, "SmallestDelayFromPreceding"),
+            DelayTerm::SmallestDelayBetween => write!(
+                f,
+                "(smallest connection delay between federate of e1 and federate of e2)"
+            ),
+            DelayTerm::SmallestDelayFrom => write!(
+                f,
+                "(the smallest delay of a connection going out of the federate of e1)"
+            ),
             DelayTerm::SmallestDelayFromSomeImmUpstreamFed => {
-                write!(f, "SmallestDelayFromSomeImmUpstreamFed")
+                write!(
+                    f,
+                    "(smallest delay of a connection going in to the federate of eXXX)"
+                )
             }
-            DelayTerm::LargestDelayFrom => write!(f, "LargestDelayFromPreceding"),
+            DelayTerm::LargestDelayFrom => write!(
+                f,
+                "(largest delay of a connection from the federate of e1 to the federate of e2)"
+            ),
             DelayTerm::LargestDelayFromSomeImmUpstreamFed => {
-                write!(f, "LargestDelayFromSomeImmUpstreamFed")
+                write!(
+                    f,
+                    "(largest delay of a connection going in to the federate of eXXX)"
+                )
             }
         }
     }

@@ -10,6 +10,8 @@ members = [
     "lf-trace-reader",
 ]
 
+resolver = "2"
+
 [profile.dev]
 # panic = 'abort'
 incremental = false
