@@ -44,7 +44,8 @@ Expressions like that use FIRST and FedwiseFIRST are useful for describing the f
 ## Sentence 1
 
 Sentence 1 states:
-((((e1 is (Receiving LTC))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) < (Tag e2))) ∧ ((e2 is (Receiving LTC)))) ⇒ (e1 ≺ e2)
+
+`((((e1 is (Receiving LTC))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) < (Tag e2))) ∧ ((e2 is (Receiving LTC)))) ⇒ (e1 ≺ e2)`
 
 Here is an LLM's explanation of when sentence 1 will make a guarantee about two events, e1 and e2:
 
@@ -54,7 +55,7 @@ To analyze the given sentence, we'll break it down into its subexpressions and e
 
 1. $e1$ is $Receiving\ LTC$: This is true if $e1$ is an event where the RTI receives an LTC (Logical Tag Complete) message from a federate.
 2. $Federate(e1) = Federate(e2)$: This is true if both $e1$ and $e2$ involve the same federate.
-3. $Tag\ e1 < Tag\ e2$: This is true if the logical tag associated with $e1$ is less than the logical tag associated with $e2$.
+3. $\text{Tag} (\) e1 < Tag\ e2$: This is true if the logical tag associated with $e1$ is less than the logical tag associated with $e2$.
 4. $e2$ is $Receiving\ LTC$: This is true if $e2$ is an event where the RTI receives an LTC message from a federate.
 
 ### Synthesis for Guarantee
@@ -74,7 +75,8 @@ The guarantee provided by the sentence is correct because of the way federated p
 ## Sentence 2
 
 Sentence 2 states:
-(((FIRST ((((e1 is (Sending STOP_GRN))) ∨ ((e1 is (Receiving LTC))) ∨ ((((e1 is (Receiving NET))) ∨ ((e1 is (Sending TAGGED_MSG)))))) ∧ ((Tag e1) = (Tag e2)) ∧ (((Tag e1) finite) ∧ ((Tag e1) ≠ 0))))) ∧ ((((e2 is (Sending TAG))) ∨ ((e2 is (Sending PTAG)))))) ⇒ (e1 ≺ e2)
+
+`(((FIRST ((((e1 is (Sending STOP_GRN))) ∨ ((e1 is (Receiving LTC))) ∨ ((((e1 is (Receiving NET))) ∨ ((e1 is (Sending TAGGED_MSG)))))) ∧ ((Tag e1) = (Tag e2)) ∧ (((Tag e1) finite) ∧ ((Tag e1) ≠ 0))))) ∧ ((((e2 is (Sending TAG))) ∨ ((e2 is (Sending PTAG)))))) ⇒ (e1 ≺ e2)`
 
 Here is an LLM's explanation of when sentence 2 will make a guarantee about two events, e1 and e2:
 
@@ -86,7 +88,7 @@ To analyze the given sentence, let's break down its components and understand th
 2. **$e1$ is (Receiving LTC)**: True if $e1$ is an event where the RTI receives an LTC message from a federate.
 3. **$e1$ is (Receiving NET)**: True if $e1$ is an event where the RTI receives a NET message from a federate.
 4. **$e1$ is (Sending TAGGED_MSG)**: True if $e1$ is an event where the RTI sends a TAGGED_MSG to a federate.
-5. **$Tag e1) = (Tag e2)$**: True if the logical tags associated with events $e1$ and $e2$ are equal.
+5. **$\text{Tag} ( e1)) = (Tag e2)$**: True if the logical tags associated with events $e1$ and $e2$ are equal.
 6. **$(Tag e1) \text{ finite}$**: True if the logical tag of $e1$ is a finite number.
 7. **$(Tag e1) \neq 0$**: True if the logical tag of $e1$ is not zero.
 8. **$e2$ is (Sending TAG)**: True if $e2$ is an event where the RTI sends a TAG message to a federate.
@@ -113,7 +115,8 @@ In summary, the sentence outlines a logical sequence where certain types of even
 ## Sentence 3
 
 Sentence 3 states:
-(((((e1 is (Receiving PORT_ABS))) ∨ ((e1 is (Receiving TAGGED_MSG)))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) ≤ (Tag e2))) ∧ (((e2 is (Receiving LTC))))) ⇒ (e1 ≺ e2)
+
+`(((((e1 is (Receiving PORT_ABS))) ∨ ((e1 is (Receiving TAGGED_MSG)))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) ≤ (Tag e2))) ∧ (((e2 is (Receiving LTC))))) ⇒ (e1 ≺ e2)`
 
 Here is an LLM's explanation of when sentence 3 will make a guarantee about two events, e1 and e2:
 
@@ -149,7 +152,8 @@ In summary, the sentence's structure reflects the logical time ordering and comm
 ## Sentence 4
 
 Sentence 4 states:
-((((e1 is (Receiving NET))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) ≤ (Tag e2))) ∧ (((e2 is (Receiving LTC))) ∧ ((Tag e2) ≠ 0))) ⇒ (e1 ≺ e2)
+
+`((((e1 is (Receiving NET))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) ≤ (Tag e2))) ∧ (((e2 is (Receiving LTC))) ∧ ((Tag e2) ≠ 0))) ⇒ (e1 ≺ e2)`
 
 Here is an LLM's explanation of when sentence 4 will make a guarantee about two events, e1 and e2:
 
@@ -190,7 +194,8 @@ In summary, the sentence correctly guarantees that the RTI's receipt of a NET me
 ## Sentence 5
 
 Sentence 5 states:
-((((e1 is (Receiving LTC))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) + (largest delay of a connection going out of the federate of e1) < (Tag e2))) ∧ (((e2 is (Receiving PORT_ABS))) ∨ ((e2 is (Receiving TAGGED_MSG))))) ⇒ (e1 ≺ e2)
+
+`((((e1 is (Receiving LTC))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) + (largest delay of a connection going out of the federate of e1) < (Tag e2))) ∧ (((e2 is (Receiving PORT_ABS))) ∨ ((e2 is (Receiving TAGGED_MSG))))) ⇒ (e1 ≺ e2)`
 
 Here is an LLM's explanation of when sentence 5 will make a guarantee about two events, e1 and e2:
 
@@ -228,7 +233,8 @@ This logical structure ensures that federated programs behave in a predictable a
 ## Sentence 6
 
 Sentence 6 states:
-(((FIRST ((((e1 is (Sending TAG))) ∨ ((e1 is (Sending PTAG)))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) + (largest delay of a connection going out of the federate of e1) ≥ (Tag e2))))) ∧ ((((e2 is (Receiving PORT_ABS))) ∨ ((e2 is (Receiving TAGGED_MSG)))) ∧ (¬((Fed e2) has no upstream with delay ≤ (Tag e2))))) ⇒ (e1 ≺ e2)
+
+`(((FIRST ((((e1 is (Sending TAG))) ∨ ((e1 is (Sending PTAG)))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) + (largest delay of a connection going out of the federate of e1) ≥ (Tag e2))))) ∧ ((((e2 is (Receiving PORT_ABS))) ∨ ((e2 is (Receiving TAGGED_MSG)))) ∧ (¬((Fed e2) has no upstream with delay ≤ (Tag e2))))) ⇒ (e1 ≺ e2)`
 
 Here is an LLM's explanation of when sentence 6 will make a guarantee about two events, e1 and e2:
 
@@ -263,7 +269,8 @@ This guarantee makes sense because it ensures logical time progression and signa
 ## Sentence 7
 
 Sentence 7 states:
-(((((e1 is (Sending PTAG))) ∨ ((e1 is (Sending TAG)))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) < (Tag e2))) ∧ (((e2 is (Sending PTAG))) ∨ ((e2 is (Sending TAG))))) ⇒ (e1 ≺ e2)
+
+`(((((e1 is (Sending PTAG))) ∨ ((e1 is (Sending TAG)))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) < (Tag e2))) ∧ (((e2 is (Sending PTAG))) ∨ ((e2 is (Sending TAG))))) ⇒ (e1 ≺ e2)`
 
 Here is an LLM's explanation of when sentence 7 will make a guarantee about two events, e1 and e2:
 
@@ -297,7 +304,8 @@ The sentence provides a correct guarantee about the behavior of federated progra
 ## Sentence 8
 
 Sentence 8 states:
-((((e1 is (Sending PTAG))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) ≤ (Tag e2))) ∧ ((e2 is (Sending TAG)))) ⇒ (e1 ≺ e2)
+
+`((((e1 is (Sending PTAG))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) ≤ (Tag e2))) ∧ ((e2 is (Sending TAG)))) ⇒ (e1 ≺ e2)`
 
 Here is an LLM's explanation of when sentence 8 will make a guarantee about two events, e1 and e2:
 
@@ -332,7 +340,8 @@ The guarantee provided by the sentence is correct because of how PTAG and TAG me
 ## Sentence 9
 
 Sentence 9 states:
-(((FedwiseFIRST ((((e1 is (Receiving LTC))) ∧ ((Federate of e1 is upstream of federate of e2 via a zero-delay connection)) ∧ ((Tag e1) ≥ (Tag e2))) ∨ ((((e1 is (Sending TAG))) ∨ ((e1 is (Receiving NET))) ∨ ((e1 is (Sending STOP_GRN)))) ∧ ((Federate of e1 is upstream of federate of e2 via a zero-delay connection)) ∧ ((Tag e1) ≥ (Tag e2)))))) ∧ (((e2 is (Sending TAG))) ∧ ((Tag e2) ≠ 0))) ⇒ (e1 ≺ e2)
+
+`(((FedwiseFIRST ((((e1 is (Receiving LTC))) ∧ ((Federate of e1 is upstream of federate of e2 via a zero-delay connection)) ∧ ((Tag e1) ≥ (Tag e2))) ∨ ((((e1 is (Sending TAG))) ∨ ((e1 is (Receiving NET))) ∨ ((e1 is (Sending STOP_GRN)))) ∧ ((Federate of e1 is upstream of federate of e2 via a zero-delay connection)) ∧ ((Tag e1) ≥ (Tag e2)))))) ∧ (((e2 is (Sending TAG))) ∧ ((Tag e2) ≠ 0))) ⇒ (e1 ≺ e2)`
 
 Here is an LLM's explanation of when sentence 9 will make a guarantee about two events, e1 and e2:
 
@@ -342,12 +351,12 @@ To analyze the given sentence, let's break it down into its subexpressions and u
 
 1. **$e1$ is (Receiving LTC)**: This means $e1$ is an event where the RTI receives a Logical Tag Complete (LTC) message from a federate.
 2. **Federate of $e1$ is upstream of federate of $e2$ via a zero-delay connection**: The federate sending the message in $e1$ is directly connected to the federate involved in $e2$, and the connection has no logical delay.
-3. **$Tag e1 \geq Tag e2$**: The logical time (tag) associated with $e1$ is greater than or equal to the logical time (tag) associated with $e2$.
+3. **$\text{Tag} ( e1) \geq \text{Tag} (e2)$**: The logical time (tag) associated with $e1$ is greater than or equal to the logical time (tag) associated with $e2$.
 4. **$e1$ is (Sending TAG)**: $e1$ is an event where the RTI sends a Tag Advance Grant (TAG) message to a federate.
 5. **$e1$ is (Receiving NET)**: $e1$ is an event where the RTI receives a Next Event Tag (NET) message from a federate.
 6. **$e1$ is (Sending STOP_GRN)**: $e1$ is an event where the RTI sends a STOP Granted (STOP_GRN) message to a federate.
 7. **$e2$ is (Sending TAG)**: $e2$ is an event where the RTI sends a TAG message to a federate.
-8. **$Tag e2 \neq 0$**: The logical time (tag) associated with $e2$ is not zero.
+8. **$\text{Tag} ( e2) \neq 0$**: The logical time (tag) associated with $e2$ is not zero.
 
 ### Overall Condition for $e1 \prec e2$
 
@@ -371,7 +380,8 @@ This setup ensures that federated programs behave correctly with respect to logi
 ## Sentence 10
 
 Sentence 10 states:
-(((FIRST ((((e1 is (Sending PTAG))) ∧ ((Federate of e1 is upstream of federate of e2 via a zero-delay connection)) ∧ ((Tag e1) = (Tag e2))) ∨ ((((e1 is (Receiving NET))) ∨ ((e1 is (Sending STOP_GRN)))) ∧ ((Federate(e1) = Federate(e2)) ∨ ((Federate of e1 is directly upstream of federate of e2))) ∧ ((Tag e1) = (Tag e2)))))) ∧ (((e2 is (Sending PTAG))) ∧ ((Tag e2) ≠ 0))) ⇒ (e1 ≺ e2)
+
+`(((FIRST ((((e1 is (Sending PTAG))) ∧ ((Federate of e1 is upstream of federate of e2 via a zero-delay connection)) ∧ ((Tag e1) = (Tag e2))) ∨ ((((e1 is (Receiving NET))) ∨ ((e1 is (Sending STOP_GRN)))) ∧ ((Federate(e1) = Federate(e2)) ∨ ((Federate of e1 is directly upstream of federate of e2))) ∧ ((Tag e1) = (Tag e2)))))) ∧ (((e2 is (Sending PTAG))) ∧ ((Tag e2) ≠ 0))) ⇒ (e1 ≺ e2)`
 
 Here is an LLM's explanation of when sentence 10 will make a guarantee about two events, e1 and e2:
 
@@ -405,7 +415,8 @@ The sentence provides a correct guarantee about the behavior of federated progra
 ## Sentence 11
 
 Sentence 11 states:
-(((FIRST (((e1 is (Receiving PORT_ABS))) ∧ ((Federate of e1 is directly upstream of federate of e2)) ∧ ((Tag e1) = (Tag e2))))) ∧ ((e2 is (Sending PORT_ABS)))) ⇒ (e1 ≺ e2)
+
+`(((FIRST (((e1 is (Receiving PORT_ABS))) ∧ ((Federate of e1 is directly upstream of federate of e2)) ∧ ((Tag e1) = (Tag e2))))) ∧ ((e2 is (Sending PORT_ABS)))) ⇒ (e1 ≺ e2)`
 
 Here is an LLM's explanation of when sentence 11 will make a guarantee about two events, e1 and e2:
 
@@ -438,7 +449,8 @@ The guarantee provided by the sentence is correct because of how federated progr
 ## Sentence 12
 
 Sentence 12 states:
-(((FIRST (((e1 is (Receiving TAGGED_MSG))) ∧ ((Federate of e1 is directly upstream of federate of e2)) ∧ ((Tag e1) = (Tag e2))))) ∧ ((e2 is (Sending TAGGED_MSG)))) ⇒ (e1 ≺ e2)
+
+`(((FIRST (((e1 is (Receiving TAGGED_MSG))) ∧ ((Federate of e1 is directly upstream of federate of e2)) ∧ ((Tag e1) = (Tag e2))))) ∧ ((e2 is (Sending TAGGED_MSG)))) ⇒ (e1 ≺ e2)`
 
 Here is an LLM's explanation of when sentence 12 will make a guarantee about two events, e1 and e2:
 
@@ -473,7 +485,8 @@ The guarantee provided by the sentence is correct because it ensures the proper 
 ## Sentence 13
 
 Sentence 13 states:
-(((((e1 is (Receiving PORT_ABS))) ∨ ((e1 is (Receiving TAGGED_MSG)))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) ≤ (Tag e2))) ∧ (((e2 is (Receiving LTC))))) ⇒ (e1 ≺ e2)
+
+`(((((e1 is (Receiving PORT_ABS))) ∨ ((e1 is (Receiving TAGGED_MSG)))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) ≤ (Tag e2))) ∧ (((e2 is (Receiving LTC))))) ⇒ (e1 ≺ e2)`
 
 Here is an LLM's explanation of when sentence 13 will make a guarantee about two events, e1 and e2:
 
@@ -509,7 +522,8 @@ The sentence provides a correct guarantee about the behavior of federated progra
 ## Sentence 14
 
 Sentence 14 states:
-((((e1 is (Receiving FED_ID))) ∧ (Federate(e1) = Federate(e2))) ∧ ((e2 is (Sending ACK)))) ⇒ (e1 ≺ e2)
+
+`((((e1 is (Receiving FED_ID))) ∧ (Federate(e1) = Federate(e2))) ∧ ((e2 is (Sending ACK)))) ⇒ (e1 ≺ e2)`
 
 Here is an LLM's explanation of when sentence 14 will make a guarantee about two events, e1 and e2:
 
@@ -550,7 +564,8 @@ Since the ACK message is a response to the FED_ID message, it logically follows 
 ## Sentence 15
 
 Sentence 15 states:
-((((e1 is (Sending ACK))) ∧ (Federate(e1) = Federate(e2))) ∧ ((e2 is (Receiving TIMESTAMP)))) ⇒ (e1 ≺ e2)
+
+`((((e1 is (Sending ACK))) ∧ (Federate(e1) = Federate(e2))) ∧ ((e2 is (Receiving TIMESTAMP)))) ⇒ (e1 ≺ e2)`
 
 Here is an LLM's explanation of when sentence 15 will make a guarantee about two events, e1 and e2:
 
@@ -585,7 +600,8 @@ Given this sequence, it's clear why an ACK message (acknowledging the federate's
 ## Sentence 16
 
 Sentence 16 states:
-((((e1 is (Receiving TIMESTAMP))) ∧ (Federate(e1) = Federate(e2))) ∧ ((e2 is (Sending TIMESTAMP)))) ⇒ (e1 ≺ e2)
+
+`((((e1 is (Receiving TIMESTAMP))) ∧ (Federate(e1) = Federate(e2))) ∧ ((e2 is (Sending TIMESTAMP)))) ⇒ (e1 ≺ e2)`
 
 Here is an LLM's explanation of when sentence 16 will make a guarantee about two events, e1 and e2:
 
@@ -620,7 +636,8 @@ The guarantee provided by the sentence is correct because of the logical sequenc
 ## Sentence 17
 
 Sentence 17 states:
-((((e1 is (Sending TIMESTAMP))) ∧ (Federate(e1) = Federate(e2))) ∧ (((e2 is (Receiving NET))) ∧ (¬((Tag e2) ≠ 0)))) ⇒ (e1 ≺ e2)
+
+`((((e1 is (Sending TIMESTAMP))) ∧ (Federate(e1) = Federate(e2))) ∧ (((e2 is (Receiving NET))) ∧ (¬((Tag e2) ≠ 0)))) ⇒ (e1 ≺ e2)`
 
 Here is an LLM's explanation of when sentence 17 will make a guarantee about two events, e1 and e2:
 
@@ -653,7 +670,8 @@ Since TIMESTAMP is related to initialization and must logically precede operatio
 ## Sentence 18
 
 Sentence 18 states:
-((((e1 is (Receiving TIMESTAMP)))) ∧ (((e2 is (Receiving LTC))) ∨ ((e2 is (Receiving PORT_ABS))) ∨ ((e2 is (Receiving TAGGED_MSG))) ∨ ((e2 is (Sending TAG))) ∨ ((e2 is (Sending PTAG))) ∨ ((e2 is (Sending PORT_ABS))) ∨ ((e2 is (Sending TAGGED_MSG))) ∨ ((e2 is (Sending STOP_GRN))) ∨ ((e2 is (Sending STOP_REQ))) ∨ ((e2 is (Receiving STOP_REQ))) ∨ ((e2 is (Receiving STOP_REQ_REP))))) ⇒ (e1 ≺ e2)
+
+`((((e1 is (Receiving TIMESTAMP)))) ∧ (((e2 is (Receiving LTC))) ∨ ((e2 is (Receiving PORT_ABS))) ∨ ((e2 is (Receiving TAGGED_MSG))) ∨ ((e2 is (Sending TAG))) ∨ ((e2 is (Sending PTAG))) ∨ ((e2 is (Sending PORT_ABS))) ∨ ((e2 is (Sending TAGGED_MSG))) ∨ ((e2 is (Sending STOP_GRN))) ∨ ((e2 is (Sending STOP_REQ))) ∨ ((e2 is (Receiving STOP_REQ))) ∨ ((e2 is (Receiving STOP_REQ_REP))))) ⇒ (e1 ≺ e2)`
 
 Here is an LLM's explanation of when sentence 18 will make a guarantee about two events, e1 and e2:
 

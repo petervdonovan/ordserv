@@ -125,7 +125,9 @@ def repair_latex(text):
     # Iterate through matches and escape underscores inside \text{} macros
     for match in matches:
         text_inside_macro = match.group(1)
-        repaired_text_inside_macro = text_inside_macro.replace("_", r"\_")
+        repaired_text_inside_macro = text_inside_macro.replace("_", r"\_").replace(
+            r"\\_", r"\_"
+        )
         repaired_macro = f"\\text{{{repaired_text_inside_macro}}}"
         text = text.replace(match.group(0), repaired_macro)
 
@@ -148,7 +150,7 @@ print()
 print(syntax_explanation)
 for i, axiom in enumerate(axioms, start=1):
     print(f"## Sentence {i}\n")
-    print(f"Sentence {i} states:\n{axiom}\n")
+    print(f"Sentence {i} states:\n`{axiom}`\n")
     # print(
     #     f"Here is the LLM's high-level explanation of why the proposition makes sense:"
     # )
