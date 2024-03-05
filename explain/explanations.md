@@ -8,6 +8,10 @@ Federates have ports. Different federates are connected to each other via their 
 
 The RTI ensures that if a federate A sends a signal to a federate B that logically reaches federate B at time $T'$, federate B will not execute anything at a tag later than $T'$ before it receives the signal. Furthermore, before federate B receives the signal, federate B can only execute things at the tag $T'$ that are statically guaranteed not to be affected by the signal. When federate B violates these rules by executing something too early, we call that an STP violation.
 
+In addition to preventing STP violations, the RTI must prevent deadlocks by allowing federates to proceed forward to logical times when they have events to process.
+
+The RTI can be described as receiving information from federates, possibly aggregating it into information about the current state of the system, and then propagating the information in such a way that federates can proceed without STP violations.
+
 To ensure that messages arrive in the right order, even messages that conceptually should go from federate to federate go through the RTI. For example, PORT_ABS and TAGGED_MSG messages are sent from an upstream federate to the RTI, and then from the RTI to the downstream federate. However, most messages simply go from a federate to the RTI or from the RTI to a federate, and do not directly correspond to any federate-to-federate communication. For example, federates do not send TAG or PTAG messages; instead, they only receive such messages from the RTI, because it is up to the RTI, not the federates, to control federates' time advancement.
 
 The RTI also coordinates program initialization and shutdown.
@@ -53,10 +57,10 @@ To analyze the given sentence, we'll break it down into its subexpressions and e
 
 ### Subexpressions and Their Conditions
 
-1. $e1$ is $Receiving\ LTC$: This is true if $e1$ is an event where the RTI receives an LTC (Logical Tag Complete) message from a federate.
+1. $e1$ is $\text{Receiving LTC}$: This is true if $e1$ is an event where the RTI receives an LTC (Logical Tag Complete) message from a federate.
 2. $Federate(e1) = Federate(e2)$: This is true if both $e1$ and $e2$ involve the same federate.
-3. $\text{Tag} (\) e1 < Tag\ e2$: This is true if the logical tag associated with $e1$ is less than the logical tag associated with $e2$.
-4. $e2$ is $Receiving\ LTC$: This is true if $e2$ is an event where the RTI receives an LTC message from a federate.
+3. $\text{Tag} ( e1) < Tag( e2)$: This is true if the logical tag associated with $e1$ is less than the logical tag associated with $e2$.
+4. $e2$ is $\text{Receiving LTC}$: This is true if $e2$ is an event where the RTI receives an LTC message from a federate.
 
 ### Synthesis for Guarantee
 
@@ -88,7 +92,7 @@ To analyze the given sentence, let's break down its components and understand th
 2. **$e1$ is (Receiving LTC)**: True if $e1$ is an event where the RTI receives an LTC message from a federate.
 3. **$e1$ is (Receiving NET)**: True if $e1$ is an event where the RTI receives a NET message from a federate.
 4. **$e1$ is (Sending TAGGED_MSG)**: True if $e1$ is an event where the RTI sends a TAGGED_MSG to a federate.
-5. **$\text{Tag} ( e1)) = (Tag e2)$**: True if the logical tags associated with events $e1$ and $e2$ are equal.
+5. **$\text{Tag} ( e1)) = \text{Tag} (e2)$**: True if the logical tags associated with events $e1$ and $e2$ are equal.
 6. **$(Tag e1) \text{ finite}$**: True if the logical tag of $e1$ is a finite number.
 7. **$(Tag e1) \neq 0$**: True if the logical tag of $e1$ is not zero.
 8. **$e2$ is (Sending TAG)**: True if $e2$ is an event where the RTI sends a TAG message to a federate.
