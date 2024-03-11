@@ -263,7 +263,7 @@ def do_query(
     return answer
 
 
-def prune_between_axioms(c: Messages) -> Messages:
+def prune_detailed_syntactic_explanations(c: Messages) -> Messages:
     return [m for m in c if m["kind"] != "pedantic"]
 
 
@@ -296,8 +296,8 @@ print(
 )
 
 t0 = time.time()
-conversation: Messages = start_conversation()
 for i, axiom in enumerate(axioms, start=1):
+    conversation: Messages = start_conversation()
     print(f"## Formula {i}\n")
     print(f"Formula {i} states:\n```\n{format_sexpression(axiom)}```\n")
     print(f"### In-depth syntactic explanation")
@@ -308,7 +308,7 @@ for i, axiom in enumerate(axioms, start=1):
     answer, conversation = get_whole_formula_explanation(conversation, axiom)
     print(answer)
     print_time()
-    conversation = prune_between_axioms(conversation)
+    conversation = prune_detailed_syntactic_explanations(conversation)
     print(f"### High-level justification\n")
     # print(
     #     "_Warning: The following text is a response to an especially complex question and is therefore likely to contain conceptual mistakes._\n"
