@@ -14,6 +14,7 @@ def repair_latex(text: str) -> str:
 
     # Iterate through matches and escape underscores inside \text{} macros
     for match in matches:
+        print(f"match: {match}")
         text_inside_macro = match.group(1)
         repaired_text_inside_macro = text_inside_macro.replace("_", r"\_").replace(
             r"\\_", r"\_"
@@ -24,10 +25,19 @@ def repair_latex(text: str) -> str:
     return text
 
 
+print(
+    repair_latex(
+        r"""$
+$
+\left(\left(\text{FIRST} \left(\left(\left(e_1 \text{ is } \left(\text{Sending TAG}\right)\right) \lor \left(e_1 \text{ is } \left(\text{Sending PTAG}\right)\right)\right) \land \left(\text{Federate}\left(e_1\right) = \text{Federate}\left(e_2\right)\right) \land \left(\text{Tag}\left(e_1\right) + \left(\text{largest delay of a connection going out of the federate of } e_1\right) \geq \text{Tag}\left(e_2\right)\right)\right)\right) \land \left(\left(\left(e_2 \text{ is } \left(\text{Receiving PORT\_ABS}\right)\right) \lor \left(e_2 \text{ is } \left(\text{Receiving TAGGED_MSG}\right)\right)\right) \land \neg\left(\left(\text{Fed}\left(e_2\right) \text{ has no upstream with delay } \leq \text{Tag}\left(e_2\right)\right)\right)\right)\right) \Rightarrow \left(e_1 \prec e_2\right)
+$
+"""
+    )
+)
+
+
 def format_llm_output(s: str, min_heading_depth=4) -> str:
-    ret = "  " + s.replace("\n", "\n  ").replace("\(", "$").replace("\)", "$").replace(
-        "\[", "$"
-    ).replace("\]", "$")
+    ret = s.replace("\(", "$").replace("\)", "$").replace("\[", "$").replace("\]", "$")
     for depth in range(1, min_heading_depth):
         ret = ret.replace(
             "\n" + "#" * depth + " ", "\n" + "#" * min_heading_depth + " "

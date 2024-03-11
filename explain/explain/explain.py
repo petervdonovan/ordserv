@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import sys
+import pickle
 from typing import Any, Iterable, Literal, TypedDict
 from openai import OpenAI
 from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
@@ -10,6 +11,8 @@ from explain.stringmanip import (
     repair_axiom,
     format_llm_output,
 )
+
+import time
 
 client = OpenAI()
 
@@ -36,7 +39,7 @@ Throughout, $e_1$ and $e_2$ will denote events occurring in a process called the
 
 Federates have ports. Different federates are connected to each other via their ports, possibly using multiple connections, and every connection has a nonnegative logical delay associated with it. If a connection goes from federate $A$ to federate $B$, and the delay associated with that connection is $D$, then that means that when federate A is executing some tag $T$, it is possible for federate A to send a signal that logically reaches federate B at tag $T' := T + D$.
 
-The RTI ensures that if a federate A sends a signal to a federate B that logically reaches federate B at time $T'$, federate B will not execute anything at a tag later than $T'$ before it receives the signal. Furthermore, before federate B receives the signal, federate B can only execute things at the tag $T'$ that are statically guaranteed not to be affected by the signal. When federate B violates these rules by executing something too early, we call that an STP violation.
+The RTI ensures that if a federate A sends a signal to a federate B that logically reaches federate B at time $T'$, federate B will not execute anything at a tag later than $T'$ before it receives the signal. Furthermore, before federate B receives the signal, federate B can only execute things at the tag $T'$ that are statically guaranteed not to be affected by the signal. When federate B violates these rules by executing something too early, we call that an STP (safe-to-process) violation.
 
 In addition to preventing STP violations, the RTI must prevent deadlocks by allowing federates to proceed forward to logical times when they may have events to process.
 
@@ -69,7 +72,7 @@ TAGGED_MSG messages that are received from an upstream federate while the upstre
 syntax_explanation = """
 `e_1 ≺ e_2` means that it is not possible, under any physical, real-life execution of the federated program, for `e_1` to occur after `e_2`.
 
-Sentences are stated in an S-expression-like format. For example, where we write `(f e_1)`, we mean "f of $e_1$".
+Formulas are stated in an S-expression-like format. For example, where we write `(f e_1)`, we mean "f of $e_1$".
 
 All events are described from the perspective of the RTI. For example, where we write `(e_1 is (Receiving PORT_ABS))`, we mean that $e_1$ is an event in which the RTI receives a PORT_ABS message from a federate; in other words, the federate informed the RTI about when a port is going to be absent. Similarly, where we write `((e_1 is (Sending PORT_ABS)))`, we mean that `e_1` is an event in which the RTI is sending a PORT_ABS to a federate; in other words, the RTI is informing the federate about when one of the ports of that federate is going to be absent.
 
@@ -85,23 +88,24 @@ context = f"""
 
 {syntax_explanation}
 """
-# Process the sentence in a post-order traversal that recurses down to the atomic formulas and finishes with the entire sentence. In the post-order traversal, a node is a formula (which may be true or false depending on $e_1$ and $e_2$). When you visit a node/formula, state the conditions under which the formula is true.
 
 subformulas_prompt = """
-Break the sentence down into its sub-formulas to analyze when its subformulas are true. Start by stating when the atomic sub-formulas are true and progress up to larger formulas using the logical operators. Logical operators include the binary operators `∧`, `∨`, and `⇒`, as well as the unary operators `¬`, `FIRST`, and `FedwiseFIRST`. Remember to address the subformula that results from each application of an operator, including the FIRST or FedwiseFIRST operators, and be extra careful when you address the subexpressions that result from FIRST or FedwiseFIRST operators.
+Break the formula down into its sub-formulas to analyze when its sub-formulas are true. Start by stating when the atomic sub-formulas are true; then, state when the larger sub-formulas that are constructed from the atomic sub-formulas are true, and then state when the sub-formulas constructed from those larger sub-formulas are true, and so on, until you have stated when even the largest sub-formulas are true. Logical operators include the binary operators `∧`, `∨`, and `⇒`, as well as the unary operators `¬`, `FIRST`, and `FedwiseFIRST`. Remember to address the subformula that results from each application of an operator, including the FIRST or FedwiseFIRST operators, and be extra careful when you address the subexpressions that result from FIRST or FedwiseFIRST operators.
 
-Use LaTeX where appropriate. Don't provide any extra explanation, and stop short of discussing the meaning of the whole sentence.
+Use LaTeX where appropriate. Stop short of discussing the meaning of the whole formula, but do provide a self-contained explanation of when each sub-formula is true, even if that means restating facts about some of the smaller sub-formulas.
 """
 # If there are expressions of the form `(FIRST X)` or `(FedwiseFIRST X)` for some predicate $X$, don't forget to explain those subexpressions, too.
 
 
-# It is guaranteed that the sentence given above is always true. That is, for all events $e_1$ and $e_2$ satisfy the antecedent of the implication, $e_1$ is guaranteed to occur before $e_2$ whenever both occur in the execution of a federated program.
+# It is guaranteed that the formula given above is always true. That is, for all events $e_1$ and $e_2$ satisfy the antecedent of the implication, $e_1$ is guaranteed to occur before $e_2$ whenever both occur in the execution of a federated program.
 whole_formula_prompt = """
-Use your analysis of the sentence to carefully state what would need to be true about $e_1$ and $e_2$ in order for the sentence to guarantee that in any execution of the program where $e_1$ and $e_2$ both happen in the RTI, $e_1$ must occur before $e_2$. Remember, the sentence makes this guarantee when $e_1$ and $e_2$ satisfy the antecedent of the implication.
+Use your analysis of the formula to carefully state what would need to be true about $e_1$ and $e_2$ in order for the formula to guarantee that in any execution of the program where $e_1$ and $e_2$ both happen in the RTI, $e_1$ must occur before $e_2$. Remember, the formula makes this guarantee when $e_1$ and $e_2$ satisfy the antecedent of the implication.
+
+Don't include extraneous information about what you think is important. Don't try to relate the formula to any broader themes. Please just answer the question.
 """
 
 rationale_prompt = """
-Use the meaning of the messages and the rules that the RTI and the federates have to follow to briefly describe why we should expect the sentence to provide a correct guarantee about the behavior of federated programs.
+Use the meaning of the messages and the rules that the RTI and the federates have to follow to explain why we should expect the formula to provide a correct guarantee about the behavior of federated programs. Do not write more than a short paragraph.
 """
 
 # Either state this expectation in terms of a causal relationship, or explain why we need it to be true in order for the federated program to comply with its basic rules of operation.
@@ -111,7 +115,7 @@ def start_conversation() -> Messages:
     ret: list[ChatCompletionMessageParam] = [
         {
             "role": "system",
-            "content": "You are good at getting straight to the point.",
+            "content": "You are good at getting straight to the point and focusing on facts.",
         },
         {
             "role": "user",
@@ -143,7 +147,7 @@ def get_subformulas_explanation(messages: Messages, axiom: str) -> tuple[str, Me
         "message": {
             "role": "user",
             "content": f"""
-Consider the following sentence:
+Consider the following formula:
 
 {repair_axiom(axiom)}
 
@@ -213,6 +217,7 @@ def get_rationale_explanation(messages: Messages, _axiom: str) -> tuple[str, Mes
 
 
 def do_query(messages: Messages, temperature: float) -> str:
+    global raw_answers
     llm_messages = [message["message"] for message in messages]
     answer: str | None
     if dry_run:
@@ -228,9 +233,18 @@ def do_query(messages: Messages, temperature: float) -> str:
         if answer is None:
             raise RuntimeError("did not get an answer from the LLM")
     answer = format_llm_output(answer)
+    raw_answers += [answer]
 
     return answer
 
+
+def print_time():
+    global t0
+    print(f"\n\n(This answer was generated in {round(time.time() - t0)} seconds.)\n")
+    t0 = time.time()
+
+
+raw_answers: list[str] = []
 
 dry_run = len(sys.argv) > 1
 if dry_run:
@@ -246,15 +260,24 @@ print("## Preliminary Syntax Explanation")
 print()
 print(syntax_explanation)
 conversation: Messages = start_conversation()
+t0 = time.time()
 for i, axiom in enumerate(axioms[5:6], start=1):
-    print(f"## Sentence {i}\n")
-    print(f"Sentence {i} states:\n`{format_sexpression(axiom)}`\n")
+    print(f"## Formula {i}\n")
+    print(f"Formula {i} states:\n`{format_sexpression(axiom)}`\n")
     print(f"### In-depth syntactic explanation")
     answer, conversation = get_subformulas_explanation(conversation, axiom)
     print(answer)
-    print(f"### Summary of the meaning of sentence {i}")
+    print_time()
+    print(f"### Summary of the meaning of formula {i}")
     answer, conversation = get_whole_formula_explanation(conversation, axiom)
-    # TODO
+    print(answer)
+    print_time()
     print(f"### High-level justification")
+    answer, conversation = get_rationale_explanation(conversation, axiom)
+    print(answer)
+    print_time()
     # TODO
     print("\n")
+
+with open("raw_answers_temp.pkl", "wb") as f:
+    pickle.dump(raw_answers, f, pickle.HIGHEST_PROTOCOL)
