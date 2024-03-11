@@ -90,6 +90,8 @@ context = f"""
 """
 # Logical operators include the binary operators `∧`, `∨`, and `⇒`, as well as the unary operators `¬`, `FIRST`, and `FedwiseFIRST`. Remember to address the subformula that results from each application of an operator, including the FIRST or FedwiseFIRST operators, and be extra careful when you address the subexpressions that result from FIRST or FedwiseFIRST operators.
 subformulas_prompt = r"""
+The above logical implication is a formula whose free variables, $e_1$ and $e_2$, denote events occurring in the RTI.
+
 Break the antecedent of the above implication down into its sub-formulas to analyze when its sub-formulas are true. Start by stating when the atomic sub-formulas are true; then, state when the larger sub-formulas that are constructed from the atomic sub-formulas are true, and then state when the sub-formulas constructed from those larger sub-formulas are true, and so on, until you have stated when even the largest sub-formulas are true.
 
 Remember, every use of the binary operators `∧`, `∨`, and `⇒`, as well as the unary operators `¬`, `first e1 satisfying`, and `first e1 in a given federate satisfying`, corresponds to a sub-formula. For instance, a sub-formula of the form `((...) ∧ (...) ∧ (...))` represents one use of the operator `∧`. Similarly, a sub-formula of the form `(first e1 in a given federate satisfying (...))` represents a use of the operator `first e1 in a given federate satisfying`.
@@ -111,8 +113,10 @@ Use LaTeX where appropriate. Provide a detailed, self-contained explanation of w
 
 
 # It is guaranteed that the formula given above is always true. That is, for all events $e_1$ and $e_2$ satisfy the antecedent of the implication, $e_1$ is guaranteed to occur before $e_2$ whenever both occur in the execution of a federated program.
+# Use your analysis of the formula to carefully state what would need to be true about $e_1$ and $e_2$ in order for the formula to guarantee that in any physical, real-life execution of the program where $e_1$ and $e_2$ both happen in the RTI, $e_1$ must occur before $e_2$ in physical time. Remember, the formula makes this guarantee when $e_1$ and $e_2$ satisfy the antecedent of the implication.
+
 whole_formula_prompt = """
-Use your analysis of the formula to carefully state what would need to be true about $e_1$ and $e_2$ in order for the formula to guarantee that in any physical, real-life execution of the program where $e_1$ and $e_2$ both happen in the RTI, $e_1$ must occur before $e_2$ in physical time. Remember, the formula makes this guarantee when $e_1$ and $e_2$ satisfy the antecedent of the implication.
+We guarantee that the formula given above is true for all $e_1$ and $e_2$. Explain what this guarantee means.
 
 Don't ignore how operators like `first e1 satisfying` affect the meaning of the formula. Remember that "sending" means that the RTI is sending a message whereas a federate is receiving the message, and remember that "receiving" means that the RTI is receiving a message whereas a federate is sending the message. Don't leave any ambiguity about which entity is sending or receiving a given message.
 
@@ -120,9 +124,9 @@ Don't include extraneous information about what you think is important. Don't tr
 """
 
 rationale_prompt = """
-Use the meaning of the messages and the rules that the RTI and the federates have to follow to explain why we should expect the formula to provide a correct guarantee about the behavior of federated programs.
+Use the meaning of the messages and the rules that the RTI and the federates have to follow to explain why we should expect this guarantee to be correct.
 
-Remember that "sending" means that the RTI is sending a message whereas a federate is receiving the message, and remember that "receiving" means that the RTI is receiving a message whereas a federate is sending the message. Do not write more than a short paragraph.
+Remember that "sending" means that the RTI is sending a message whereas a federate is receiving the message, and remember that "receiving" means that the RTI is receiving a message whereas a federate is sending the message. Also remember that the ordering guarantee ≺ describes the ordering of real-world events, not simulated events; they are implementation details of a distributed system that has to behave in a manner that is consistent with an abstract model that involves logical time. Do not write more than a short paragraph.
 """
 
 # Either state this expectation in terms of a causal relationship, or explain why we need it to be true in order for the federated program to comply with its basic rules of operation.
@@ -259,6 +263,10 @@ def do_query(
     return answer
 
 
+def prune_between_axioms(c: Messages) -> Messages:
+    return [m for m in c if m["kind"] != "pedantic"]
+
+
 def print_time():
     global t0
     print(f"\n\n(This answer was generated in {round(time.time() - t0)} seconds.)\n")
@@ -280,9 +288,9 @@ print()
 print("## Preliminary Syntax Explanation")
 print()
 print(syntax_explanation)
-conversation: Messages = start_conversation()
 t0 = time.time()
-for i, axiom in enumerate(axioms[5:6], start=1):
+for i, axiom in enumerate(axioms[3:5], start=1):
+    conversation: Messages = start_conversation()
     print(f"## Formula {i}\n")
     print(f"Formula {i} states:\n`{format_sexpression(axiom)}`\n")
     print(f"### In-depth syntactic explanation")
@@ -293,11 +301,11 @@ for i, axiom in enumerate(axioms[5:6], start=1):
     answer, conversation = get_whole_formula_explanation(conversation, axiom)
     print(answer)
     print_time()
+    conversation = prune_between_axioms(conversation)
     print(f"### High-level justification")
     answer, conversation = get_rationale_explanation(conversation, axiom)
     print(answer)
     print_time()
-    # TODO
     print("\n")
 
 with open("raw_answers_temp.pkl", "wb") as f:
