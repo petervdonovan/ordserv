@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from typing import Callable
+from typing import Any, Callable, Iterable, Literal, TypedDict
 from openai import OpenAI
 from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
 
@@ -8,6 +8,15 @@ import subprocess
 import re
 
 client = OpenAI()
+
+Message = TypedDict(
+    "Message",
+    {
+        "kind": Literal["context", "pedantic", "explain", "high-level explain"],
+        "message": ChatCompletionMessageParam,
+    },
+)
+Messages = list[Message]
 
 axioms = (
     subprocess.check_output(["cargo", "run", "--example", "print_axioms"], cwd="..")
@@ -75,7 +84,7 @@ context = f"""
 # Process the sentence in a post-order traversal that recurses down to the atomic formulas and finishes with the entire sentence. In the post-order traversal, a node is a formula (which may be true or false depending on $e_1$ and $e_2$). When you visit a node/formula, state the conditions under which the formula is true.
 
 subformulas_prompt = """
-Break the sentence down into its sub-formulas to analyze when its subformulas are true. Start by stating when the atomic sub-formulas are true and progress up to larger formulas using the logical operators. Logical operators include the binary operators `∧`, `∨`, and `⇒`, as well as the unary operators `¬`, `FIRST`, and `FedwiseFIRST`. Remember to address the subformula that results from each application of an operator, including the FIRST or FedwiseFIRST operators.
+Break the sentence down into its sub-formulas to analyze when its subformulas are true. Start by stating when the atomic sub-formulas are true and progress up to larger formulas using the logical operators. Logical operators include the binary operators `∧`, `∨`, and `⇒`, as well as the unary operators `¬`, `FIRST`, and `FedwiseFIRST`. Remember to address the subformula that results from each application of an operator, including the FIRST or FedwiseFIRST operators, and be extra careful when you address the subexpressions that result from FIRST or FedwiseFIRST operators.
 
 Use LaTeX where appropriate. Don't provide any extra explanation, and stop short of discussing the meaning of the whole sentence.
 """
@@ -94,18 +103,8 @@ Use the meaning of the messages and the rules that the RTI and the federates hav
 # Either state this expectation in terms of a causal relationship, or explain why we need it to be true in order for the federated program to comply with its basic rules of operation.
 
 
-def get_explanation(
-    axiom: str,
-) -> tuple[str, Callable[[str], list[ChatCompletionMessageParam]]]:
-    main_question = f"""
-
-Consider the following sentence:
-
-{repair_axiom(axiom)}
-
-{subformulas_prompt}
-"""
-    messages: list[ChatCompletionMessageParam] = [
+def start_conversation() -> Messages:
+    ret: list[ChatCompletionMessageParam] = [
         {
             "role": "system",
             "content": "You are good at getting straight to the point.",
@@ -114,33 +113,64 @@ Consider the following sentence:
             "role": "user",
             "content": context,
         },
-        {
-            "role": "user",
-            "content": main_question,
-        },
     ]
-    print(messages)  # DEBUG
-    answer: str | None = (
-        client.chat.completions.create(
-            model="gpt-4-0125-preview",
-            messages=messages,
-            temperature=0.1,  # 0.3 has been recommended for code comment generation, which is kind of like what we are doing here. However, it is not clear how much performance actually depends on temperature for this use case.
-        )
-        .choices[0]
-        .message.content
-    )
+    return [{"kind": "context", "message": message} for message in ret]
+
+
+def debug_conversation(conversation: list[ChatCompletionMessageParam]) -> str:
+    ret = ""
+    for message in conversation:
+        role = message["role"].replace("\n", "\n  ")
+        ret += f"\nROLE: {role}\n"
+        content: str | None | Iterable[Any] = message["content"]
+        if content is None:
+            continue
+        if type(content) is str:
+            content = content.replace("\n", "\n  ")
+            ret += f"MESSAGE: {content}\n"
+        else:
+            ret += f"MESSAGE: {content}"
+    return ret.replace("\n", "\n | ")
+
+
+def get_explanation(
+    messages: Messages,
+    axiom: str,
+) -> tuple[str, Messages]:
+    question: Message = {
+        "kind": "pedantic",
+        "message": {
+            "role": "user",
+            "content": f"""
+Consider the following sentence:
+
+{repair_axiom(axiom)}
+
+{subformulas_prompt}
+""",
+        },
+    }
+    messages = messages + [question]
+    llm_messages = [message["message"] for message in messages]
+    print(debug_conversation(llm_messages))  # DEBUG
+    reply = client.chat.completions.create(
+        model="gpt-4-0125-preview",
+        messages=llm_messages,
+        temperature=0.1,  # 0.3 has been recommended for code comment generation, which is kind of like what we are doing here. However, it is not clear how much performance actually depends on temperature for this use case.
+    ).choices[0]
+    answer: str | None = reply.message.content
     if answer is None:
         raise RuntimeError("did not get an answer from the LLM")
     print(answer)
     print()
     answer = format_llm_output(answer)
 
-    def get_next(question: str) -> list[ChatCompletionMessageParam]:
-        return messages + [{"role": "assistant"}, {"role": "user", "content": question}]
-
     return (
         answer,
-        get_next,
+        messages
+        + [
+            {"kind": "pedantic", "message": {"role": "assistant", "content": answer}},
+        ],
     )
 
 
@@ -188,11 +218,12 @@ print()
 print("## Preliminary Syntax Explanation")
 print()
 print(syntax_explanation)
+conversation: Messages = start_conversation()
 for i, axiom in enumerate(axioms[5:6], start=1):
     print(f"## Sentence {i}\n")
     print(f"Sentence {i} states:\n`{axiom}`\n")
     print(f"### In-depth syntactic explanation")
-    answer, conversation = get_explanation(axiom)
+    answer, conversation = get_explanation(conversation, axiom)
     print(answer)
     print(f"### Summary of the meaning of sentence {i}")
     # TODO
