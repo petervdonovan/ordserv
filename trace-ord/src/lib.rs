@@ -246,8 +246,8 @@ where
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Nary::Atom(atom) => write!(f, "{}", atom),
-            Nary::IsFirst(relation) => write!(f, "(first eXXX satisfying ({}))", relation),
-            Nary::IsFirstForFederate(relation) => write!(f, "(first eXXX in a given federate satisfying ({}))", relation),
+            Nary::IsFirst(relation) => write!(f, "(eXXX is the first event satisfying (λ eXXX . {}))", relation),
+            Nary::IsFirstForFederate(relation) => write!(f, "(eXXX is the first event in a given federate satisfying (λ eXXX . {}))", relation),
             Nary::And(relations) => {
                 write!(f, "({})", relations[0])?;
                 for relation in &relations[1..] {
