@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-
+import sys
 from typing import Any, Iterable, Literal, TypedDict
 from openai import OpenAI
 from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
@@ -137,10 +137,7 @@ def debug_conversation(conversation: list[ChatCompletionMessageParam]) -> str:
     return ret.replace("\n", "\n | ")
 
 
-def get_explanation(
-    messages: Messages,
-    axiom: str,
-) -> tuple[str, Messages]:
+def get_subformulas_explanation(messages: Messages, axiom: str) -> tuple[str, Messages]:
     question: Message = {
         "kind": "pedantic",
         "message": {
@@ -155,24 +152,7 @@ Consider the following sentence:
         },
     }
     messages = messages + [question]
-    llm_messages = [message["message"] for message in messages]
-    print(debug_conversation(llm_messages))  # DEBUG
-    answer: str | None
-    if dry_run:
-        answer = "<LLM answer here>"
-    else:
-        reply = client.chat.completions.create(
-            model="gpt-4-0125-preview",
-            messages=llm_messages,
-            temperature=0.1,  # 0.3 has been recommended for code comment generation, which is kind of like what we are doing here. However, it is not clear how much performance actually depends on temperature for this use case.
-        ).choices[0]
-        answer = reply.message.content
-        if answer is None:
-            raise RuntimeError("did not get an answer from the LLM")
-    print(answer)
-    print()
-    answer = format_llm_output(answer)
-
+    answer = do_query(messages, 0.1)
     return (
         answer,
         messages
@@ -182,8 +162,79 @@ Consider the following sentence:
     )
 
 
-dry_run = False
+def get_whole_formula_explanation(
+    messages: Messages, _axiom: str
+) -> tuple[str, Messages]:
+    question: Message = {
+        "kind": "explain",
+        "message": {
+            "role": "user",
+            "content": f"""
+{whole_formula_prompt}
+""",
+        },
+    }
+    messages = messages + [question]
+    answer = do_query(messages, 0.3)
+    return (
+        answer,
+        messages
+        + [
+            {
+                "kind": "explain",
+                "message": {"role": "assistant", "content": answer},
+            }
+        ],
+    )
 
+
+def get_rationale_explanation(messages: Messages, _axiom: str) -> tuple[str, Messages]:
+    question: Message = {
+        "kind": "high-level explain",
+        "message": {
+            "role": "user",
+            "content": f"""
+{rationale_prompt}
+""",
+        },
+    }
+    messages = messages + [question]
+    answer = do_query(messages, 0.3)
+    return (
+        answer,
+        messages
+        + [
+            {
+                "kind": "explain",
+                "message": {"role": "assistant", "content": answer},
+            }
+        ],
+    )
+
+
+def do_query(messages: Messages, temperature: float) -> str:
+    llm_messages = [message["message"] for message in messages]
+    answer: str | None
+    if dry_run:
+        print(debug_conversation(llm_messages))  # DEBUG
+        answer = "<LLM answer here>"
+    else:
+        reply = client.chat.completions.create(
+            model="gpt-4-0125-preview",
+            messages=llm_messages,
+            temperature=temperature,  # 0.3 has been recommended for code comment generation, which is kind of like what we are doing here. However, it is not clear how much performance actually depends on temperature for this use case.
+        ).choices[0]
+        answer = reply.message.content
+        if answer is None:
+            raise RuntimeError("did not get an answer from the LLM")
+    answer = format_llm_output(answer)
+
+    return answer
+
+
+dry_run = len(sys.argv) > 1
+if dry_run:
+    print("\n\ndoing a dry run because an argument was passed.\n\n\n")
 # axioms_sorted = sorted(axioms, key=lambda x: -len(x))
 
 
@@ -199,9 +250,10 @@ for i, axiom in enumerate(axioms[5:6], start=1):
     print(f"## Sentence {i}\n")
     print(f"Sentence {i} states:\n`{format_sexpression(axiom)}`\n")
     print(f"### In-depth syntactic explanation")
-    answer, conversation = get_explanation(conversation, axiom)
+    answer, conversation = get_subformulas_explanation(conversation, axiom)
     print(answer)
     print(f"### Summary of the meaning of sentence {i}")
+    answer, conversation = get_whole_formula_explanation(conversation, axiom)
     # TODO
     print(f"### High-level justification")
     # TODO
