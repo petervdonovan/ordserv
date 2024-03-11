@@ -2,13 +2,13 @@
 
 A Tag is basically like a logical time, so it makes sense to add a logical delay to a Tag.
 
-Throughout, e1 and e2 will denote events occurring in a process called the RTI. Every event involves the RTI either sending a message to a federate, or receiving a message from a federate. So, if Federate(e1) = f, then that means that e1 is an event in which the RTI either sends a message to f or receives a message from f.
+Throughout, $e_1$ and $e_2$ will denote events occurring in a process called the RTI. Every event involves the RTI either sending a message to a federate, or receiving a message from a federate. So, if Federate($e_1$) = f, then that means that $e_1$ is an event in which the RTI either sends a message to f or receives a message from f.
 
-Federates have ports. Different federates are connected to each other via their ports, possibly using multiple connections, and every connection has a logical delay associated with it. If a connection goes from federate $A$ to federate $B$, and the delay associated with that connection is $D$, then that means that when federate A is executing some tag $T$, it is possible for federate A to send a signal that logically reaches federate B at tag $T' := T + D$.
+Federates have ports. Different federates are connected to each other via their ports, possibly using multiple connections, and every connection has a nonnegative logical delay associated with it. If a connection goes from federate $A$ to federate $B$, and the delay associated with that connection is $D$, then that means that when federate A is executing some tag $T$, it is possible for federate A to send a signal that logically reaches federate B at tag $T' := T + D$.
 
-The RTI ensures that if a federate A sends a signal to a federate B that logically reaches federate B at time $T'$, federate B will not execute anything at a tag later than $T'$ before it receives the signal. Furthermore, before federate B receives the signal, federate B can only execute things at the tag $T'$ that are statically guaranteed not to be affected by the signal. When federate B violates these rules by executing something too early, we call that an STP violation.
+The RTI ensures that if a federate A sends a signal to a federate B that logically reaches federate B at time $T'$, federate B will not execute anything at a tag later than $T'$ before it receives the signal. Furthermore, before federate B receives the signal, federate B can only execute things at the tag $T'$ that are statically guaranteed not to be affected by the signal. When federate B violates these rules by executing something too early, we call that an STP (safe-to-process) violation.
 
-In addition to preventing STP violations, the RTI must prevent deadlocks by allowing federates to proceed forward to logical times when they have events to process.
+In addition to preventing STP violations, the RTI must prevent deadlocks by allowing federates to proceed forward to logical times when they may have events to process.
 
 The RTI can be described as receiving information from federates, possibly aggregating it into information about the current state of the system, and then propagating the information in such a way that federates can proceed without STP violations.
 
@@ -31,684 +31,956 @@ A given message is of one of the following types:
 11. STOP_GRN (STOP GRaNted)
 12. LTC (Logical Tag Complete): This message is sent from a federate to the RTI to declare that the federate is finished executing a particular tag.
 
+TAGGED_MSG messages that are received from an upstream federate while the upstream federate is executing a tag $T$ are associated with the tag $T + D$ when a federate-to-federate signal on a connection will be received. PORT_ABS messages are similar.
+
 ## Preliminary Syntax Explanation
 
-e1 ≺ e2 means that it is not possible, under any execution of the federated program, for e1 to occur after e2.
+`e_1 ≺ e_2` means that it is not possible, under any physical, real-life execution of the federated program, for `e_1` to occur after `e_2` in physical time.
 
-Sentences are stated in an S-expression-like format. For example, where we write (f e1), we mean "f of e1".
+Formulas are stated in an S-expression-like format. For example, where we write `(f e_1)`, we mean "f of $e_1$".
 
-All events are described from the perspective of the RTI. For example, where we write (e1 is (Receiving PORT_ABS)), we mean that e1 is an event in which the RTI receives a PORT_ABS message from a federate; in other words, the federate informed the RTI about when a port is going to be absent. Similarly, where we write ((e1 is (Sending PORT_ABS))), we mean that e1 is an event in which the RTI is sending a PORT_ABS to a federate; in other words, the RTI is informing the federate about when one of the ports of that federate is going to be absent.
+All events are described from the perspective of the RTI. For example, where we write `(e_1 is (Receiving PORT_ABS))`, we mean that $e_1$ is an event in which a federate sends a PORT_ABS message, and the RTI receives the PORT_ABS message. Similarly, where we write `((e_1 is (Sending PORT_ABS)))`, we mean that `e_1` is an event in which the RTI is sends a PORT_ABS message, and a federate receives the PORT_ABS message.
 
-An expression of the form (FIRST X), where X is some predicate, says that e1 is the first event e1 such that the predicate X is true of e1 and e2.
+---
 
-An expression of the form (FedwiseFIRST X), where X is some predicate, says that e1 is the first event e1 occurring at a given federate such that the predicate X is true of e1 and e2.
+**The above context, which was provided to an LLM, was written by a human. However, most of the remaining text in this document is machine-generated. Human-generated text or commentary that does not come from an LLM will be presented in _italics_. Be warned that some of the content produced by the LLM, _especially_ the content labeled as "high-level justification," may contain conceptual mistakes that in a human would indicate a lack of deep understanding.**
 
-Expressions like that use FIRST and FedwiseFIRST are useful for describing the first event e1 that could possibly cause some other event e2. When we know that e2 must have a cause, but there are multiple events that could have caused e2, we know that the first possible cause of e2 would have had to happen before e2. For example, when we write (FIRST (X e1)), where X is some predicate, probably the set of events that make X true is the set of events that could potentially cause some other event e2, and (FIRST (X e1)) denotes the first event that could potentially cause e2.
+## Formula 1
 
-## Sentence 1
+Formula 1 states:
 
-Sentence 1 states:
+```
+((((e1 is (Receiving LTC))) ∧ (Federate (e1) = Federate (e2)) ∧ ((Tag e1) <
+(Tag e2)))
+  ∧ ((e2 is (Receiving LTC))))
+⇒ (e1 ≺ e2)
+```
 
-`((((e1 is (Receiving LTC))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) < (Tag e2))) ∧ ((e2 is (Receiving LTC)))) ⇒ (e1 ≺ e2)`
+### In-depth syntactic explanation
 
-Here is an LLM's explanation of when sentence 1 will make a guarantee about two events, e1 and e2:
+To break down the antecedent of the implication into its sub-formulas and analyze when they are true, we will start by examining the atomic sub-formulas and then build up to larger sub-formulas.
 
-To analyze the given sentence, we'll break it down into its subexpressions and examine the conditions under which each is true. Then, we'll synthesize these conditions to understand what must be true for the sentence to guarantee that $e1$ must occur before $e2$ in any execution of the program where both events happen in the RTI.
+1. Atomic Sub-formulas:
 
-### Subexpressions and Their Conditions
+   - `(e_1 is (Receiving LTC))`: This sub-formula is true when event $e_1$ involves the RTI receiving a Logical Tag Complete (LTC) message.
+   - `(Federate(e_1) = Federate(e_2))`: This sub-formula is true when the federate associated with event $e_1$ is the same as the federate associated with event $e_2$.
+   - `((Tag e_1) < (Tag e_2))`: This sub-formula is true when the logical tag of event $e_1$ is less than the logical tag of event $e_2`.
+   - `(e_2 is (Receiving LTC))`: This sub-formula is true when event $e_2$ involves the RTI receiving a Logical Tag Complete (LTC) message.
 
-1. $e1$ is $\text{Receiving LTC}$: This is true if $e1$ is an event where the RTI receives an LTC (Logical Tag Complete) message from a federate.
-2. $Federate(e1) = Federate(e2)$: This is true if both $e1$ and $e2$ involve the same federate.
-3. $\text{Tag} ( e1) < Tag( e2)$: This is true if the logical tag associated with $e1$ is less than the logical tag associated with $e2$.
-4. $e2$ is $\text{Receiving LTC}$: This is true if $e2$ is an event where the RTI receives an LTC message from a federate.
+2. Larger Sub-formulas:
 
-### Synthesis for Guarantee
+   - `((e_1 is (Receiving LTC)) ∧ (Federate(e_1) = Federate(e_2)) ∧ ((Tag e_1) < (Tag e_2)))`: This sub-formula is true when event $e_1$ involves the RTI receiving an LTC message, the federate associated with $e_1$ is the same as the federate associated with $e_2$, and the logical tag of $e_1$ is less than the logical tag of $e_2`.
+   - `((e_1 is (Receiving LTC)) ∧ (Federate(e_1) = Federate(e_2)) ∧ ((Tag e_1) < (Tag e_2))) ∧ (e_2 is (Receiving LTC))`: This sub-formula is true when the above conditions hold for event $e_1$ and event $e_2`.
 
-For the sentence to guarantee that $e1$ must occur before $e2$, the following conditions must be met:
+3. Conclusion:
+   - The antecedent of the implication is true when the larger sub-formula `((e_1 is (Receiving LTC)) ∧ (Federate(e_1) = Federate(e_2)) ∧ ((Tag e_1) < (Tag e_2))) ∧ (e_2 is (Receiving LTC))` is true. This means that event $e_1$ involves the RTI receiving an LTC message, the federate associated with $e_1$ is the same as the federate associated with $e_2$, the logical tag of $e_1$ is less than the logical tag of $e_2`, and event $e_2$ also involves the RTI receiving an LTC message.
 
-- Both $e1$ and $e2$ are events where the RTI receives an LTC message from a federate.
-- These events involve the same federate.
-- The logical tag associated with $e1$ is less than the logical tag associated with $e2$.
+By analyzing the truth conditions of the sub-formulas, we can understand when the antecedent of the implication is true based on the events $e_1$ and $e_2` in the context of the RTI and LTC messages.
 
-When these conditions are satisfied, it logically follows that $e1$ must precede $e2$. This is because LTC messages are sent by a federate to the RTI to declare that the federate has finished executing at a particular tag. If $e1$ and $e2$ are LTC messages from the same federate with $e1$ having a lower tag than $e2$, $e1$ must represent the completion of an earlier logical time than $e2$, necessitating that $e1$ occurs before $e2$.
+_(This explanation was generated in 14 seconds.)_
 
-### Why the Guarantee is Correct
+### Summary of the meaning of formula 1
 
-The guarantee provided by the sentence is correct because of the way federated programs and the RTI manage logical time. LTC messages are used to indicate the completion of activities at specific logical times. If a federate sends two LTC messages, the one with the lower tag must represent an earlier point in logical time. Since the RTI processes these messages in order, and because a federate cannot complete a later logical time before completing an earlier one, the order of LTC messages reflects the order of execution within the federate. Therefore, if $e1$ has a lower tag than $e2$ and both are LTC messages from the same federate, it is correct to expect that $e1$ occurs before $e2$ in the sequence of events handled by the RTI. This ensures the correct sequential processing of logical times within a federated simulation, maintaining the integrity of the simulation's temporal logic.
+The formula states that if event $e_1$ in the RTI involves receiving a Logical Tag Complete (LTC) message, and event $e_2$ in the same federate also involves receiving an LTC message, and the federate associated with both events is the same, and the logical tag of event $e_1$ is less than the logical tag of event $e_2$, then it is not possible for event $e_1$ to occur after event $e_2$ in physical time.
 
-## Sentence 2
+In simpler terms, the formula ensures that if the RTI receives an LTC message at an earlier logical time than another LTC message received by the same federate, then the first LTC message cannot occur after the second LTC message in physical time. This condition helps maintain the logical ordering of events within the federate to prevent inconsistencies or violations of the logical time progression.
 
-Sentence 2 states:
+The formula guarantees this relationship for all possible events $e_1$ and $e_2$, ensuring that the logical time constraints imposed by the LTC messages are upheld consistently throughout the execution of the federated program.
 
-`(((FIRST ((((e1 is (Sending STOP_GRN))) ∨ ((e1 is (Receiving LTC))) ∨ ((((e1 is (Receiving NET))) ∨ ((e1 is (Sending TAGGED_MSG)))))) ∧ ((Tag e1) = (Tag e2)) ∧ (((Tag e1) finite) ∧ ((Tag e1) ≠ 0))))) ∧ ((((e2 is (Sending TAG))) ∨ ((e2 is (Sending PTAG)))))) ⇒ (e1 ≺ e2)`
+_(This explanation was generated in 4 seconds.)_
 
-Here is an LLM's explanation of when sentence 2 will make a guarantee about two events, e1 and e2:
+### High-level justification
 
-To analyze the given sentence, let's break down its components and understand the conditions under which each subexpression is true. Then, we'll synthesize these insights to understand the overall condition that guarantees $e1 \prec e2$.
+The guarantee is expected to be correct because the RTI and federates operate under a strict logical time system to ensure the correct sequence of events. When a federate sends an LTC message to the RTI, it indicates that the federate has completed all activities up to a certain logical tag. Since logical time progresses linearly and cannot move backwards, if a federate sends an LTC for a lower logical tag followed by an LTC for a higher logical tag, these messages must be processed by the RTI in the order they were sent to maintain the integrity of the logical timeline. The RTI's role in coordinating federate activities based on logical time ensures that messages reflecting earlier logical times are processed before those of later logical times, aligning with the real-world sequence of events and preventing any violations of the logical time progression.
 
-### Subexpressions and Conditions
+_(This explanation was generated in 7 seconds.)_
 
-1. **$e1$ is (Sending STOP_GRN)**: True if $e1$ is an event where the RTI sends a STOP_GRN message to a federate.
-2. **$e1$ is (Receiving LTC)**: True if $e1$ is an event where the RTI receives an LTC message from a federate.
-3. **$e1$ is (Receiving NET)**: True if $e1$ is an event where the RTI receives a NET message from a federate.
-4. **$e1$ is (Sending TAGGED_MSG)**: True if $e1$ is an event where the RTI sends a TAGGED_MSG to a federate.
-5. **$\text{Tag} ( e1)) = \text{Tag} (e2)$**: True if the logical tags associated with events $e1$ and $e2$ are equal.
-6. **$(Tag e1) \text{ finite}$**: True if the logical tag of $e1$ is a finite number.
-7. **$(Tag e1) \neq 0$**: True if the logical tag of $e1$ is not zero.
-8. **$e2$ is (Sending TAG)**: True if $e2$ is an event where the RTI sends a TAG message to a federate.
-9. **$e2$ is (Sending PTAG)**: True if $e2$ is an event where the RTI sends a PTAG message to a federate.
+## Formula 2
 
-### Overall Condition for $e1 \prec e2$
+Formula 2 states:
 
-For the sentence to guarantee that $e1$ must occur before $e2$ in any execution of the program where both events happen in the RTI, the following conditions must be met:
+```
+(((e1
+      is
+      the
+      first
+      event
+      satisfying
+      (λ
+        e1
+        .
+        (((e1 is (Sending STOP_GRN)))
+          ∨ ((e1 is (Receiving LTC)))
+          ∨ ((((e1 is (Receiving NET))) ∨ ((e1 is (Sending TAGGED_MSG))))))
+        ∧ ((Tag e1) = (Tag e2))
+        ∧ (((Tag e1) finite) ∧ ((Tag e1) ≠ 0)))))
+  ∧ ((((e2 is (Sending TAG))) ∨ ((e2 is (Sending PTAG))))))
+⇒ (e1 ≺ e2)
+```
 
-- $e1$ is one of the following events: Sending STOP_GRN, Receiving LTC, Receiving NET, or Sending TAGGED_MSG.
-- The logical tag of $e1$ is equal to the logical tag of $e2$, is finite, and is not zero.
-- $e2$ is an event where the RTI is sending either a TAG or a PTAG message.
+### In-depth syntactic explanation
 
-### Why the Guarantee is Correct
+To break down the antecedent of the implication into its sub-formulas and analyze when they are true, we will start by examining the atomic sub-formulas and then build up to larger sub-formulas:
 
-The sentence provides a correct guarantee about the behavior of federated programs for the following reasons:
+1. Atomic Sub-formulas:
 
-- **Logical Time Progression**: The RTI controls the logical time progression of federates by sending TAG and PTAG messages. These messages indicate that a federate is allowed to proceed to a certain logical time.
-- **Event Ordering**: The types of events considered for $e1$ (e.g., Sending STOP_GRN, Receiving LTC) are critical in determining the state of a federate or the federation as a whole before it can logically proceed to the next time step. For instance, receiving an LTC message signifies the completion of activities at a certain logical time, and sending a STOP_GRN message indicates the federation is allowed to stop, marking significant points in the federation's lifecycle.
-- **Logical Time Consistency**: By ensuring $e1$ and $e2$ have the same logical tag, the condition enforces a consistency in the logical timeline, meaning $e1$'s actions are prerequisites for the logical time advancement signified by $e2$.
+   - $((e_1$ is (Sending STOP_GRN)))$: This sub-formula is true when event $e_1$ involves the RTI sending a STOP_GRN message.
+   - $((e_1$ is (Receiving LTC)))$: This sub-formula is true when event $e_1$ involves the RTI receiving an LTC message.
+   - $(((e_1$ is (Receiving NET)) ∨ ((e_1$ is (Sending TAGGED_MSG))))$: This sub-formula is true when event $e_1$ involves the RTI either receiving a NET message or sending a TAGGED_MSG message.
+   - $((Tag e_1) = (Tag e_2))$: This sub-formula is true when the logical tags of events $e_1$ and $e_2$ are equal.
+   - $(((Tag e_1)$ finite) ∧ $((Tag e_1) ≠ 0))$: This sub-formula is true when the logical tag of event $e_1$ is a finite value and not equal to 0.
+   - $((e_2$ is (Sending TAG)))$: This sub-formula is true when event $e_2$ involves the RTI sending a TAG message.
+   - $((e_2$ is (Sending PTAG)))$: This sub-formula is true when event $e_2$ involves the RTI sending a PTAG message.
 
-In summary, the sentence outlines a logical sequence where certain types of events related to the management of logical time and federation state must occur before the RTI can allow a federate to advance to the next logical time, ensuring the orderly and consistent progression of time in federated simulations.
+2. Larger Sub-formulas:
 
-## Sentence 3
+   - $((e_1$ is the first event satisfying (...))$: This sub-formula is true when event $e_1$ is the first event satisfying the conditions specified within the parentheses.
+   - $(((e_1$ is the first event satisfying (...)) ∧ ((Tag e_1) = (Tag e_2)) ∧ (((Tag e_1)$ finite) ∧ $((Tag e_1) ≠ 0)))$: This sub-formula is true when event $e_1$ is the first event satisfying the specified conditions, and the logical tags of $e_1$ and $e_2$ are equal and $Tag e_1$ is a finite value not equal to 0.
+   - $(((e_2$ is (Sending TAG)) ∨ $((e_2$ is (Sending PTAG))))$: This sub-formula is true when event $e_2$ involves the RTI sending either a TAG or a PTAG message.
 
-Sentence 3 states:
+3. Largest Sub-formula:
+   - $(((e_1$ is the first event satisfying (...)) ∧ ((Tag e_1) = (Tag e_2)) ∧ (((Tag e_1)$ finite) ∧ $((Tag e_1) ≠ 0))) ∧ (((e_2$ is (Sending TAG)) ∨ $((e_2$ is (Sending PTAG))))$: This sub-formula is true when event $e_1$ satisfies the specified conditions, the logical tags of $e_1$ and $e_2$ are equal, $Tag e_1$ is a finite value not equal to 0, and event $e_2$ involves the RTI sending either a TAG or a PTAG message.
 
-`(((((e1 is (Receiving PORT_ABS))) ∨ ((e1 is (Receiving TAGGED_MSG)))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) ≤ (Tag e2))) ∧ (((e2 is (Receiving LTC))))) ⇒ (e1 ≺ e2)`
+By breaking down the antecedent into its sub-formulas and analyzing when each sub-formula is true, we can understand the conditions under which the entire antecedent holds true, leading to the implication $e_1 ≺ e_2$.
 
-Here is an LLM's explanation of when sentence 3 will make a guarantee about two events, e1 and e2:
+_(This explanation was generated in 12 seconds.)_
 
-To analyze the given sentence, let's break it down into its subexpressions and understand the conditions under which each is true. Then, we'll synthesize these insights to understand what must be true for the sentence to guarantee that $e1$ must occur before $e2$ in any execution of the program.
+### Summary of the meaning of formula 2
 
-### Subexpressions and Their Conditions
+The formula states that if event $e_1$ in the RTI is the first event satisfying certain conditions involving the sending of a STOP_GRN message, receiving an LTC message, receiving a NET message, or sending a TAGGED_MSG message, and the logical tag of $e_1$ is equal to the logical tag of event $e_2$ (which is a finite non-zero value), and event $e_2$ involves the RTI sending either a TAG or a PTAG message, then event $e_1$ must occur before event $e_2$ in physical time. This formula ensures that when specific events related to message exchanges and logical tags occur in the RTI, the order of these events is maintained to prevent inconsistencies and ensure the correct progression of events in the federated system.
 
-1. $(e1 \text{ is (Receiving PORT\_ABS)})$: True if $e1$ is an event where the RTI receives a PORT_ABS message from a federate.
-2. $(e1 \text{ is (Receiving TAGGED\_MSG)})$: True if $e1$ is an event where the RTI receives a TAGGED_MSG from a federate.
-3. $(\text{Federate}(e1) = \text{Federate}(e2))$: True if $e1$ and $e2$ involve the same federate.
-4. $(\text{Tag } e1 \leq \text{Tag } e2)$: True if the logical tag associated with $e1$ is less than or equal to the tag associated with $e2$.
-5. $(e2 \text{ is (Receiving LTC)})$: True if $e2$ is an event where the RTI receives an LTC message from a federate.
+_(This explanation was generated in 4 seconds.)_
 
-### Guarantee Conditions
+### High-level justification
 
-For the sentence to guarantee that $e1$ must occur before $e2$, the following must be true:
+The guarantee is expected to be correct because it aligns with the principles governing the logical time progression and message handling within a federated system. The RTI, as the coordinator of logical time and message exchange among federates, must ensure that messages are processed in a sequence that respects the logical time constraints. Specifically, before the RTI can send a TAG (Tag Advance Grant) or PTAG (Provisional Tag Advance Grant) message to a federate, allowing it to advance to or perform actions at a new logical time, it must first process any relevant messages (such as STOP_GRN, LTC, NET, or TAGGED_MSG) that pertain to the current or earlier logical times. This ordering ensures that all necessary conditions are met and that federates only proceed when it is safe to do so, maintaining the integrity of the simulation's logical timeline and preventing any logical time violations.
 
-- $e1$ is an event where the RTI receives either a PORT_ABS or a TAGGED_MSG from a federate.
-- $e1$ and $e2$ involve the same federate.
-- The logical tag of $e1$ is less than or equal to the tag of $e2$.
-- $e2$ is an event where the RTI receives an LTC message from a federate.
+_(This explanation was generated in 7 seconds.)_
 
-### Why the Guarantee is Correct
+## Formula 3
 
-The guarantee is correct because of how federated programs are structured and the role of the RTI in ensuring orderly execution:
+Formula 3 states:
 
-- **Message Types and Logical Time**: PORT_ABS and TAGGED_MSG messages inform the RTI about the absence or presence of signals, affecting the logical execution order. LTC messages indicate the completion of activities at a certain logical time.
-- **Orderly Execution**: The RTI uses these messages to maintain a coherent and orderly execution across federates, ensuring that events are processed in a logical sequence.
-- **Logical Time Constraints**: By ensuring that $e1$ (receiving PORT_ABS or TAGGED_MSG) occurs before $e2$ (receiving LTC), the system respects the logical time constraints imposed by the federates' communications. This prevents STP violations and ensures that federates do not proceed to a future logical time before handling all relevant signals up to that point.
+```
+(((((e1 is (Receiving PORT_ABS))) ∨ ((e1 is (Receiving TAGGED_MSG))))
+    ∧ (Federate (e1) = Federate (e2))
+    ∧ ((Tag e1) ≤ (Tag e2)))
+  ∧ (((e2 is (Receiving LTC)))))
+⇒ (e1 ≺ e2)
+```
 
-In summary, the sentence's structure reflects the logical time ordering and communication patterns in federated programs, ensuring that the RTI processes events in a way that respects the logical time and dependencies between federate communications.
+### In-depth syntactic explanation
 
-## Sentence 4
+To break down the antecedent of the implication into its sub-formulas and analyze when they are true, we will start by examining each atomic sub-formula and then build up to larger sub-formulas:
 
-Sentence 4 states:
+1. Atomic Sub-formulas:
 
-`((((e1 is (Receiving NET))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) ≤ (Tag e2))) ∧ (((e2 is (Receiving LTC))) ∧ ((Tag e2) ≠ 0))) ⇒ (e1 ≺ e2)`
+   - $e_1$ is receiving PORT_ABS: This sub-formula is true when event $e_1$ involves the RTI receiving a PORT_ABS message.
+   - $e_1$ is receiving TAGGED_MSG: This sub-formula is true when event $e_1$ involves the RTI receiving a TAGGED_MSG message.
+   - Federate($e_1$) = Federate($e_2$): This sub-formula is true when events $e_1$ and $e_2$ occur in the same federate.
+   - Tag $e_1$ ≤ Tag $e_2$: This sub-formula is true when the logical tag of event $e_1$ is less than or equal to the logical tag of event $e_2.
+   - $e_2$ is receiving LTC: This sub-formula is true when event $e_2$ involves the RTI receiving an LTC message.
 
-Here is an LLM's explanation of when sentence 4 will make a guarantee about two events, e1 and e2:
+2. Larger Sub-formulas:
+   - $((e_1$ is receiving PORT_ABS) ∨ ($e_1$ is receiving TAGGED_MSG)): This sub-formula is true when event $e_1$ involves the RTI receiving either a PORT_ABS or a TAGGED_MSG message.
+   - $(((e_1$ is receiving PORT_ABS) ∨ ($e_1$ is receiving TAGGED_MSG)) ∧ (Federate($e_1$) = Federate($e_2$)) ∧ (Tag $e_1$ ≤ Tag $e_2$)): This sub-formula is true when event $e_1$ satisfies the conditions of receiving either a PORT_ABS or TAGGED_MSG message, occurring in the same federate as event $e_2$, and having a logical tag less than or equal to that of event $e_2.
+   - $(((e_1$ is receiving PORT_ABS) ∨ ($e_1$ is receiving TAGGED_MSG)) ∧ (Federate($e_1$) = Federate($e_2$)) ∧ (Tag $e_1$ ≤ Tag $e_2$)) ∧ ($e_2$ is receiving LTC): This sub-formula is true when the previous conditions are met for event $e_1$, and event $e_2$ involves the RTI receiving an LTC message.
 
-To analyze the given sentence, let's break down its subexpressions and understand the conditions under which each is true. We then synthesize these conditions to understand the overall guarantee provided by the sentence.
+Therefore, the antecedent of the implication is true when event $e_1$ satisfies the conditions of receiving a PORT_ABS or TAGGED_MSG message, occurring in the same federate as event $e_2$, having a logical tag less than or equal to that of event $e_2, and event $e_2$ involves the RTI receiving an LTC message.
 
-### Subexpressions and Their Conditions
+_(This explanation was generated in 11 seconds.)_
 
-1. **`(e1 is (Receiving NET))`**: This subexpression is true if event `e1` involves the RTI receiving a NET (Next Event Tag) message from a federate. This message indicates the time of the next scheduled event at the federate.
+### Summary of the meaning of formula 3
 
-2. **`(Federate(e1) = Federate(e2))`**: This condition is true if `e1` and `e2` involve the same federate. It implies that both events are related to the same federate's actions or interactions with the RTI.
+The formula states that if event $e_1$ in the RTI involves the RTI receiving a PORT_ABS or TAGGED_MSG message from a federate, occurring in the same federate as event $e_2$, with the logical tag of $e_1$ being less than or equal to the logical tag of $e_2, and event $e_2$ involves the RTI receiving an LTC message, then event $e_1$ must occur before event $e_2$ in physical time. This formula ensures that when the RTI receives certain types of messages from a federate and then subsequently receives an LTC message, the order of these events is maintained to prevent inconsistencies and ensure the correct progression of events within the federated system.
 
-3. **`(Tag e1) ≤ (Tag e2)`**: This condition is true if the logical time (tag) associated with `e1` is less than or equal to the logical time (tag) associated with `e2`. It establishes a temporal order or equality between the events based on their tags.
+_(This explanation was generated in 3 seconds.)_
 
-4. **`(e2 is (Receiving LTC))`**: This subexpression is true if event `e2` involves the RTI receiving an LTC (Logical Tag Complete) message from a federate. This message indicates that the federate has finished executing all actions associated with a particular tag.
+### High-level justification
 
-5. **`(Tag e2) ≠ 0`**: This condition is true if the logical time (tag) associated with `e2` is not zero. It ensures that `e2` is not related to the initialization phase (assuming tag 0 is used for initialization).
+This guarantee is expected to be correct because it adheres to the fundamental principle of logical time progression within a federated simulation system. When a federate sends a PORT_ABS or TAGGED_MSG to the RTI, it signifies a communication regarding the absence or presence of a signal at a specific logical time. The subsequent sending of an LTC message by the same federate, which the RTI receives, indicates that the federate has completed all processing up to a certain logical tag. For the system to maintain a coherent and consistent logical timeline, it is imperative that these messages are processed in the order they are logically meant to occur. The PORT_ABS or TAGGED_MSG must logically precede the LTC message because they pertain to actions or the lack thereof before the federate declares completion up to a specific point in logical time. This ordering ensures that the simulation's state progresses in a manner that is consistent with the established rules of logical time, preventing any potential inconsistencies or violations of the simulation's temporal logic.
 
-### Synthesis for Guarantee
+_(This explanation was generated in 8 seconds.)_
 
-For the sentence to guarantee that `e1` must occur before `e2` in any execution of the program where both events happen in the RTI, the following conditions must be true:
+## Formula 4
 
-- `e1` is an event where the RTI receives a NET message from a federate.
-- `e2` is an event where the RTI receives an LTC message from the same federate as `e1`.
-- The tag associated with `e1` is less than or equal to the tag associated with `e2`.
-- The tag associated with `e2` is not zero.
+Formula 4 states:
 
-### Why the Guarantee Is Correct
+```
+((((e1 is (Receiving NET))) ∧ (Federate (e1) = Federate (e2)) ∧ ((Tag e1) ≤
+(Tag e2)))
+  ∧ (((e2 is (Receiving LTC))) ∧ ((Tag e2) ≠ 0)))
+⇒ (e1 ≺ e2)
+```
 
-The guarantee provided by the sentence is correct because it aligns with the logical flow of events in a federated program:
+### In-depth syntactic explanation
 
-- A federate sends a NET message to indicate the next scheduled event's time. This establishes a future point in logical time where the federate plans to act.
-- The federate then performs actions up to and including that scheduled event, eventually sending an LTC message to indicate completion.
-- The condition that `e1` (receiving NET) must occur before `e2` (receiving LTC) reflects the natural order of planning and executing actions within a federate.
-- The requirement that both events involve the same federate and the logical time constraints ensure that the guarantee respects the temporal and causal relationships between planning and execution within the federate's interaction with the RTI.
+To break down the antecedent of the implication into its sub-formulas and analyze when they are true, we will start by examining the atomic sub-formulas and then progress to larger sub-formulas constructed from them.
 
-In summary, the sentence correctly guarantees that the RTI's receipt of a NET message from a federate about a future event must logically precede the RTI's receipt of an LTC message indicating completion of actions up to a certain tag, ensuring a coherent and orderly progression of logical time within the federated system.
+1. Atomic Sub-formulas:
 
-## Sentence 5
+   - $(e_1$ is (Receiving NET)): This sub-formula is true when event $e_1$ in the RTI involves receiving a NET message.
+   - $Federate(e_1) = Federate(e_2)$: This sub-formula is true when the federate associated with event $e_1$ is the same as the federate associated with event $e_2$.
+   - $(Tag e_1) ≤ (Tag e_2)$: This sub-formula is true when the logical tag of event $e_1$ is less than or equal to the logical tag of event $e_2.
+   - $(e_2$ is (Receiving LTC)): This sub-formula is true when event $e_2$ in the RTI involves receiving an LTC message.
+   - $(Tag e_2) ≠ 0$: This sub-formula is true when the logical tag of event $e_2$ is not equal to zero.
 
-Sentence 5 states:
+2. Larger Sub-formulas:
 
-`((((e1 is (Receiving LTC))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) + (largest delay of a connection going out of the federate of e1) < (Tag e2))) ∧ (((e2 is (Receiving PORT_ABS))) ∨ ((e2 is (Receiving TAGGED_MSG))))) ⇒ (e1 ≺ e2)`
+   - $((e_1$ is (Receiving NET)) ∧ (Federate(e_1) = Federate(e_2)) ∧ ((Tag e_1) ≤ (Tag e_2)))$: This sub-formula is true when event $e_1$ receives a NET message, the federate associated with $e_1$ is the same as that of $e_2$, and the logical tag of $e_1$ is less than or equal to the logical tag of $e_2.
+   - $((e_2$ is (Receiving LTC)) ∧ ((Tag e_2) ≠ 0))$: This sub-formula is true when event $e_2$ receives an LTC message and the logical tag of $e_2$ is not zero.
 
-Here is an LLM's explanation of when sentence 5 will make a guarantee about two events, e1 and e2:
+3. Largest Sub-formula:
+   - $(((e_1$ is (Receiving NET)) ∧ (Federate(e_1) = Federate(e_2)) ∧ ((Tag e_1) ≤ (Tag e_2))) ∧ ((e_2$ is (Receiving LTC)) ∧ ((Tag e_2) ≠ 0)))$: This sub-formula is true when the combined conditions of the two larger sub-formulas are met simultaneously.
 
-To analyze the given sentence, let's break it down into its subexpressions and understand the conditions under which each subexpression is true. We then synthesize these insights to understand the overall guarantee provided by the sentence.
+Therefore, the breakdown of the antecedent into its sub-formulas helps us understand the specific conditions under which each sub-formula is true, leading to a comprehensive analysis of when the entire antecedent is true.
 
-### Subexpressions and Their Conditions
+_(This explanation was generated in 8 seconds.)_
 
-1. **(e1 is (Receiving LTC))**: This subexpression is true if event e1 involves the RTI receiving an LTC (Logical Tag Complete) message from a federate. This message indicates that the federate has finished executing a particular logical time (tag).
+### Summary of the meaning of formula 4
 
-2. **(Federate(e1) = Federate(e2))**: This condition is true if both events e1 and e2 involve the same federate.
+The formula states that if event $e_1$ in the RTI involves the RTI receiving a NET message from a federate, occurring in the same federate as event $e_2$, with the logical tag of $e_1$ being less than or equal to the logical tag of $e_2, and event $e_2$ involves the RTI receiving an LTC message with a non-zero logical tag, then event $e_1$ must occur before event $e_2$ in physical time. This formula ensures that when a NET message is received by the RTI from a federate, followed by the RTI receiving an LTC message with a non-zero logical tag, the order of these events is maintained to prevent inconsistencies and ensure the correct progression of events within the federated system.
 
-3. **((Tag e1) + (largest delay of a connection going out of the federate of e1) < (Tag e2))**: This condition is true if the tag of event e1, when added to the largest delay of any outgoing connection from the federate involved in e1, is less than the tag of event e2. This implies a temporal ordering based on the logical time and the delays in message transmission.
+_(This explanation was generated in 3 seconds.)_
 
-4. **((e2 is (Receiving PORT_ABS))) ∨ ((e2 is (Receiving TAGGED_MSG)))**: This subexpression is true if event e2 involves the RTI receiving either a PORT_ABS message (indicating the absence of a signal at a port) or a TAGGED_MSG (indicating the presence of a signal).
+### High-level justification
 
-### Guarantee for e1 ≺ e2
+This guarantee is expected to be correct because it aligns with the logical time progression and message processing rules within a federated simulation system. Specifically, a NET (Next Event Tag) message sent by a federate to the RTI indicates the time of the next scheduled event at that federate, establishing a future point in logical time where an event is expected to occur. An LTC (Logical Tag Complete) message, on the other hand, signifies that the federate has completed all processing up to a certain logical tag. For the system to maintain consistency and ensure that events are processed in the correct logical order, any NET message indicating a future event must logically precede the receipt of an LTC message indicating completion up to a specific tag. This ordering ensures that the RTI and federates operate under a coherent understanding of the simulation's temporal progression, preventing any potential logical time violations or inconsistencies in the simulation's state.
 
-For the sentence to guarantee that e1 must occur before e2 in any execution of the program where both events happen in the RTI, the following conditions must be met:
+_(This explanation was generated in 13 seconds.)_
 
-- e1 is an event where the RTI receives an LTC message from a federate.
-- e2 is an event where the RTI receives either a PORT_ABS or a TAGGED_MSG from a federate.
-- Both e1 and e2 involve the same federate.
-- The logical time of e1, plus the largest delay from any connection going out of the federate, is less than the logical time of e2.
+## Formula 5
 
-### Why This Guarantee Is Correct
+Formula 5 states:
 
-The guarantee makes sense in the context of federated programs for several reasons:
+```
+((((e1 is (Receiving LTC)))
+    ∧ (Federate (e1) = Federate (e2))
+    ∧ ((Tag e1) + (largest delay of a connection going out of the federate of
+    e1) < (Tag e2)))
+  ∧ (((e2 is (Receiving PORT_ABS))) ∨ ((e2 is (Receiving TAGGED_MSG)))))
+⇒ (e1 ≺ e2)
+```
 
-- **Logical Time Progression**: LTC messages indicate completion of activities at a given logical time. By ensuring e1 (LTC reception) occurs before e2 (reception of PORT_ABS or TAGGED_MSG), the RTI enforces correct temporal ordering based on logical time and communication delays.
-- **Message Dependencies**: The condition involving message delays ensures that any effects of actions completed by the time of e1 (including the maximum possible delay in message transmission) are accounted for before processing events at the time of e2. This respects the causality and temporal dependencies inherent in the federated system.
-- **Consistency and Synchronization**: By adhering to these rules, the RTI helps maintain a consistent and synchronized state across federates, ensuring that messages are processed in an order that respects logical time and the specified communication delays.
+### In-depth syntactic explanation
 
-This logical structure ensures that federated programs behave in a predictable and orderly manner, respecting the temporal constraints and communication delays defined by the system's architecture.
+To break down the antecedent of the implication into its sub-formulas, we will analyze each atomic sub-formula and then combine them to understand when the larger sub-formulas are true.
 
-## Sentence 6
+1. Atomic Sub-Formulas:
 
-Sentence 6 states:
+   - $e_1$ is receiving an LTC message: This sub-formula is true when event $e_1$ in the RTI involves the RTI receiving an LTC message.
+   - The federate associated with $e_1$ is the same as the federate associated with $e_2$: This sub-formula is true when the federate associated with event $e_1$ is the same as the federate associated with event $e_2.
+   - The logical tag of $e_1$ plus the largest delay of a connection going out of the federate of $e_1$ is less than the logical tag of $e_2$: This sub-formula is true when the sum of the logical tag of event $e_1$ and the largest delay of a connection going out of the federate of $e_1$ is less than the logical tag of event $e_2.
+   - $e_2$ is receiving a PORT_ABS message or $e_2$ is receiving a TAGGED_MSG message: This sub-formula is true when event $e_2$ in the RTI involves the RTI receiving a PORT_ABS message or a TAGGED_MSG message.
 
-`(((FIRST ((((e1 is (Sending TAG))) ∨ ((e1 is (Sending PTAG)))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) + (largest delay of a connection going out of the federate of e1) ≥ (Tag e2))))) ∧ ((((e2 is (Receiving PORT_ABS))) ∨ ((e2 is (Receiving TAGGED_MSG)))) ∧ (¬((Fed e2) has no upstream with delay ≤ (Tag e2))))) ⇒ (e1 ≺ e2)`
+2. Larger Sub-Formulas:
 
-Here is an LLM's explanation of when sentence 6 will make a guarantee about two events, e1 and e2:
+   - The conjunction of the first three atomic sub-formulas: This sub-formula is true when all three atomic sub-formulas are true simultaneously.
+   - The disjunction of the last atomic sub-formula with the conjunction of the first three atomic sub-formulas: This sub-formula is true when either the last atomic sub-formula is true or when all three of the first atomic sub-formulas are true.
 
-To analyze the given sentence, let's break it down into its subexpressions and understand the conditions under which each subexpression is true. Then, we'll synthesize this information to understand the overall condition that guarantees $e1 \prec e2$.
+3. Implication:
+   - The implication of the larger sub-formula with the conclusion $e_1 ≺ e_2$: This sub-formula is true when the larger sub-formula holds and implies that event $e_1$ must occur before event $e_2$ in physical time.
 
-### Subexpressions and Their Conditions
+By breaking down the antecedent into its sub-formulas, we can understand the conditions under which each sub-formula is true and how they combine to determine the truth of the overall implication.
 
-1. **$e1$ is (Sending TAG) or $e1$ is (Sending PTAG)**: This means $e1$ is an event where the RTI sends either a TAG or PTAG message to a federate. TAG allows a federate to proceed to a specific logical time, including that time, while PTAG allows proceeding up to but not including a specific tag.
+_(This explanation was generated in 10 seconds.)_
 
-2. **Federate($e1$) = Federate($e2$)**: The federate involved in $e1$ is the same as the federate involved in $e2$.
+### Summary of the meaning of formula 5
 
-3. **(Tag $e1$) + (largest delay of a connection going out of the federate of $e1$) $\geq$ (Tag $e2$)**: The logical time of $e1$ plus the largest delay of any outgoing connection from the federate involved in $e1$ is greater than or equal to the logical time of $e2$.
+The formula states that if event $e_1$ in the RTI involves the RTI receiving an LTC message, occurring in the same federate as event $e_2$, with the logical tag of $e_1$ plus the largest delay of a connection going out of the federate of $e_1$ being less than the logical tag of $e_2, and event $e_2$ in the RTI involves the RTI receiving either a PORT_ABS message or a TAGGED_MSG message, then event $e_1$ must occur before event $e_2$ in physical time. In essence, this formula ensures that when the RTI receives an LTC message from a federate followed by receiving a PORT_ABS or TAGGED_MSG message, the order of these events is maintained to prevent inconsistencies and ensure the correct temporal sequence of events within the federated system.
 
-4. **$e2$ is (Receiving PORT_ABS) or $e2$ is (Receiving TAGGED_MSG)**: $e2$ is an event where the RTI receives either a PORT_ABS or TAGGED_MSG from a federate. PORT_ABS indicates the absence of a signal, while TAGGED_MSG indicates the presence of a signal.
+_(This explanation was generated in 3 seconds.)_
 
-5. **¬((Fed $e2$) has no upstream with delay ≤ (Tag $e2$))**: The federate involved in $e2$ has at least one upstream connection with a delay less than or equal to the logical time of $e2$.
+### High-level justification
 
-### Guarantee Condition
+This guarantee is expected to be correct based on the logical time progression and the handling of messages within a federated simulation system. The LTC (Logical Tag Complete) message indicates that a federate has completed all its activities up to a certain logical tag, effectively marking a point in logical time. The addition of the largest delay of any outgoing connection from this federate to the logical tag of the LTC message accounts for the maximum time it would take for any signal sent by this federate to reach another federate. Therefore, any subsequent PORT_ABS (indicating the absence of a signal at a specific tag) or TAGGED_MSG (indicating the presence of a signal at a specific tag) message received by the RTI, which pertains to events occurring after this adjusted logical tag, must logically follow the LTC message. This ordering ensures that the simulation's state progresses consistently, with the RTI receiving messages in a sequence that respects the logical timeline and the potential delays in federate-to-federate communication, thereby maintaining the integrity of the simulation's logical time progression and preventing inconsistencies.
 
-For the sentence to guarantee that in any execution of the program where $e1$ and $e2$ both happen in the RTI, $e1$ must occur before $e2$, the following needs to be true:
+_(This explanation was generated in 19 seconds.)_
 
-- $e1$ is an event where the RTI sends a logical time advancement message (TAG or PTAG) to a federate.
-- The federate for both $e1$ and $e2$ is the same.
-- The logical time for $e1$, considering the largest possible delay from outgoing connections, covers the logical time for $e2$.
-- $e2$ involves the RTI receiving a message (PORT_ABS or TAGGED_MSG) indicating signal presence or absence at a specific logical time.
-- The federate involved in $e2$ has an upstream connection that could affect its state at the logical time of $e2$.
+## Formula 6
 
-### Why the Guarantee Makes Sense
+Formula 6 states:
 
-This guarantee makes sense because it ensures logical time progression and signal handling are correctly sequenced within a federated system. By ensuring $e1$ (sending of time advancement messages) occurs before $e2$ (receiving signal presence/absence messages), the system maintains causality and prevents STP violations. This sequencing respects the delays in connections between federates, ensuring that federates only proceed to new logical times when it's safe to do so, considering potential incoming signals.
+```
+(((e1
+      is
+      the
+      first
+      event
+      satisfying
+      (λ
+        e1
+        . (((e1 is (Sending TAG))) ∨ ((e1 is (Sending PTAG))))
+        ∧ (Federate (e1) = Federate (e2))
+        ∧ ((Tag e1) + (largest delay of a connection going out of the federate
+        of e1) ≥ (Tag e2)))))
+  ∧
+  ((((e2 is (Receiving PORT_ABS))) ∨ ((e2 is (Receiving TAGGED_MSG))))
+    ∧ (¬ ((Fed e2) has no upstream with delay ≤ (Tag e2)))))
+⇒ (e1 ≺ e2)
+```
 
-## Sentence 7
+### In-depth syntactic explanation
 
-Sentence 7 states:
+To break down the antecedent of the implication into its sub-formulas and analyze when they are true, we will start by examining the atomic sub-formulas and then progress to larger sub-formulas constructed from them.
 
-`(((((e1 is (Sending PTAG))) ∨ ((e1 is (Sending TAG)))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) < (Tag e2))) ∧ (((e2 is (Sending PTAG))) ∨ ((e2 is (Sending TAG))))) ⇒ (e1 ≺ e2)`
+1. Atomic Sub-formulas:
 
-Here is an LLM's explanation of when sentence 7 will make a guarantee about two events, e1 and e2:
+   - $e_1$ is the first event satisfying $(((e_1$ is (Sending TAG)) ∨ ((e_1$ is (Sending PTAG)))$: This sub-formula is true when $e_1$ is the first event in the RTI that involves sending either a TAG or a PTAG message.
+   - $Federate(e_1) = Federate(e_2)$: This sub-formula is true when the federate associated with event $e_1$ is the same as the federate associated with event $e_2$.
+   - $(Tag e_1) + (largest delay of a connection going out of the federate of e_1) ≥ (Tag e_2)$: This sub-formula is true when the logical tag of event $e_1$ plus the largest delay of a connection going out of the federate of $e_1$ is greater than or equal to the logical tag of event $e_2$.
+   - $e_2$ is (Receiving PORT_ABS) ∨ $e_2$ is (Receiving TAGGED_MSG): This sub-formula is true when event $e_2$ in the RTI involves receiving either a PORT_ABS or a TAGGED_MSG message.
+   - $¬((Fed e_2) has no upstream with delay ≤ (Tag e_2))$: This sub-formula is true when the federate associated with event $e_2$ has at least one upstream connection with a delay less than or equal to the logical tag of event $e_2$.
 
-To analyze the given sentence, we will break it down into its subexpressions and examine the conditions under which each is true. We then synthesize these findings to understand the overall conditions required for the sentence to guarantee that $e1$ must occur before $e2$.
+2. Larger Sub-formulas:
 
-### Subexpressions and Their Conditions
+   - $(((e_1$ is the first event satisfying $(((e_1$ is (Sending TAG)) ∨ ((e_1$ is (Sending PTAG)))) ∧ $Federate($e_1$) = $Federate($e_2$) ∧ $(Tag $e_1$) + (largest delay of a connection going out of the federate of $e_1$) ≥ (Tag $e_2$))$: This sub-formula is true when event $e_1$ is the first event in the RTI that involves sending a TAG or PTAG message, the federate associated with $e_1$ is the same as the federate associated with $e_2$, and the logical tag of $e_1$ plus the largest delay of a connection going out of the federate of $e_1$ is greater than or equal to the logical tag of $e_2$.
+   - $((((e_2$ is (Receiving PORT_ABS)) ∨ $(e_2$ is (Receiving TAGGED_MSG))) ∧ $¬((Fed $e_2$) has no upstream with delay ≤ (Tag $e_2$))$: This sub-formula is true when event $e_2$ in the RTI involves receiving a PORT_ABS or TAGGED_MSG message, and the federate associated with $e_2$ has at least one upstream connection with a delay less than or equal to the logical tag of $e_2$.
 
-1. $(e1 \text{ is (Sending PTAG)})$: This is true if event $e1$ involves the RTI sending a Provisional Tag Advance Grant (PTAG) message.
-2. $(e1 \text{ is (Sending TAG)})$: This is true if event $e1$ involves the RTI sending a Tag Advance Grant (TAG) message.
-3. $(Federate(e1) = Federate(e2))$: This is true if both $e1$ and $e2$ involve the same federate.
-4. $(Tag e1) < (Tag e2)$: This is true if the logical tag associated with $e1$ is less than the logical tag associated with $e2$.
-5. $(e2 \text{ is (Sending PTAG)})$: This is true if event $e2$ involves the RTI sending a Provisional Tag Advance Grant (PTAG) message.
-6. $(e2 \text{ is (Sending TAG)})$: This is true if event $e2$ involves the RTI sending a Tag Advance Grant (TAG) message.
+3. Largest Sub-formula:
+   - The entire antecedent of the implication: This sub-formula is true when the conjunction of the two larger sub-formulas described above is satisfied, indicating that the conditions involving the sending and receiving of messages, federate associations, and logical tag comparisons are met for events $e_1$ and $e_2$ in the RTI.
 
-### Conditions for Guarantee
+By breaking down the antecedent into its constituent sub-formulas, we can understand the specific conditions under which each part is true and how they collectively contribute to the overall truth of the antecedent.
 
-For the sentence to guarantee that $e1$ must occur before $e2$, the following conditions must be true:
+_(This explanation was generated in 13 seconds.)_
 
-- $e1$ and $e2$ are both events where the RTI sends either a PTAG or a TAG message.
-- $e1$ and $e2$ involve the same federate.
-- The logical tag associated with $e1$ is less than the logical tag associated with $e2$.
+### Summary of the meaning of formula 6
 
-### Synthesis
+The formula states that if event $e_1$ in the RTI is the first event where the RTI sends a TAG or PTAG message, occurring in the same federate as event $e_2$, and the logical tag of $e_1$ plus the largest delay of a connection going out of the federate of $e_1$ is greater than or equal to the logical tag of $e_2, and event $e_2$ in the RTI involves the RTI receiving a PORT_ABS or TAGGED_MSG message, and the federate associated with $e_2$ has at least one upstream connection with a delay less than or equal to the logical tag of $e_2, then event $e_1$ must occur before event $e_2$ in physical time. This formula ensures that when specific message exchanges and logical tag comparisons occur between the RTI and federates, the order of these events is maintained to prevent inconsistencies and ensure the correct temporal sequence of events within the federated system.
 
-Given the nature of PTAG and TAG messages, which are related to the advancement of logical time within federates, it makes sense that if $e1$ has a lower tag than $e2$ and both involve the same federate, then $e1$ must logically precede $e2$. This is because the progression of logical time within a federate must be strictly increasing, and the RTI controls this progression by sending PTAG and TAG messages. Therefore, if $e1$ involves sending a time advancement message with a lower tag than the one in $e2$ to the same federate, $e1$ must occur before $e2$ to maintain the correct order of logical time progression.
+_(This explanation was generated in 4 seconds.)_
 
-### Conclusion
+### High-level justification
 
-The sentence provides a correct guarantee about the behavior of federated programs by ensuring that time advancement messages (PTAG and TAG) are processed in the correct order, respecting the logical time progression within federates. This is crucial for the correct synchronization and coordination of federates in a distributed simulation environment.
+This guarantee is expected to be correct because it aligns with the principles of logical time progression and the causality constraints within a federated simulation system. When the RTI sends a TAG (Tag Advance Grant) or PTAG (Provisional Tag Advance Grant) message to a federate, it authorizes the federate to advance to or perform actions at a new logical time, taking into account the largest delay of any outgoing connection from that federate. This ensures that any actions taken by the federate, including sending PORT_ABS (indicating the absence of a signal) or TAGGED_MSG (indicating the presence of a signal), respect the logical time constraints and the potential delays in communication to downstream federates. The requirement that the RTI receives a PORT_ABS or TAGGED_MSG message after it has sent a TAG or PTAG message, especially when considering the delays on upstream connections, ensures that the federate's actions are consistent with the logical timeline and causality, preventing any actions or signals from being acknowledged out of order. This ordering is crucial for maintaining the integrity of the simulation's logical time progression and ensuring that all federates operate within the established temporal and causal constraints.
 
-## Sentence 8
+_(This explanation was generated in 20 seconds.)_
 
-Sentence 8 states:
+## Formula 7
 
-`((((e1 is (Sending PTAG))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) ≤ (Tag e2))) ∧ ((e2 is (Sending TAG)))) ⇒ (e1 ≺ e2)`
+Formula 7 states:
 
-Here is an LLM's explanation of when sentence 8 will make a guarantee about two events, e1 and e2:
+```
+(((((e1 is (Sending PTAG))) ∨ ((e1 is (Sending TAG))))
+    ∧ (Federate (e1) = Federate (e2))
+    ∧ ((Tag e1) < (Tag e2)))
+  ∧ (((e2 is (Sending PTAG))) ∨ ((e2 is (Sending TAG)))))
+⇒ (e1 ≺ e2)
+```
 
-To analyze the given sentence, let's break it down into its subexpressions and understand the conditions under which each is true. The sentence in question is:
+### In-depth syntactic explanation
 
-$
-((((e1 \text{ is } (\text{Sending PTAG})) \land (\text{Federate}(e1) = \text{Federate}(e2)) \land ((\text{Tag } e1) \leq (\text{Tag } e2))) \land ((e2 \text{ is } (\text{Sending TAG})))) \Rightarrow (e1 \prec e2)
-$
+To break down the antecedent of the implication into its sub-formulas and analyze when they are true, we will start by examining the atomic sub-formulas and then progress to larger sub-formulas:
 
-### Subexpressions and Conditions
+1. Atomic Sub-formulas:
 
-1. **$e1 \text{ is } (\text{Sending PTAG})$**: This is true if event $e1$ involves the RTI sending a PTAG (Provisional Tag Advance Grant) message to a federate. PTAG messages allow a federate to proceed up to but not including a specific tag.
+   - $e_1$ is sending PTAG: This sub-formula is true when event $e_1$ involves the RTI sending a Provisional Tag Advance Grant (PTAG) message.
+   - $e_1$ is sending TAG: This sub-formula is true when event $e_1$ involves the RTI sending a Tag Advance Grant (TAG) message.
+   - Federate($e_1$) = Federate($e_2$): This sub-formula is true when events $e_1$ and $e_2$ occur in the same federate.
+   - Tag $e_1$ < Tag $e_2$: This sub-formula is true when the logical tag of event $e_1$ is less than the logical tag of event $e_2.
 
-2. **$\text{Federate}(e1) = \text{Federate}(e2)$**: This condition is true if both events $e1$ and $e2$ involve the same federate. This means that the messages in both events are being sent to or from the same federate.
+2. Larger Sub-formulas:
 
-3. **$(\text{Tag } e1) \leq (\text{Tag } e2)$**: This condition holds if the tag associated with event $e1$ is less than or equal to the tag associated with event $e2$. Tags represent logical times in the simulation.
+   - $((e_1$ is sending PTAG) ∨ ($e_1$ is sending TAG)): This sub-formula is true when event $e_1$ involves the RTI sending either a PTAG or TAG message.
+   - $(((e_1$ is sending PTAG) ∨ ($e_1$ is sending TAG)) ∧ (Federate($e_1$) = Federate($e_2$)) ∧ (Tag $e_1$ < Tag $e_2$)): This sub-formula is true when event $e_1$ satisfies the conditions of sending either a PTAG or TAG message, occurring in the same federate as event $e_2$, and having a lower logical tag than event $e_2$.
 
-4. **$e2 \text{ is } (\text{Sending TAG})$**: This is true if event $e2$ involves the RTI sending a TAG (Tag Advance Grant) message to a federate. TAG messages allow a federate to proceed up to and including a specific tag.
+3. Largest Sub-formula:
+   - $(((e_1$ is sending PTAG) ∨ ($e_1$ is sending TAG)) ∧ (Federate($e_1$) = Federate($e_2$)) ∧ (Tag $e_1$ < Tag $e_2$)) ∧ (((e_2$ is sending PTAG) ∨ ($e_2$ is sending TAG))): This largest sub-formula is true when event $e_1$ satisfies the conditions mentioned above, and event $e_2$ involves the RTI sending either a PTAG or TAG message.
 
-### Analysis for Guarantee
+By breaking down the antecedent into its sub-formulas and understanding when each sub-formula is true, we can analyze the conditions under which the entire antecedent holds true, leading to the implication that $e_1$ must occur before $e_2.
 
-For the sentence to guarantee that $e1$ must occur before $e2$ in any execution of the program where both events happen in the RTI, the following must be true:
+_(This explanation was generated in 9 seconds.)_
 
-- $e1$ is an event where the RTI sends a PTAG message to a federate.
-- $e2$ is an event where the RTI sends a TAG message, possibly to the same federate (since $\text{Federate}(e1) = \text{Federate}(e2)$).
-- The tag of $e1$ is less than or equal to the tag of $e2$, indicating that $e1$'s logical time is before or the same as $e2$'s.
+### Summary of the meaning of formula 7
 
-### Why the Guarantee is Correct
+The formula states that if event $e_1$ in the RTI involves the RTI sending a Tag Advance Grant (TAG) or Provisional Tag Advance Grant (PTAG) message, occurring in the same federate as event $e_2$, and the logical tag of $e_1$ is less than the logical tag of $e_2, and event $e_2$ in the RTI also involves the RTI sending a PTAG or TAG message, then event $e_1$ must occur before event $e_2$ in physical time. In essence, this formula ensures that when the RTI sends a TAG or PTAG message in a federate, followed by another TAG or PTAG message in the same federate with a higher logical tag, the order of these events is maintained to prevent inconsistencies and ensure the correct temporal sequence of events within the federated system.
 
-The guarantee provided by the sentence is correct because of how PTAG and TAG messages work within the federated simulation. PTAG messages allow a federate to advance in logical time up to but not including a specific tag, while TAG messages allow advancement up to and including the tag. If $e1$ (sending PTAG) occurs with a tag less than or equal to $e2$ (sending TAG) for the same federate, it logically implies that $e1$'s action to allow advancement up to a certain point must occur before $e2$'s action to allow advancement possibly beyond that point. This ensures that the simulation respects the logical order of events based on their tags, maintaining the consistency and causality within the simulation.
+_(This explanation was generated in 4 seconds.)_
 
-## Sentence 9
+### High-level justification
 
-Sentence 9 states:
+This guarantee is expected to be correct because it adheres to the fundamental principles of logical time progression within a federated simulation system. The RTI's role is to coordinate the advancement of logical time across federates to ensure that all federates proceed through logical time in a consistent and orderly manner. When the RTI sends a Tag Advance Grant (TAG) or Provisional Tag Advance Grant (PTAG) message to a federate, it signals permission for the federate to advance to a new logical time or to perform actions up to a specified logical time. The requirement that a TAG or PTAG message with a lower logical tag must precede one with a higher logical tag in physical time is essential for maintaining the sequential progression of logical time. This sequence ensures that federates do not act on future logical times before completing actions at present or past logical times, thereby preserving the causality and integrity of the simulation's logical timeline.
 
-`(((FedwiseFIRST ((((e1 is (Receiving LTC))) ∧ ((Federate of e1 is upstream of federate of e2 via a zero-delay connection)) ∧ ((Tag e1) ≥ (Tag e2))) ∨ ((((e1 is (Sending TAG))) ∨ ((e1 is (Receiving NET))) ∨ ((e1 is (Sending STOP_GRN)))) ∧ ((Federate of e1 is upstream of federate of e2 via a zero-delay connection)) ∧ ((Tag e1) ≥ (Tag e2)))))) ∧ (((e2 is (Sending TAG))) ∧ ((Tag e2) ≠ 0))) ⇒ (e1 ≺ e2)`
+_(This explanation was generated in 14 seconds.)_
 
-Here is an LLM's explanation of when sentence 9 will make a guarantee about two events, e1 and e2:
+## Formula 8
 
-To analyze the given sentence, let's break it down into its subexpressions and understand the conditions under which each subexpression is true. We'll then synthesize this information to understand the overall condition for the sentence's guarantee that $e1$ must occur before $e2$.
+Formula 8 states:
 
-### Subexpressions and Their Conditions
+```
+((((e1 is (Sending PTAG))) ∧ (Federate (e1) = Federate (e2)) ∧ ((Tag e1) ≤ (Tag
+e2)))
+  ∧ ((e2 is (Sending TAG))))
+⇒ (e1 ≺ e2)
+```
 
-1. **$e1$ is (Receiving LTC)**: This means $e1$ is an event where the RTI receives a Logical Tag Complete (LTC) message from a federate.
-2. **Federate of $e1$ is upstream of federate of $e2$ via a zero-delay connection**: The federate sending the message in $e1$ is directly connected to the federate involved in $e2$, and the connection has no logical delay.
-3. **$\text{Tag} ( e1) \geq \text{Tag} (e2)$**: The logical time (tag) associated with $e1$ is greater than or equal to the logical time (tag) associated with $e2$.
-4. **$e1$ is (Sending TAG)**: $e1$ is an event where the RTI sends a Tag Advance Grant (TAG) message to a federate.
-5. **$e1$ is (Receiving NET)**: $e1$ is an event where the RTI receives a Next Event Tag (NET) message from a federate.
-6. **$e1$ is (Sending STOP_GRN)**: $e1$ is an event where the RTI sends a STOP Granted (STOP_GRN) message to a federate.
-7. **$e2$ is (Sending TAG)**: $e2$ is an event where the RTI sends a TAG message to a federate.
-8. **$\text{Tag} ( e2) \neq 0$**: The logical time (tag) associated with $e2$ is not zero.
+### In-depth syntactic explanation
 
-### Overall Condition for $e1 \prec e2$
+To break down the antecedent of the implication into its sub-formulas, we will analyze each atomic sub-formula and then combine them to understand when the larger sub-formulas are true:
 
-For the sentence to guarantee that $e1$ must occur before $e2$, the following conditions must be true:
+1. Atomic Sub-formulas:
 
-- $e1$ is either the RTI receiving an LTC message or sending a TAG, NET, or STOP_GRN message.
-- The federate involved in $e1$ is upstream of the federate involved in $e2$ via a zero-delay connection.
-- The logical time of $e1$ is greater than or equal to the logical time of $e2$.
-- $e2$ is an event where the RTI is sending a TAG message, and the tag associated with $e2$ is not zero.
+   - $e_1$ is sending a PTAG: This sub-formula is true when event $e_1$ in the RTI involves the RTI sending a Provisional Tag Advance Grant (PTAG) message.
+   - Federate($e_1$) = Federate($e_2$): This sub-formula is true when the federate associated with event $e_1$ is the same as the federate associated with event $e_2$.
+   - Tag $e_1$ ≤ Tag $e_2$: This sub-formula is true when the logical tag of event $e_1$ is less than or equal to the logical tag of event $e_2.
+   - $e_2$ is sending a TAG: This sub-formula is true when event $e_2$ in the RTI involves the RTI sending a TAG message.
 
-### Why the Guarantee Makes Sense
+2. Larger Sub-formulas:
 
-This guarantee is logical because:
+   - ((e_1 is (Sending PTAG)) ∧ (Federate($e_1$) = Federate($e_2$)) ∧ (Tag $e_1$ ≤ Tag $e_2$)): This sub-formula is true when event $e_1$ in the RTI is sending a PTAG, the federate associated with $e_1$ is the same as the federate associated with $e_2$, and the logical tag of $e_1$ is less than or equal to the logical tag of $e_2.
+   - (e_2 is (Sending TAG)): This sub-formula is true when event $e_2$ in the RTI is sending a TAG message.
 
-- The conditions ensure that $e1$ involves either the completion of a logical time or the initiation of a new logical time or action that directly affects the downstream federate involved in $e2$.
-- The zero-delay connection implies immediate effect or requirement for synchronization between the federates, necessitating $e1$ to occur before $e2$ to maintain logical consistency and causality.
-- The restriction on $e2$'s tag being non-zero ensures that $e2$ represents a meaningful advancement in logical time, which must be preceded by the conditions met by $e1$.
+3. Implication:
+   - (((e_1 is (Sending PTAG)) ∧ (Federate($e_1$) = Federate($e_2$)) ∧ (Tag $e_1$ ≤ Tag $e_2$)) ∧ (e_2 is (Sending TAG))): This sub-formula represents the antecedent of the implication and is true when event $e_1$ sends a PTAG, the federate associated with $e_1$ is the same as the federate associated with $e_2$, the logical tag of $e_1$ is less than or equal to the logical tag of $e_2, and event $e_2$ sends a TAG message.
 
-This setup ensures that federated programs behave correctly with respect to logical time progression and inter-federate communication, maintaining causality and logical consistency.
+By breaking down the antecedent into its sub-formulas, we can understand the conditions under which each sub-formula is true and how they collectively contribute to the truth of the larger sub-formulas and the overall implication.
 
-## Sentence 10
+_(This explanation was generated in 12 seconds.)_
 
-Sentence 10 states:
+### Summary of the meaning of formula 8
 
-`(((FIRST ((((e1 is (Sending PTAG))) ∧ ((Federate of e1 is upstream of federate of e2 via a zero-delay connection)) ∧ ((Tag e1) = (Tag e2))) ∨ ((((e1 is (Receiving NET))) ∨ ((e1 is (Sending STOP_GRN)))) ∧ ((Federate(e1) = Federate(e2)) ∨ ((Federate of e1 is directly upstream of federate of e2))) ∧ ((Tag e1) = (Tag e2)))))) ∧ (((e2 is (Sending PTAG))) ∧ ((Tag e2) ≠ 0))) ⇒ (e1 ≺ e2)`
+The formula states that if event $e_1$ in the RTI involves the RTI sending a Provisional Tag Advance Grant (PTAG) message to a federate, where the federate associated with $e_1$ is the same as the federate associated with event $e_2$, and the logical tag of $e_1$ is less than or equal to the logical tag of $e_2, and event $e_2$ in the RTI involves the RTI sending a Tag Advance Grant (TAG) message, then event $e_1$ must occur before event $e_2$ in physical time. In simpler terms, this formula ensures that when the RTI sends a PTAG message to a federate followed by sending a TAG message to the same federate with a higher or equal logical tag, the PTAG message must precede the TAG message in the sequence of events to maintain the correct temporal order within the federated system.
 
-Here is an LLM's explanation of when sentence 10 will make a guarantee about two events, e1 and e2:
+_(This explanation was generated in 4 seconds.)_
 
-To analyze the given sentence, we'll break it down into its subexpressions and examine the conditions under which each subexpression is true. Then, we'll synthesize these findings to understand what must be true for the sentence to guarantee that $e1$ must occur before $e2$ in any execution of the program where both events happen in the RTI.
+### High-level justification
 
-### Subexpressions and Their Conditions
+This guarantee is expected to be correct because it aligns with the operational rules governing logical time advancement in federated simulations. The Provisional Tag Advance Grant (PTAG) message allows a federate to proceed up to but not including a specified logical time, serving as a preliminary step before full advancement is granted. The Tag Advance Grant (TAG) message, on the other hand, authorizes the federate to proceed to and include the specified logical time. The logical sequencing of PTAG before TAG for the same or increasing logical tags ensures that federates move through logical time in a controlled and orderly manner, preventing any premature progression to future logical times. This ordering respects the causality and consistency required in the simulation's logical timeline, where provisional permissions must logically precede definitive permissions for the same or subsequent logical times.
 
-1. **$(e1 \text{ is (Sending PTAG)})$**: True if $e1$ is an event where the RTI sends a PTAG message to a federate.
-2. **$(\text{Federate of } e1 \text{ is upstream of federate of } e2 \text{ via a zero-delay connection})$**: True if the federate associated with $e1$ is directly upstream of the federate associated with $e2$, and the connection between them has zero delay.
-3. **$(\text{Tag } e1) = (\text{Tag } e2)$**: True if the logical tags associated with $e1$ and $e2$ are equal.
-4. **$(e1 \text{ is (Receiving NET)})$**: True if $e1$ is an event where the RTI receives a NET message from a federate.
-5. **$(e1 \text{ is (Sending STOP\_GRN)})$**: True if $e1$ is an event where the RTI sends a STOP_GRN message to a federate.
-6. **$(\text{Federate}(e1) = \text{Federate}(e2))$**: True if the federate associated with $e1$ is the same as the federate associated with $e2$.
-7. **$(\text{Federate of } e1 \text{ is directly upstream of federate of } e2)$**: True if the federate associated with $e1$ is directly upstream of the federate associated with $e2$.
-8. **$(e2 \text{ is (Sending PTAG)})$**: True if $e2$ is an event where the RTI sends a PTAG message to a federate.
-9. **$(\text{Tag } e2) \neq 0$**: True if the logical tag associated with $e2$ is not zero.
+_(This explanation was generated in 27 seconds.)_
 
-### Analysis for Guarantee
+## Formula 9
 
-For the sentence to guarantee that $e1$ must occur before $e2$, the following conditions must be met:
+Formula 9 states:
 
-- $e2$ is an event where the RTI sends a PTAG message to a federate, and the tag associated with $e2$ is not zero.
-- $e1$ must be one of the following:
-  - An event where the RTI sends a PTAG message to a federate that is directly upstream of the federate of $e2$ via a zero-delay connection, and both events have the same tag.
-  - An event where the RTI receives a NET message from a federate or sends a STOP_GRN message to a federate, where the federate of $e1$ is the same as or directly upstream of the federate of $e2$, and both events have the same tag.
+```
+(((e1
+      is
+      the
+      first
+      event
+      in
+      a
+      given
+      federate
+      satisfying
+      (λ
+        e1
+        .
+        (((e1 is (Receiving LTC)))
+          ∧ ((Federate of e1 is upstream of federate of e2 via a zero-delay
+          connection))
+          ∧ ((Tag e1) ≥ (Tag e2)))
+        ∨
+        ((((e1 is (Sending TAG)))
+            ∨ ((e1 is (Receiving NET)))
+            ∨ ((e1 is (Sending STOP_GRN))))
+          ∧ ((Federate of e1 is upstream of federate of e2 via a zero-delay
+          connection))
+          ∧ ((Tag e1) ≥ (Tag e2))))))
+  ∧ (((e2 is (Sending TAG))) ∧ ((Tag e2) ≠ 0)))
+⇒ (e1 ≺ e2)
+```
 
-### Reasoning for Correctness
+### In-depth syntactic explanation
 
-The sentence provides a correct guarantee about the behavior of federated programs because it ensures causal order between events based on the logical time and the relationships between federates. PTAG messages allow federates to proceed to a certain logical time, ensuring that events are processed in a consistent order. By requiring $e1$ to occur before $e2$, the sentence ensures that dependencies are respected, particularly when there's a direct relationship between the federates involved or when their actions are synchronized by the same logical tag. This respects the principles of distributed simulation where the logical time and causality between events are crucial for the correct execution of federated programs.
+To break down the antecedent of the implication into its sub-formulas, we will start by analyzing the atomic sub-formulas and then build up to the larger sub-formulas:
 
-## Sentence 11
+1. Atomic Sub-formulas:
 
-Sentence 11 states:
+   - $e_1$ is the first event in a given federate satisfying:
+     - $e_1$ is receiving an LTC message.
+     - The federate of $e_1$ is upstream of the federate of $e_2$ via a zero-delay connection.
+     - The logical tag of $e_1$ is greater than or equal to the logical tag of $e_2.
+   - $e_1$ is sending a TAG message, receiving a NET message, or sending a STOP_GRN message.
+   - The federate of $e_1$ is upstream of the federate of $e_2$ via a zero-delay connection.
+   - The logical tag of $e_1$ is greater than or equal to the logical tag of $e_2.
+   - $e_2$ is sending a TAG message, and the logical tag of $e_2$ is not equal to 0.
 
-`(((FIRST (((e1 is (Receiving PORT_ABS))) ∧ ((Federate of e1 is directly upstream of federate of e2)) ∧ ((Tag e1) = (Tag e2))))) ∧ ((e2 is (Sending PORT_ABS)))) ⇒ (e1 ≺ e2)`
+2. Larger Sub-formulas:
 
-Here is an LLM's explanation of when sentence 11 will make a guarantee about two events, e1 and e2:
+   - The first event in a given federate satisfying the conditions for $e_1$ is true when $e_1$ satisfies the specified criteria for receiving an LTC message, being upstream of $e_2$ with a zero-delay connection, and having a logical tag greater than or equal to that of $e_2.
+   - The second part of the antecedent is true when $e_1$ is sending a TAG message, receiving a NET message, or sending a STOP_GRN message, and the conditions related to the federates and logical tags are met.
 
-To analyze the given sentence, let's break it down into its subexpressions and understand the conditions under which each is true. Then, we'll synthesize these conditions to understand what must be true for the sentence to guarantee that $e1$ must occur before $e2$ in any execution of the program.
+3. Largest Sub-formula:
+   - The entire antecedent is true when the first event in a given federate satisfying the conditions for $e_1$ leads to the conditions specified for $e_2, where $e_2$ is sending a TAG message with a non-zero logical tag.
 
-### Subexpressions and Their Conditions
+By breaking down the antecedent into its sub-formulas, we can understand the specific criteria that need to be met for each event $e_1$ and $e_2 to satisfy the overall implication. This analysis ensures a clear understanding of when each sub-formula is true and how they collectively contribute to the truth of the entire antecedent.
 
-1. $(e1 \text{ is (Receiving PORT\_ABS)})$: This subexpression is true if event $e1$ involves the RTI receiving a PORT_ABS message from a federate.
+_(This explanation was generated in 9 seconds.)_
 
-2. $(\text{Federate of } e1 \text{ is directly upstream of federate of } e2)$: This subexpression is true if the federate associated with $e1$ is directly upstream of the federate associated with $e2$, implying a direct communication link where messages can flow from the former to the latter.
+### Summary of the meaning of formula 9
 
-3. $(\text{Tag } e1) = (\text{Tag } e2)$: This subexpression is true if the logical tags associated with $e1$ and $e2$ are equal.
+The formula states that if the first event $e_1$ in a given federate satisfies specific conditions related to receiving an LTC message, being upstream of another federate via a zero-delay connection, and having a logical tag greater than or equal to that of a subsequent event $e_2, or if $e_1$ involves sending a TAG, receiving a NET, or sending a STOP_GRN message while meeting the same upstream and logical tag criteria, and $e_2$ is sending a TAG message with a non-zero logical tag, then event $e_1$ must occur before event $e_2 in physical time. This formula ensures that the specified conditions related to message exchanges, logical tags, and federate relationships are met to establish the correct temporal order between events $e_1$ and $e_2 within the federated system.
 
-4. $(e2 \text{ is (Sending PORT\_ABS)})$: This subexpression is true if event $e2$ involves the RTI sending a PORT_ABS message to a federate.
+_(This explanation was generated in 4 seconds.)_
 
-5. $(\text{FIRST } (((e1 \text{ is (Receiving PORT\_ABS)}) \land (\text{Federate of } e1 \text{ is directly upstream of federate of } e2) \land (\text{Tag } e1) = (\text{Tag } e2))))$: This subexpression is true if $e1$ is the first event in which the RTI receives a PORT_ABS message from a federate that is directly upstream of the federate associated with $e2$, and both events share the same logical tag.
+### High-level justification
 
-### Conditions for Guarantee
+This guarantee is expected to be correct because it aligns with the principles of logical time progression and causality within a federated simulation system. The Logical Tag Complete (LTC) message indicates that a federate has completed all actions up to a certain logical time, establishing a clear point in the logical timeline. When a federate is upstream of another with a zero-delay connection, it implies that any action or message it sends can immediately affect the downstream federate. Therefore, before the RTI can send a Tag Advance Grant (TAG) to any federate, ensuring that the federate can proceed to a new logical time, it must first account for all preceding events (such as receiving LTCs, processing NET messages, or handling STOP_GRN messages) that could influence the logical state up to that point. This ordering respects the causality and dependency between federate actions, ensuring that no federate advances to a new logical time without first resolving all dependencies and actions that could affect or be affected by that advancement, thus maintaining the integrity and consistency of the simulation's logical timeline.
 
-For the sentence to guarantee that $e1$ must occur before $e2$ in any execution of the program, the following must be true:
+_(This explanation was generated in 14 seconds.)_
 
-- $e1$ is the first event where the RTI receives a PORT_ABS message from a federate directly upstream of the federate associated with $e2$, and
-- Both $e1$ and $e2$ share the same logical tag, and
-- $e2$ involves the RTI sending a PORT_ABS message to a federate.
+## Formula 10
 
-### Why the Guarantee Is Correct
+Formula 10 states:
 
-The guarantee provided by the sentence is correct because of how federated programs manage logical time and message passing. The PORT_ABS message indicates the absence of a signal at a specific logical time. If $e1$ involves receiving such a message from an upstream federate, it logically precedes any action (like sending a PORT_ABS in $e2$) that acknowledges or acts upon this information downstream. The RTI's role in ensuring messages are processed in the correct order and logical times are respected further supports this guarantee. The condition that $e1$ must be the first such event ensures that any processing related to the absence of a signal at that logical time must consider $e1$ before any subsequent actions like $e2$. This ordering is crucial for maintaining the consistency and correctness of the federated system's logical timeline.
+```
+(((e1
+      is
+      the
+      first
+      event
+      satisfying
+      (λ
+        e1
+        .
+        (((e1 is (Sending PTAG)))
+          ∧ ((Federate of e1 is upstream of federate of e2 via a zero-delay
+          connection))
+          ∧ ((Tag e1) = (Tag e2)))
+        ∨
+        ((((e1 is (Receiving NET))) ∨ ((e1 is (Sending STOP_GRN))))
+          ∧
+          ((Federate (e1) = Federate (e2))
+            ∨ ((Federate of e1 is directly upstream of federate of e2)))
+          ∧ ((Tag e1) = (Tag e2))))))
+  ∧ (((e2 is (Sending PTAG))) ∧ ((Tag e2) ≠ 0)))
+⇒ (e1 ≺ e2)
+```
 
-## Sentence 12
+### In-depth syntactic explanation
 
-Sentence 12 states:
+To break down the antecedent of the implication into its sub-formulas, we will analyze each atomic sub-formula and then build up to larger sub-formulas:
 
-`(((FIRST (((e1 is (Receiving TAGGED_MSG))) ∧ ((Federate of e1 is directly upstream of federate of e2)) ∧ ((Tag e1) = (Tag e2))))) ∧ ((e2 is (Sending TAGGED_MSG)))) ⇒ (e1 ≺ e2)`
+1. Atomic Sub-Formulas:
 
-Here is an LLM's explanation of when sentence 12 will make a guarantee about two events, e1 and e2:
+   - $((e_1$ is (Sending PTAG))$: This sub-formula is true when event $e_1$ involves the RTI sending a Provisional Tag Advance Grant (PTAG) message.
+   - $((Federate$ of $e_1$ is upstream of federate of $e_2$ via a zero-delay connection)$: This sub-formula is true when the federate associated with event $e_1$ is directly upstream of the federate associated with event $e_2$ with a zero-delay connection.
+   - $((Tag$ $e_1) = (Tag$ $e_2))$: This sub-formula is true when the logical tag of event $e_1$ is equal to the logical tag of event $e_2$.
+   - $((e_1$ is (Receiving NET))$: This sub-formula is true when event $e_1$ involves the RTI receiving a NET message.
+   - $((e_1$ is (Sending STOP_GRN))$: This sub-formula is true when event $e_1$ involves the RTI sending a STOP_GRN message.
+   - $((Federate(e_1) = Federate(e_2))$: This sub-formula is true when the federate associated with event $e_1$ is the same as the federate associated with event $e_2$.
+   - $((Federate$ of $e_1$ is directly upstream of federate of $e_2))$: This sub-formula is true when the federate associated with event $e_1$ is directly upstream of the federate associated with event $e_2$.
 
-To analyze the given sentence, let's break it down into its subexpressions and understand the conditions under which each subexpression is true. We'll then synthesize this information to understand the overall sentence.
+2. Larger Sub-Formulas:
 
-### Subexpressions and Their Conditions
+   - $(((e_1$ is the first event satisfying $((e_1$ is (Sending PTAG)) ∧ ((Federate$ of $e_1$ is upstream of federate of $e_2$ via a zero-delay connection)) ∧ ((Tag$ $e_1) = (Tag$ $e_2))))$: This sub-formula is true when event $e_1$ is the first event where the RTI sends a PTAG message to a federate that is directly upstream of the federate associated with event $e_2$ via a zero-delay connection, and the logical tags of $e_1$ and $e_2$ are equal.
+   - $((((e_1$ is (Receiving NET)) ∨ $((e_1$ is (Sending STOP_GRN))) ∧ $((Federate(e_1) = Federate(e_2)) ∨ $((Federate$ of $e_1$ is directly upstream of federate of $e_2))) ∧ $((Tag$ $e_1) = (Tag$ $e_2)))$: This sub-formula is true when event $e_1$ involves the RTI receiving a NET message or sending a STOP_GRN message, and the federate associated with $e_1$ is the same as the federate associated with $e_2$ or is directly upstream of the federate associated with $e_2$, with equal logical tags.
 
-1. **`(e1 is (Receiving TAGGED_MSG))`**: This is true if event `e1` involves the RTI receiving a `TAGGED_MSG` from a federate.
+3. Largest Sub-Formula:
+   - $(((e_1$ is the first event satisfying $((e_1$ is (Sending PTAG)) ∧ ((Federate$ of $e_1$ is upstream of federate of $e_2$ via a zero-delay connection)) ∧ ((Tag$ $e_1) = (Tag$ $e_2))) ∨ $((((e_1$ is (Receiving NET)) ∨ $((e_1$ is (Sending STOP_GRN))) ∧ $((Federate(e_1) = Federate(e_2)) ∨ $((Federate$ of $e_1$ is directly upstream of federate of $e_2))) ∧ $((Tag$ $e_1) = (Tag$ $e_2))))$: This sub-formula is true when event $e_1$ satisfies the conditions outlined in the previous two larger sub-formulas, indicating the specific scenarios where $e_1$ precedes $e_2 in the logical timeline based on the PTAG, NET, STOP_GRN messages, federate relationships, and logical tags.
 
-2. **`(Federate of e1 is directly upstream of federate of e2)`**: This is true if the federate involved in `e1` is directly connected to and precedes the federate involved in `e2` in the communication chain.
+By breaking down the antecedent into its sub-formulas, we can understand the conditions under which each part is true and how they collectively contribute to the overall implication.
 
-3. **`(Tag e1) = (Tag e2)`**: This is true if the logical time tags associated with `e1` and `e2` are equal.
+_(This explanation was generated in 15 seconds.)_
 
-4. **`(e2 is (Sending TAGGED_MSG))`**: This is true if event `e2` involves the RTI sending a `TAGGED_MSG` to a federate.
+### Summary of the meaning of formula 10
 
-5. **`FIRST (((e1 is (Receiving TAGGED_MSG))) ∧ ((Federate of e1 is directly upstream of federate of e2)) ∧ ((Tag e1) = (Tag e2)))`**: This is true if `e1` is the first event in which the RTI receives a `TAGGED_MSG` from a federate that is directly upstream of the federate involved in `e2`, and the tags of `e1` and `e2` are equal.
+The formula specifies that if event $e_1$ in the RTI satisfies certain conditions involving the sending of a Provisional Tag Advance Grant (PTAG) message to a federate that is directly upstream of the federate associated with event $e_2$ via a zero-delay connection, and both events have the same logical tag, or if event $e_1$ involves the RTI receiving a NET message or sending a STOP_GRN message to a federate that is the same as or directly upstream of the federate associated with event $e_2$ with the same logical tag, then event $e_1$ must occur before event $e_2 in physical time. This formula outlines specific scenarios where the RTI's actions, based on message exchanges and federate relationships, dictate the temporal order of events to ensure logical consistency and proper progression within the federated system.
 
-### Analysis for Guarantee
+_(This explanation was generated in 4 seconds.)_
 
-For the sentence to guarantee that `e1` must occur before `e2` in any execution of the program, the following conditions must be met:
+### High-level justification
 
-- `e1` is the first event where the RTI receives a `TAGGED_MSG` from a federate that is directly upstream of the federate involved in `e2`.
-- The logical time tags of `e1` and `e2` are equal.
-- `e2` involves the RTI sending a `TAGGED_MSG` to a federate.
+This guarantee is expected to be correct because it aligns with the fundamental principles of logical time management and causality within federated simulation systems. The RTI coordinates the progression of logical time across federates to ensure that all actions and message exchanges adhere to the established logical timeline. When a PTAG message is sent, it provisionally allows a federate to advance to a specified logical time, but not beyond, indicating that further confirmation (such as a TAG message) is required for full advancement. The NET message indicates the next scheduled event for a federate, and the STOP_GRN message is used to manage the orderly shutdown of the simulation. The requirement that these messages, especially when involving federates with direct, zero-delay connections, be processed in a specific order ensures that all dependencies and potential impacts are accounted for before any federate advances in logical time. This preserves the causality and consistency of the simulation, preventing any actions from being taken based on incomplete or out-of-order information, thereby maintaining the integrity of the simulation's logical timeline.
 
-When these conditions are satisfied, it logically follows that `e1` (receiving a message from an upstream federate) must occur before `e2` (sending that message downstream) to maintain the correct order of events and logical time progression in the federated system.
+_(This explanation was generated in 13 seconds.)_
 
-### Why the Guarantee is Correct
+## Formula 11
 
-The guarantee provided by the sentence is correct because it ensures the proper sequencing of events in a federated simulation environment. By ensuring that a message (`TAGGED_MSG`) received from an upstream federate (`e1`) is processed before it is sent downstream (`e2`), the system maintains consistency in the logical time progression and event causality. This is crucial for the correctness of simulations that rely on the accurate modeling of time and event dependencies across different components in a federated system. The use of logical time tags and the requirement that events are processed in the correct order prevent causality violations and ensure that the simulation's state evolves in a manner that is consistent with the intended model.
+Formula 11 states:
 
-## Sentence 13
+```
+(((e1
+      is
+      the
+      first
+      event
+      satisfying
+      (λ
+        e1
+        . ((e1 is (Receiving PORT_ABS)))
+        ∧ ((Federate of e1 is directly upstream of federate of e2))
+        ∧ ((Tag e1) = (Tag e2)))))
+  ∧ ((e2 is (Sending PORT_ABS))))
+⇒ (e1 ≺ e2)
+```
 
-Sentence 13 states:
+### In-depth syntactic explanation
 
-`(((((e1 is (Receiving PORT_ABS))) ∨ ((e1 is (Receiving TAGGED_MSG)))) ∧ (Federate(e1) = Federate(e2)) ∧ ((Tag e1) ≤ (Tag e2))) ∧ (((e2 is (Receiving LTC))))) ⇒ (e1 ≺ e2)`
+To break down the antecedent of the implication into its sub-formulas and analyze when they are true, we will start by examining the atomic sub-formulas and then progress to larger sub-formulas:
 
-Here is an LLM's explanation of when sentence 13 will make a guarantee about two events, e1 and e2:
+1. Atomic Sub-formulas:
 
-To analyze the given sentence, let's break down its subexpressions and understand the conditions under which they are true. Then, we'll synthesize these conditions to understand what must be true for the sentence to guarantee that $e1$ must occur before $e2$.
+   - $e_1$ is (Receiving PORT_ABS): This atomic sub-formula is true when event $e_1$ in the RTI involves receiving a PORT_ABS message.
+   - Federate of $e_1$ is directly upstream of federate of $e_2: This atomic sub-formula is true when the federate associated with event $e_1$ is directly upstream of the federate associated with event $e_2.
+   - Tag $e_1 = Tag $e_2: This atomic sub-formula is true when the logical tag of event $e_1$ is equal to the logical tag of event $e_2.
+   - $e_2$ is (Sending PORT_ABS): This atomic sub-formula is true when event $e_2$ in the RTI involves sending a PORT_ABS message.
 
-### Subexpressions and Their Conditions
+2. Larger Sub-formulas:
 
-1. $(e1 \text{ is (Receiving PORT\_ABS)})$: True when $e1$ is an event where the RTI receives a PORT_ABS message from a federate.
-2. $(e1 \text{ is (Receiving TAGGED\_MSG)})$: True when $e1$ is an event where the RTI receives a TAGGED_MSG from a federate.
-3. $(\text{Federate}(e1) = \text{Federate}(e2))$: True when both $e1$ and $e2$ involve the same federate.
-4. $(\text{Tag } e1 \leq \text{Tag } e2)$: True when the tag associated with $e1$ is less than or equal to the tag associated with $e2$.
-5. $(e2 \text{ is (Receiving LTC)})$: True when $e2$ is an event where the RTI receives an LTC message from a federate.
+   - Sub-formula 1: ((e_1 is (Receiving PORT_ABS)) ∧ (Federate of $e_1$ is directly upstream of federate of $e_2) ∧ (Tag $e_1 = Tag $e_2)): This sub-formula is true when event $e_1$ satisfies all three conditions - receiving a PORT_ABS message, being directly upstream of the federate associated with event $e_2, and having the same logical tag as event $e_2.
+   - Sub-formula 2: (Sub-formula 1) ∧ ($e_2$ is (Sending PORT_ABS)): This sub-formula is true when Sub-formula 1 is true, and event $e_2$ involves sending a PORT_ABS message.
 
-### Synthesis for Guarantee
+3. Largest Sub-formula:
+   - Antecedent: Sub-formula 2: This largest sub-formula is true when Sub-formula 2 is true, meaning that event $e_1$ satisfies the conditions specified in Sub-formula 1 and event $e_2$ involves sending a PORT_ABS message.
 
-For the sentence to guarantee that $e1$ must occur before $e2$, the following conditions must be true:
+By breaking down the antecedent into its sub-formulas and analyzing when each sub-formula is true, we can understand the conditions under which the antecedent as a whole is true, leading to the implication $e_1 ≺ e_2$.
 
-- $e1$ is an event where the RTI is receiving either a PORT_ABS or a TAGGED_MSG from a federate.
-- Both $e1$ and $e2$ involve the same federate.
-- The tag associated with $e1$ is less than or equal to the tag associated with $e2$.
-- $e2$ is an event where the RTI receives an LTC message from a federate.
+_(This explanation was generated in 11 seconds.)_
 
-When these conditions are met, it logically follows that $e1$ precedes $e2$ because:
+### Summary of the meaning of formula 11
 
-- PORT_ABS and TAGGED_MSG messages inform the RTI about the absence or presence of a signal at a specific tag, setting up expectations for what the federate will do or not do at that tag.
-- An LTC message signifies that the federate has completed all actions up to a specific tag.
-- Since $e1$ and $e2$ involve the same federate and $e1$'s tag is less than or equal to $e2$'s, $e1$'s message must logically precede the completion signal (LTC) for $e2$'s tag, ensuring proper order of operations and adherence to the logical timeline.
+The formula states that if the first event $e_1$ in the RTI involves the RTI receiving a PORT_ABS message from a federate that is directly upstream of the federate associated with event $e_2$, and both events have the same logical tag, and event $e_2$ in the RTI involves the RTI sending a PORT_ABS message, then event $e_1$ must occur before event $e_2$ in physical time. In essence, this formula ensures that when the RTI receives a PORT_ABS message from an upstream federate with the same logical tag as a subsequent event where the RTI sends a PORT_ABS message, the order of these events is maintained to prevent inconsistencies and ensure the correct temporal sequence of events within the federated system.
 
-### Correctness of the Guarantee
+_(This explanation was generated in 4 seconds.)_
 
-The sentence provides a correct guarantee about the behavior of federated programs because it ensures that messages affecting the state or behavior of a federate at a specific tag are processed by the RTI before the federate signals completion of that tag. This ordering is crucial for maintaining the consistency and correctness of the federated simulation, ensuring that all federates have a coherent and synchronized view of the simulation state.
+### High-level justification
 
-## Sentence 14
+This guarantee is expected to be correct because it adheres to the logical time progression and message handling protocols within a federated simulation system. The PORT_ABS message indicates the absence of a signal at a specific logical time from an upstream federate to a downstream federate. When the RTI receives a PORT_ABS message from an upstream federate, it signifies that the upstream federate has determined there will be no signal sent at that logical time. Before the RTI can relay this information downstream via sending a PORT_ABS message to the affected downstream federate, it must first receive the message from the upstream federate. This sequence ensures that the absence of a signal is acknowledged upstream before it is communicated downstream, maintaining the integrity of the logical timeline and ensuring that federates act on accurate and timely information regarding the presence or absence of signals. This ordering is crucial for preventing logical inconsistencies and ensuring that the simulation's state progresses in a manner that is consistent with the established rules of logical time and causality.
 
-Sentence 14 states:
+_(This explanation was generated in 13 seconds.)_
 
-`((((e1 is (Receiving FED_ID))) ∧ (Federate(e1) = Federate(e2))) ∧ ((e2 is (Sending ACK)))) ⇒ (e1 ≺ e2)`
+## Formula 12
 
-Here is an LLM's explanation of when sentence 14 will make a guarantee about two events, e1 and e2:
+Formula 12 states:
 
-To analyze the given sentence, let's break it down into its subexpressions and understand the conditions under which each subexpression is true. The sentence is:
+```
+(((e1
+      is
+      the
+      first
+      event
+      satisfying
+      (λ
+        e1
+        . ((e1 is (Receiving TAGGED_MSG)))
+        ∧ ((Federate of e1 is directly upstream of federate of e2))
+        ∧ ((Tag e1) = (Tag e2)))))
+  ∧ ((e2 is (Sending TAGGED_MSG))))
+⇒ (e1 ≺ e2)
+```
 
-$
-((((e1 \text{ is } (\text{Receiving FED\\_ID}))) \land (\text{Federate}(e1) = \text{Federate}(e2))) \land ((e2 \text{ is } (\text{Sending ACK})))) \Rightarrow (e1 \prec e2)
-$
+### In-depth syntactic explanation
 
-### Subexpressions and Their Conditions
+To break down the antecedent of the implication into its sub-formulas and analyze when they are true, we will start by examining the atomic sub-formulas and then progress to larger sub-formulas constructed from these atomic components.
 
-1. **$e1 \text{ is } (\text{Receiving FED\_ID})$**: This is true if the event $e1$ involves the RTI receiving a FED_ID message from a federate.
+1. Atomic Sub-formulas:
 
-2. **$\text{Federate}(e1) = \text{Federate}(e2)$**: This condition is true if both events $e1$ and $e2$ involve the same federate, meaning the messages are associated with the same federate.
+   - $e_1$ is receiving a TAGGED_MSG: This atomic sub-formula is true when event $e_1$ in the RTI involves the RTI receiving a TAGGED_MSG message.
+   - Federate of $e_1$ is directly upstream of federate of $e_2$: This atomic sub-formula is true when the federate associated with event $e_1$ is directly upstream of the federate associated with event $e_2.
+   - Tag of $e_1$ is equal to the tag of $e_2$: This atomic sub-formula is true when the logical tag of event $e_1$ is equal to the logical tag of event $e_2.
+   - $e_2$ is sending a TAGGED_MSG: This atomic sub-formula is true when event $e_2$ in the RTI involves the RTI sending a TAGGED_MSG message.
 
-3. **$e2 \text{ is } (\text{Sending ACK})$**: This is true if the event $e2$ involves the RTI sending an ACK message to a federate.
+2. Larger Sub-formulas:
 
-### Conditions for $e1 \prec e2$
+   - Sub-formula 1: $((e_1$ is the first event satisfying (λ $e_1 . ((e_1$ is receiving TAGGED_MSG)))$: This sub-formula is true when event $e_1$ is the first event in the RTI that involves the RTI receiving a TAGGED_MSG message.
+   - Sub-formula 2: $((Federate$ of $e_1$ is directly upstream of federate of $e_2))$: This sub-formula is true when the federate associated with event $e_1$ is directly upstream of the federate associated with event $e_2.
+   - Sub-formula 3: $((Tag$ of $e_1) = (Tag$ of $e_2))$: This sub-formula is true when the logical tag of event $e_1$ is equal to the logical tag of event $e_2.
 
-For the sentence to guarantee that $e1$ must occur before $e2$ in any execution of the program where both events happen in the RTI, the following conditions must be met:
+3. Largest Sub-formula:
+   - Sub-formula 4: $(((e_1$ is the first event satisfying (λ $e_1 . ((e_1$ is receiving TAGGED_MSG))) ∧ ((Federate$ of $e_1$ is directly upstream of federate of $e_2)) ∧ ((Tag$ of $e_1) = (Tag$ of $e_2))))$: This sub-formula is true when event $e_1$ satisfies all the conditions of being the first event to receive a TAGGED_MSG, having a federate directly upstream of the federate associated with event $e_2, and having the same logical tag as event $e_2.
 
-- The RTI receives a FED_ID message from a federate ($e1$).
-- The same federate is involved in both $e1$ and $e2$.
-- The RTI sends an ACK message to the federate ($e2$).
+By breaking down the antecedent of the implication into these sub-formulas and analyzing when each is true, we can understand the conditions under which the entire antecedent is true, leading to the implication being satisfied.
 
-When these conditions are satisfied, it logically follows that $e1$ must precede $e2$, because the ACK message (event $e2$) is a direct response to receiving the FED_ID message (event $e1$), and the ACK cannot be sent before the FED_ID is received.
+_(This explanation was generated in 13 seconds.)_
 
-### Why the Guarantee is Correct
+### Summary of the meaning of formula 12
 
-The guarantee provided by the sentence is correct because of the nature of the messages involved:
+The formula states that if the first event $e_1$ in the RTI involves the RTI receiving a TAGGED_MSG message from a federate that is directly upstream of the federate associated with event $e_2$, and both events have the same logical tag, and event $e_2$ in the RTI involves the RTI sending a TAGGED_MSG message, then event $e_1$ must occur before event $e_2$ in physical time. In essence, this formula captures a scenario where the RTI receives a message from an upstream federate and subsequently sends a message to a downstream federate with the same logical tag, ensuring that the order of these events is maintained to prevent inconsistencies and ensure the correct temporal sequence of events within the federated system.
 
-- **FED_ID**: This message is sent from a federate to the RTI during program initialization to declare its ID to the RTI. It's the first step in establishing communication between a federate and the RTI.
+_(This explanation was generated in 4 seconds.)_
 
-- **ACK**: This message acknowledges receipt of a federate ID. It is a response to receiving the FED_ID message, signifying that the RTI has successfully received and processed the federate's ID.
+### High-level justification
 
-Since the ACK message is a response to the FED_ID message, it logically follows that the FED_ID message must be received by the RTI before it can send an ACK message back to the federate. This sequence ensures that $e1$ (receiving FED_ID) occurs before $e2$ (sending ACK), maintaining the correct order of initialization events between federates and the RTI.
+This guarantee is expected to be correct because it aligns with the fundamental principles of logical time management and message flow within a federated simulation system. The TAGGED_MSG message represents a signal being sent from one federate to another, with the RTI acting as the intermediary to ensure proper timing and sequencing. When the RTI receives a TAGGED_MSG from an upstream federate, it indicates that a signal is being sent at a specific logical time. Before the RTI can forward this signal to the downstream federate, it must first receive it from the upstream federate. This sequence ensures that signals are propagated in the correct order, respecting the logical time progression and maintaining the causality and consistency of the simulation. The requirement that the RTI receives the message before sending it on ensures that downstream federates only act on signals after they have been properly processed by the RTI, thus preserving the integrity of the simulation's logical timeline and preventing any potential temporal inconsistencies.
 
-## Sentence 15
+_(This explanation was generated in 30 seconds.)_
 
-Sentence 15 states:
+## Formula 13
 
-`((((e1 is (Sending ACK))) ∧ (Federate(e1) = Federate(e2))) ∧ ((e2 is (Receiving TIMESTAMP)))) ⇒ (e1 ≺ e2)`
+Formula 13 states:
 
-Here is an LLM's explanation of when sentence 15 will make a guarantee about two events, e1 and e2:
+```
+(((((e1 is (Receiving PORT_ABS))) ∨ ((e1 is (Receiving TAGGED_MSG))))
+    ∧ (Federate (e1) = Federate (e2))
+    ∧ ((Tag e1) ≤ (Tag e2)))
+  ∧ (((e2 is (Receiving LTC)))))
+⇒ (e1 ≺ e2)
+```
 
-To analyze the given sentence and its subexpressions, let's break it down systematically:
+### In-depth syntactic explanation
 
-### Subexpressions and Their Conditions
+To break down the antecedent of the implication into its sub-formulas and analyze when they are true, we will start with the atomic sub-formulas and then build up to larger sub-formulas:
 
-1. **(e1 is (Sending ACK))**: This subexpression is true when event e1 involves the RTI sending an ACK message to a federate. This message type is used to acknowledge the receipt of a federate ID during program initialization.
+1. Atomic Sub-formulas:
 
-2. **(Federate(e1) = Federate(e2))**: This condition is true when both events e1 and e2 involve the same federate, meaning the RTI's interaction in both events is with the same federate.
+   - $e_1$ is receiving a PORT_ABS: This sub-formula is true when event $e_1$ in the RTI involves the RTI receiving a PORT_ABS message.
+   - $e_1$ is receiving a TAGGED_MSG: This sub-formula is true when event $e_1$ in the RTI involves the RTI receiving a TAGGED_MSG message.
+   - Federate($e_1$) = Federate($e_2$): This sub-formula is true when the federate associated with event $e_1$ is the same as the federate associated with event $e_2$.
+   - Tag $e_1$ ≤ Tag $e_2$: This sub-formula is true when the logical tag of event $e_1$ is less than or equal to the logical tag of event $e_2.
+   - $e_2$ is receiving an LTC: This sub-formula is true when event $e_2$ in the RTI involves the RTI receiving an LTC message.
 
-3. **(e2 is (Receiving TIMESTAMP))**: This subexpression is true when event e2 involves the RTI receiving a TIMESTAMP message from a federate. This message is used during initialization to agree on a start time for the program.
+2. Larger Sub-formulas:
 
-### Conditions for the Sentence to Guarantee e1 ≺ e2
+   - (((($e_1$ is receiving a PORT_ABS) ∨ ($e_1$ is receiving a TAGGED_MSG)) ∧ (Federate($e_1$) = Federate($e_2$)) ∧ (Tag $e_1$ ≤ Tag $e_2$)): This sub-formula is true when event $e_1$ in the RTI involves receiving either a PORT_ABS or a TAGGED_MSG message, the federate associated with $e_1$ is the same as the federate associated with $e_2$, and the logical tag of $e_1$ is less than or equal to the logical tag of $e_2.
+   - ((($e_1$ is receiving a PORT_ABS) ∨ ($e_1$ is receiving a TAGGED_MSG)) ∧ (Federate($e_1$) = Federate($e_2$)) ∧ (Tag $e_1$ ≤ Tag $e_2$)) ∧ ($e_2$ is receiving an LTC): This sub-formula is true when the previous sub-formula is true and event $e_2$ in the RTI involves receiving an LTC message.
 
-For the sentence to guarantee that e1 must occur before e2 in any execution of the program where both events happen in the RTI, the following must be true:
+3. Final Sub-formula:
+   - (((($e_1$ is receiving a PORT_ABS) ∨ ($e_1$ is receiving a TAGGED_MSG)) ∧ (Federate($e_1$) = Federate($e_2$)) ∧ (Tag $e_1$ ≤ Tag $e_2$)) ∧ ($e_2$ is receiving an LTC)) ⇒ ($e_1 ≺ $e_2): This is the complete antecedent of the implication, and it is true when the previous sub-formula is true, indicating that if event $e_1$ satisfies the conditions outlined and event $e_2$ involves receiving an LTC message, then event $e_1$ must occur before event $e_2$ in physical time.
 
-- The RTI sends an ACK message to a federate (e1).
-- The same federate later sends a TIMESTAMP message to the RTI (e2).
-- The interactions in both events involve the same federate.
+_(This explanation was generated in 14 seconds.)_
 
-### Why the Guarantee Is Correct
+### Summary of the meaning of formula 13
 
-The guarantee provided by the sentence is correct based on the logical sequence of initialization events in a federated program:
+The formula specifies that if event $e_1$ in the RTI involves the RTI receiving a PORT_ABS or TAGGED_MSG message from a federate, where the federate associated with $e_1$ is the same as the federate associated with event $e_2, and the logical tag of $e_1$ is less than or equal to the logical tag of $e_2, and event $e_2$ in the RTI involves the RTI receiving an LTC message, then event $e_1$ must occur before event $e_2$ in physical time. In essence, this formula captures a scenario where the RTI receives a message from a federate and subsequently receives an LTC message, ensuring that the order of these events is maintained to prevent inconsistencies and ensure the correct temporal sequence of events within the federated system.
 
-1. **Federate ID Acknowledgement**: A federate sends its ID to the RTI during initialization, and the RTI acknowledges this by sending back an ACK message. This establishes the initial communication and recognition of the federate by the RTI.
+_(This explanation was generated in 4 seconds.)_
 
-2. **Timestamp Agreement**: After acknowledging the federate's ID, the next logical step in the initialization process involves setting up a common start time for the program. This is done through the exchange of TIMESTAMP messages between the federate and the RTI.
+### High-level justification
 
-Given this sequence, it's clear why an ACK message (acknowledging the federate's ID) would logically precede the receipt of a TIMESTAMP message (agreeing on a start time). The requirement that both events involve the same federate further ensures that we are discussing a coherent sequence of initialization steps for a single federate.
+This guarantee is expected to be correct because it adheres to the logical time progression and message processing protocols within a federated simulation system. The PORT_ABS and TAGGED_MSG messages indicate, respectively, the absence or presence of a signal being sent at a specific logical time from one federate to another. The Logical Tag Complete (LTC) message signifies that a federate has completed all its activities up to a certain logical tag. For the simulation to maintain consistency and causality, any message indicating activity or the lack thereof (PORT_ABS or TAGGED_MSG) at a certain logical time must be processed before acknowledging the completion of all activities up to that logical time (LTC). This ensures that the RTI processes events in a sequence that respects the logical timeline, allowing federates to act on accurate and timely information, thereby preserving the integrity of the simulation's logical progression and preventing temporal inconsistencies.
 
-## Sentence 16
+_(This explanation was generated in 11 seconds.)_
 
-Sentence 16 states:
+## Formula 14
 
-`((((e1 is (Receiving TIMESTAMP))) ∧ (Federate(e1) = Federate(e2))) ∧ ((e2 is (Sending TIMESTAMP)))) ⇒ (e1 ≺ e2)`
+Formula 14 states:
 
-Here is an LLM's explanation of when sentence 16 will make a guarantee about two events, e1 and e2:
+```
+((((e1 is (Receiving FED_ID))) ∧ (Federate (e1) = Federate (e2))) ∧ ((e2 is
+(Sending ACK))))
+⇒ (e1 ≺ e2)
+```
 
-To analyze the given sentence, let's break it down into its subexpressions and understand the conditions under which each is true. The sentence in question is:
+### In-depth syntactic explanation
 
-$
-((((e1 \text{ is } (\text{Receiving TIMESTAMP}))) \land (\text{Federate}(e1) = \text{Federate}(e2))) \land ((e2 \text{ is } (\text{Sending TIMESTAMP})))) \Rightarrow (e1 \prec e2)
-$
+To break down the antecedent of the implication into its sub-formulas, we start by analyzing the atomic sub-formulas:
 
-### Subexpressions and Conditions
+1. $e_1$ is receiving a FED_ID message: This sub-formula is true when event $e_1$ in the RTI involves the RTI receiving a Federate ID (FED_ID) message.
+2. $Federate(e_1) = Federate(e_2)$: This sub-formula is true when the federate associated with event $e_1$ is the same as the federate associated with event $e_2$.
+3. $e_2$ is sending an ACK message: This sub-formula is true when event $e_2$ in the RTI involves the RTI sending an Acknowledgement (ACK) message.
 
-1. **$e1 \text{ is } (\text{Receiving TIMESTAMP})$**: This subexpression is true if event $e1$ involves the RTI receiving a TIMESTAMP message from a federate.
+Next, we consider the larger sub-formulas constructed from the atomic sub-formulas:
 
-2. **$\text{Federate}(e1) = \text{Federate}(e2)$**: This subexpression is true if both events $e1$ and $e2$ involve the same federate, meaning they are actions either from or to the same federate.
+- $((e_1$ is receiving a FED_ID$) \land (Federate(e_1) = Federate(e_2)))$: This sub-formula is true when event $e_1$ in the RTI is receiving a FED_ID message, and the federate associated with $e_1$ is the same as the federate associated with $e_2$.
+- $(e_2$ is sending an ACK$)$: This sub-formula is true when event $e_2$ in the RTI is sending an ACK message.
 
-3. **$e2 \text{ is } (\text{Sending TIMESTAMP})$**: This subexpression is true if event $e2$ involves the RTI sending a TIMESTAMP message to a federate.
+Finally, we analyze the entire antecedent of the implication:
 
-### Analysis for Guarantee
+- $(((e_1$ is receiving a FED_ID$) \land (Federate(e_1) = Federate(e_2))) \land (e_2$ is sending an ACK$))$: This sub-formula is true when event $e_1$ in the RTI is receiving a FED_ID message from the same federate as event $e_2$, and event $e_2$ is sending an ACK message.
 
-For the sentence to guarantee that $e1$ must occur before $e2$ in any execution of the program where both events happen in the RTI, the following conditions must be true:
+Therefore, the entire antecedent is true when event $e_1$ involves receiving a FED_ID message from the same federate as event $e_2$, and event $e_2$ is sending an ACK message. This analysis provides a detailed breakdown of when each sub-formula is true, leading to the truth of the entire antecedent in the given implication.
 
-- The RTI receives a TIMESTAMP message from a federate ($e1$).
-- The same federate is involved in both $e1$ and $e2$.
-- The RTI sends a TIMESTAMP message to a federate ($e2$).
+_(This explanation was generated in 11 seconds.)_
 
-When these conditions are met, it logically follows that $e1$ (receiving a TIMESTAMP message) must occur before $e2$ (sending a TIMESTAMP message) because the RTI must first receive the TIMESTAMP from the federate before it can send a TIMESTAMP message back to the federate or process it further.
+### Summary of the meaning of formula 14
 
-### Why the Guarantee is Correct
+The formula states that if event $e_1$ in the RTI involves the RTI receiving a Federate ID (FED_ID) message and the federate associated with $e_1$ is the same as the federate associated with event $e_2, and event $e_2$ in the RTI involves the RTI sending an Acknowledgement (ACK) message, then event $e_1$ must occur before event $e_2$ in physical time. In simpler terms, this formula ensures that when the RTI receives a FED_ID message from a federate and subsequently the RTI sends an ACK message to the same federate, the FED_ID reception must precede the ACK transmission in the temporal sequence of events within the federated system.
 
-The guarantee provided by the sentence is correct because of the logical sequence of events in federated programs. During initialization, federates and the RTI agree on a start time, which involves exchanging TIMESTAMP messages. A federate must first send its TIMESTAMP to the RTI, which the RTI then acknowledges or acts upon by sending a TIMESTAMP message back to the federate or to other federates. This sequence ensures synchronization and agreement on the simulation start time across all federates. Therefore, the RTI receiving a TIMESTAMP message from a federate logically precedes the RTI sending a TIMESTAMP message, making the guarantee about the behavior of federated programs correct.
+_(This explanation was generated in 4 seconds.)_
 
-## Sentence 17
+### High-level justification
 
-Sentence 17 states:
+This guarantee is expected to be correct because it reflects the fundamental process of federate registration and acknowledgment within a federated simulation system. When a federate sends its Federate ID (FED_ID) to the RTI, it is essentially announcing its presence and requesting to be part of the simulation. The RTI, upon receiving this FED_ID, processes the registration and then sends back an Acknowledgement (ACK) to confirm the federate's successful registration. This sequence—receiving the FED_ID before sending the ACK—is essential for ensuring that the federate is recognized and registered by the RTI before any acknowledgment of participation is communicated. This order of operations is a basic requirement for the initialization and management of federates within the system, ensuring that each federate is properly accounted for before proceeding with the simulation activities.
 
-`((((e1 is (Sending TIMESTAMP))) ∧ (Federate(e1) = Federate(e2))) ∧ (((e2 is (Receiving NET))) ∧ (¬((Tag e2) ≠ 0)))) ⇒ (e1 ≺ e2)`
+_(This explanation was generated in 12 seconds.)_
 
-Here is an LLM's explanation of when sentence 17 will make a guarantee about two events, e1 and e2:
+## Formula 15
 
-To analyze the given sentence, let's break it down into its subexpressions and understand the conditions under which each subexpression is true. Then, we will synthesize these insights to understand the overall condition for the sentence to guarantee that $e1$ must occur before $e2$.
+Formula 15 states:
 
-### Subexpressions and Conditions
+```
+((((e1 is (Sending ACK))) ∧ (Federate (e1) = Federate (e2)))
+  ∧ ((e2 is (Receiving TIMESTAMP))))
+⇒ (e1 ≺ e2)
+```
 
-1. $(e1 \text{ is } (\text{Sending TIMESTAMP}))$: This subexpression is true if event $e1$ involves the RTI sending a TIMESTAMP message to a federate. TIMESTAMP messages are used during initialization to synchronize start times.
+### In-depth syntactic explanation
 
-2. $(\text{Federate}(e1) = \text{Federate}(e2))$: This condition is true if both $e1$ and $e2$ involve the same federate, meaning they are actions (either sending or receiving messages) related to the same federate.
+To break down the antecedent of the implication into its sub-formulas and analyze when they are true, we will start by examining the atomic sub-formulas and then progress to larger sub-formulas:
 
-3. $(e2 \text{ is } (\text{Receiving NET}))$: This subexpression is true if event $e2$ involves the RTI receiving a NET (Next Event Tag) message from a federate. NET messages declare the time of the next scheduled event at a federate.
+1. Atomic Sub-formulas:
 
-4. $(\neg((\text{Tag } e2) \neq 0))$: This condition is true if the tag associated with $e2$ is equal to 0. It negates the inequality, so it asserts that the tag of $e2$ must be 0.
+   - $e_1$ is sending an ACK: This sub-formula is true when event $e_1$ in the RTI involves the RTI sending an Acknowledgement (ACK) message.
+   - Federate($e_1$) = Federate($e_2$): This sub-formula is true when the federate associated with event $e_1$ is the same as the federate associated with event $e_2$.
+   - $e_2$ is receiving a TIMESTAMP: This sub-formula is true when event $e_2$ in the RTI involves the RTI receiving a TIMESTAMP message.
 
-### Overall Condition for the Sentence
+2. Larger Sub-formulas:
 
-For the sentence to guarantee that $e1$ must occur before $e2$ in any execution of the program where both events happen in the RTI, the following conditions must be met:
+   - ((e_1 is sending ACK) ∧ (Federate($e_1$) = Federate($e_2$))): This sub-formula is true when both the RTI is sending an ACK message and the federate associated with $e_1$ is the same as the federate associated with $e_2$.
+   - ((e_2 is receiving TIMESTAMP)): This sub-formula is true when event $e_2$ in the RTI involves the RTI receiving a TIMESTAMP message.
 
-- $e1$ is an event where the RTI sends a TIMESTAMP message to a federate.
-- $e2$ is an event where the RTI receives a NET message from the same federate involved in $e1$.
-- The tag associated with $e2$ is 0.
+3. Full Antecedent:
+   - (((e_1 is sending ACK) ∧ (Federate($e_1$) = Federate($e_2$)) ∧ ((e_2 is receiving TIMESTAMP))): This sub-formula is true when the RTI sends an ACK message, the federate associated with $e_1$ is the same as the federate associated with $e_2$, and the RTI receives a TIMESTAMP message.
 
-### Why the Guarantee is Correct
+Therefore, the full antecedent of the implication is true when the RTI sends an ACK message, the federate associated with $e_1$ is the same as the federate associated with $e_2$, and the RTI receives a TIMESTAMP message. This breakdown helps understand the conditions under which the antecedent of the implication holds true.
 
-The TIMESTAMP message is part of the initialization process, where federates and the RTI synchronize on a start time. The NET message, on the other hand, indicates the time of the next scheduled event at a federate and is part of the operational phase after initialization.
+_(This explanation was generated in 10 seconds.)_
 
-Since TIMESTAMP is related to initialization and must logically precede operational messages like NET, and given that both events involve the same federate and the NET message has a tag of 0 (indicating the start of scheduled events), it makes logical sense that $e1$ (sending TIMESTAMP) must occur before $e2$ (receiving NET). This ensures proper sequence in the initialization and operational phases of federated program execution.
+### Summary of the meaning of formula 15
 
-## Sentence 18
+The formula states that if event $e_1$ in the RTI involves the RTI sending an Acknowledgement (ACK) message to a federate, where the federate associated with $e_1$ is the same as the federate associated with event $e_2, and event $e_2$ in the RTI involves the RTI receiving a TIMESTAMP message, then event $e_1$ must occur before event $e_2$ in physical time. In essence, this formula specifies that when the RTI sends an ACK message to a federate and subsequently receives a TIMESTAMP message, the order of these events is such that the sending of the ACK message precedes the receipt of the TIMESTAMP message, ensuring a sequential and orderly flow of communication and actions within the federated system.
 
-Sentence 18 states:
+_(This explanation was generated in 4 seconds.)_
 
-`((((e1 is (Receiving TIMESTAMP)))) ∧ (((e2 is (Receiving LTC))) ∨ ((e2 is (Receiving PORT_ABS))) ∨ ((e2 is (Receiving TAGGED_MSG))) ∨ ((e2 is (Sending TAG))) ∨ ((e2 is (Sending PTAG))) ∨ ((e2 is (Sending PORT_ABS))) ∨ ((e2 is (Sending TAGGED_MSG))) ∨ ((e2 is (Sending STOP_GRN))) ∨ ((e2 is (Sending STOP_REQ))) ∨ ((e2 is (Receiving STOP_REQ))) ∨ ((e2 is (Receiving STOP_REQ_REP))))) ⇒ (e1 ≺ e2)`
+### High-level justification
 
-Here is an LLM's explanation of when sentence 18 will make a guarantee about two events, e1 and e2:
+This guarantee is expected to be correct because it aligns with the standard procedure for federate registration and initialization within a federated simulation system. Initially, a federate sends its Federate ID (FED_ID) to the RTI to register its presence. Upon successfully processing this registration, the RTI sends an Acknowledgement (ACK) back to the federate. This ACK serves as confirmation that the federate's registration has been recognized. Following this, the federate may send a TIMESTAMP message to the RTI, indicating its agreement on the start time for the simulation or acknowledging the synchronized time. The sequence—where the RTI sends an ACK before receiving a TIMESTAMP message—ensures that the federate is fully registered and acknowledged by the RTI before any simulation time-related communication takes place. This ordering is crucial for maintaining the integrity of the simulation's initialization phase, ensuring that all federates are properly registered and synchronized before proceeding with the simulation activities.
 
-To analyze the given sentence, let's break down its components and understand the conditions under which each subexpression is true. We'll then synthesize these insights to understand what needs to be true for the sentence to guarantee that $e1$ must occur before $e2$ in any execution of the program where both events happen in the RTI.
+_(This explanation was generated in 12 seconds.)_
 
-### Subexpressions and Their Conditions
+## Formula 16
 
-1. **$(e1 \text{ is } (\text{Receiving TIMESTAMP}))$**: This subexpression is true when event $e1$ involves the RTI receiving a TIMESTAMP message from a federate. TIMESTAMP messages are used during initialization to synchronize start times.
+Formula 16 states:
 
-2. **$(e2 \text{ is } (\text{Receiving LTC}))$**: True when $e2$ is an event where the RTI receives an LTC (Logical Tag Complete) message, indicating a federate has finished executing a particular tag.
+```
+((((e1 is (Receiving TIMESTAMP))) ∧ (Federate (e1) = Federate (e2)))
+  ∧ ((e2 is (Sending TIMESTAMP))))
+⇒ (e1 ≺ e2)
+```
 
-3. **$(e2 \text{ is } (\text{Receiving PORT\_ABS}))$**: True when $e2$ involves the RTI receiving a PORT_ABS message, indicating the absence of a signal at a downstream federate's port at a specific tag.
+### In-depth syntactic explanation
 
-4. **$(e2 \text{ is } (\text{Receiving TAGGED\_MSG}))$**: True when $e2$ is the RTI receiving a TAGGED_MSG, indicating the presence of a signal at a downstream federate's port at a specific tag.
+To break down the antecedent of the implication into its sub-formulas, we start by analyzing the atomic sub-formulas and then build up to larger sub-formulas:
 
-5. **$(e2 \text{ is } (\text{Sending TAG}))$**: True when $e2$ involves the RTI sending a TAG (Tag Advance Grant) message, allowing a federate to proceed to a specific tag.
+1. Atomic Sub-formulas:
 
-6. **$(e2 \text{ is } (\text{Sending PTAG}))$**: True when $e2$ is the RTI sending a PTAG (Provisional Tag Advance Grant), allowing a federate to proceed up to, but not including, a specific tag.
+   - $e_1$ is receiving a TIMESTAMP: This sub-formula is true when event $e_1$ in the RTI involves the RTI receiving a TIMESTAMP message.
+   - Federate($e_1$) = Federate($e_2$): This sub-formula is true when the federate associated with event $e_1$ is the same as the federate associated with event $e_2$.
+   - $e_2$ is sending a TIMESTAMP: This sub-formula is true when event $e_2$ in the RTI involves the RTI sending a TIMESTAMP message.
 
-7. **$(e2 \text{ is } (\text{Sending PORT\_ABS}))$**, **$(e2 \text{ is } (\text{Sending TAGGED\_MSG}))$**, **$(e2 \text{ is } (\text{Sending STOP\_GRN}))$**, **$(e2 \text{ is } (\text{Sending STOP\_REQ}))$**, **$(e2 \text{ is } (\text{Receiving STOP\_REQ}))$**, **$(e2 \text{ is } (\text{Receiving STOP\_REQ\_REP}))$**: These subexpressions involve various other message types being sent or received by the RTI, each with its specific role in the coordination of federates and their logical time progression or program termination.
+2. Larger Sub-formulas:
 
-### Guarantee for $e1 \prec e2$
+   - ((e_1 is (Receiving TIMESTAMP))) ∧ (Federate($e_1$) = Federate($e_2$)): This sub-formula is true when event $e_1$ in the RTI is receiving a TIMESTAMP message and the federate associated with $e_1$ is the same as the federate associated with $e_2$.
+   - (e_2 is (Sending TIMESTAMP)): This sub-formula is true when event $e_2$ in the RTI is sending a TIMESTAMP message.
 
-For the sentence to guarantee that $e1$ must occur before $e2$, the largest subexpression preceding the $\Rightarrow$ symbol must be true. This means:
+3. Full Antecedent:
+   - (((e_1 is (Receiving TIMESTAMP))) ∧ (Federate($e_1$) = Federate($e_2$))) ∧ ((e_2 is (Sending TIMESTAMP))): This sub-formula is true when event $e_1$ in the RTI is receiving a TIMESTAMP message, the federate associated with $e_1$ is the same as the federate associated with $e_2$, and event $e_2$ in the RTI is sending a TIMESTAMP message.
 
-- $e1$ must be an event where the RTI is receiving a TIMESTAMP message, which is part of the initialization phase to synchronize start times.
-- $e2$ must be an event associated with further progression in the program, such as receiving or sending messages that indicate the advancement of logical time, the completion of a tag, or the coordination of program termination.
+By breaking down the antecedent into its sub-formulas, we can understand the conditions under which each sub-formula is true and how they collectively contribute to the truth of the larger sub-formulas and the full antecedent.
 
-### Why This Guarantee Is Correct
+_(This explanation was generated in 8 seconds.)_
 
-The guarantee provided by the sentence is correct because it aligns with the logical progression of a federated program's execution:
+### Summary of the meaning of formula 16
 
-- **Initialization First**: Receiving a TIMESTAMP message (event $e1$) is part of the initialization phase, setting a common start time for federates. This logically precedes any further actions in the program.
-- **Logical Time Progression**: Events related to advancing logical time, completing tags, or coordinating termination (possible $e2$ events) logically follow initialization. Federates must know the start time before they can proceed with executing tags or sending/receiving further coordination messages.
+The formula states that if event $e_1$ in the RTI involves the RTI receiving a TIMESTAMP message from a federate, where the federate associated with $e_1$ is the same as the federate associated with event $e_2, and event $e_2$ in the RTI involves the RTI sending a TIMESTAMP message, then event $e_1$ must occur before event $e_2$ in physical time. In simpler terms, this formula ensures that when the RTI receives a TIMESTAMP message from a federate and subsequently sends a TIMESTAMP message to the same federate, the reception of the TIMESTAMP message precedes the sending of the TIMESTAMP message, maintaining the temporal sequence of events within the federated system.
 
-This sequence ensures that the program is properly initialized before any execution or coordination based on logical time takes place, preserving the correct order of operations and preventing any temporal inconsistencies.
+_(This explanation was generated in 4 seconds.)_
+
+### High-level justification
+
+This guarantee is expected to be correct because it reflects the logical sequence of operations during the initialization phase of a federated simulation system. The TIMESTAMP message, typically used for synchronizing the start time among federates and the RTI, necessitates a specific order of operations. Initially, a federate sends a TIMESTAMP message to the RTI, proposing or acknowledging a simulation start time. The RTI, upon receiving this message, processes it to coordinate the start time across all federates. The RTI may then send a TIMESTAMP message back to the federate(s) as part of this coordination process. This sequence—where the RTI first receives a TIMESTAMP message from a federate and then sends a TIMESTAMP message—ensures that the simulation's timing is mutually agreed upon and synchronized among all participants. This order is crucial for maintaining the integrity and synchronization of the simulation's initialization, ensuring that all federates commence the simulation with a shared understanding of the starting logical time.
+
+_(This explanation was generated in 15 seconds.)_
+
+## Formula 17
+
+Formula 17 states:
+
+```
+((((e1 is (Sending TIMESTAMP))) ∧ (Federate (e1) = Federate (e2)))
+  ∧ (((e2 is (Receiving NET))) ∧ (¬ ((Tag e2) ≠ 0))))
+⇒ (e1 ≺ e2)
+```
+
+### In-depth syntactic explanation
+
+To analyze when each sub-formula is true, let's break down the antecedent of the implication into its atomic and larger sub-formulas:
+
+1. Atomic Sub-Formulas:
+
+   - $e_1$ is sending a TIMESTAMP: This atomic sub-formula is true when event $e_1$ in the RTI involves the RTI sending a TIMESTAMP message.
+   - Federate($e_1$) = Federate($e_2$): This atomic sub-formula is true when the federate associated with event $e_1$ is the same as the federate associated with event $e_2$.
+   - $e_2$ is receiving a NET: This atomic sub-formula is true when event $e_2$ in the RTI involves the RTI receiving a NET message.
+   - ¬((Tag $e_2$) ≠ 0): This atomic sub-formula is true when the logical tag of event $e_2$ is equal to 0.
+
+2. Larger Sub-Formulas:
+
+   - ((e_1 is (Sending TIMESTAMP)) ∧ (Federate($e_1$) = Federate($e_2$))): This sub-formula is true when event $e_1$ involves the RTI sending a TIMESTAMP message and the federate associated with $e_1$ is the same as the federate associated with $e_2$.
+   - ((e_2 is (Receiving NET)) ∧ (¬((Tag $e_2$) ≠ 0))): This sub-formula is true when event $e_2$ involves the RTI receiving a NET message and the logical tag of $e_2$ is 0.
+
+3. Full Antecedent:
+   - (((e_1 is (Sending TIMESTAMP)) ∧ (Federate($e_1$) = Federate($e_2$))) ∧ ((e_2 is (Receiving NET)) ∧ (¬((Tag $e_2$) ≠ 0)))): This larger sub-formula is true when both the sub-formulas within it are true, i.e., when event $e_1$ sends a TIMESTAMP message to the same federate as event $e_2$, and event $e_2$ receives a NET message with a logical tag of 0.
+
+By breaking down the antecedent into its atomic and larger sub-formulas, we can understand the conditions under which each sub-formula is true and how they collectively contribute to the truth of the full antecedent.
+
+_(This explanation was generated in 10 seconds.)_
+
+### Summary of the meaning of formula 17
+
+The formula states that if the RTI sends a TIMESTAMP message to a federate, and the federate associated with that event is the same as the federate receiving a NET message with a logical tag of 0, then the sending of the TIMESTAMP message by the RTI must precede the receipt of the NET message by the federate in real-world time. In essence, this formula ensures that the synchronization message (TIMESTAMP) sent by the RTI to a federate occurs before the federate receives a NET message with a logical tag of 0, establishing a temporal relationship between these two events within the federated system.
+
+_(This explanation was generated in 5 seconds.)_
+
+### High-level justification
+
+This guarantee is expected to be correct because it aligns with the operational protocols for initializing and synchronizing federates within a federated simulation system. The TIMESTAMP message is crucial for establishing a common start time across all federates, ensuring that the simulation begins in a coordinated manner. The NET (Next Event Tag) message, especially with a logical tag of 0, signifies the scheduling of the very first event within a federate as the simulation starts. For the simulation to operate cohesively, it is essential that all federates are synchronized to the same start time before any events are processed. Therefore, the RTI sending a TIMESTAMP message to a federate must logically precede the federate's processing of a NET message with a logical tag of 0. This sequence ensures that the federate is properly synchronized with the rest of the simulation environment before it begins processing or scheduling events, maintaining the integrity and coherence of the simulation's temporal framework.
+
+_(This explanation was generated in 9 seconds.)_
+
+## Formula 18
+
+Formula 18 states:
+
+```
+((((e1 is (Receiving TIMESTAMP))))
+  ∧
+  (((e2 is (Receiving LTC)))
+    ∨ ((e2 is (Receiving PORT_ABS)))
+    ∨ ((e2 is (Receiving TAGGED_MSG)))
+    ∨ ((e2 is (Sending TAG)))
+    ∨ ((e2 is (Sending PTAG)))
+    ∨ ((e2 is (Sending PORT_ABS)))
+    ∨ ((e2 is (Sending TAGGED_MSG)))
+    ∨ ((e2 is (Sending STOP_GRN)))
+    ∨ ((e2 is (Sending STOP_REQ)))
+    ∨ ((e2 is (Receiving STOP_REQ)))
+    ∨ ((e2 is (Receiving STOP_REQ_REP)))))
+⇒ (e1 ≺ e2)
+```
+
+### In-depth syntactic explanation
+
+To break down the antecedent of the implication into its sub-formulas, we will start by analyzing when each atomic sub-formula is true:
+
+1. $e_1$ is receiving a TIMESTAMP message: This atomic sub-formula is true when event $e_1$ in the RTI involves the RTI receiving a TIMESTAMP message from a federate.
+
+2. $e_2$ is receiving an LTC message: This atomic sub-formula is true when event $e_2$ in the RTI involves the RTI receiving a Logical Tag Complete (LTC) message.
+
+3. $e_2$ is receiving a PORT_ABS message: This atomic sub-formula is true when event $e_2$ in the RTI involves the RTI receiving a PORT_ABS message.
+
+4. $e_2$ is receiving a TAGGED_MSG message: This atomic sub-formula is true when event $e_2$ in the RTI involves the RTI receiving a TAGGED_MSG message.
+
+5. $e_2$ is sending a TAG message: This atomic sub-formula is true when event $e_2$ in the RTI involves the RTI sending a TAG message.
+
+6. $e_2$ is sending a PTAG message: This atomic sub-formula is true when event $e_2$ in the RTI involves the RTI sending a Provisional Tag Advance Grant (PTAG) message.
+
+7. $e_2$ is sending a PORT_ABS message: This atomic sub-formula is true when event $e_2$ in the RTI involves the RTI sending a PORT_ABS message.
+
+8. $e_2$ is sending a TAGGED_MSG message: This atomic sub-formula is true when event $e_2$ in the RTI involves the RTI sending a TAGGED_MSG message.
+
+9. $e_2$ is sending a STOP_GRN message: This atomic sub-formula is true when event $e_2$ in the RTI involves the RTI sending a STOP_GRN message.
+
+10. $e_2$ is sending a STOP_REQ message: This atomic sub-formula is true when event $e_2$ in the RTI involves the RTI sending a STOP_REQ message.
+
+11. $e_2$ is receiving a STOP_REQ message: This atomic sub-formula is true when event $e_2$ in the RTI involves the RTI receiving a STOP_REQ message.
+
+12. $e_2$ is receiving a STOP_REQ_REP message: This atomic sub-formula is true when event $e_2$ in the RTI involves the RTI receiving a STOP_REQ_REP message.
+
+Next, we will analyze the larger sub-formulas constructed from these atomic sub-formulas and determine when they are true.
+
+_(This explanation was generated in 11 seconds.)_
+
+### Summary of the meaning of formula 18
+
+The formula states that if the RTI receives a TIMESTAMP message from a federate and subsequently encounters an event where it receives an LTC, PORT_ABS, TAGGED_MSG, or sends a TAG, PTAG, PORT_ABS, TAGGED_MSG, STOP_GRN, STOP_REQ, or receives STOP_REQ, STOP_REQ_REP message, then the initial event of receiving the TIMESTAMP message must occur before the latter event. In essence, this formula ensures that the RTI processing of a TIMESTAMP message from a federate precedes any subsequent event involving the RTI's interaction with LTC, PORT_ABS, TAGGED_MSG, TAG, PTAG, STOP_GRN, STOP_REQ, or STOP_REQ_REP messages. This logical relationship establishes a sequence of events within the federated system, where the synchronization of time precedes further actions or acknowledgments by the RTI.
+
+_(This explanation was generated in 5 seconds.)_
+
+### High-level justification
+
+This guarantee is expected to be correct because it adheres to the foundational principles of time management and event sequencing within a federated simulation system. The TIMESTAMP message is critical for establishing a synchronized start time across all federates, ensuring that the simulation operates coherently from a common temporal baseline. Following this synchronization, the RTI's receipt of an LTC (Logical Time Complete), PORT_ABS (Port Absent), TAGGED_MSG (Tagged Message), or its sending of TAG (Tag Advance Grant), PTAG (Provisional Tag Advance Grant), STOP_GRN (Stop Granted), STOP_REQ (Stop Request), or interaction with STOP_REQ_REP (Stop Request Reply) messages, represents subsequent steps in the simulation's progression. These steps involve the processing of events, managing logical time advancement, and handling federate interactions. The initial receipt of the TIMESTAMP message logically precedes these actions to ensure that all federates and the RTI are aligned in time before any simulation events are processed or any logical time advancements are made. This sequence maintains the integrity of the simulation's logical timeline, ensuring that events unfold in a manner that is consistent with the established temporal framework and the causality of interactions.
+
+_(This explanation was generated in 11 seconds.)_

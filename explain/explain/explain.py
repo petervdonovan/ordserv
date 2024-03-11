@@ -297,7 +297,7 @@ print(
 
 t0 = time.time()
 conversation: Messages = start_conversation()
-for i, axiom in enumerate(axioms[:4], start=1):
+for i, axiom in enumerate(axioms, start=1):
     print(f"## Formula {i}\n")
     print(f"Formula {i} states:\n```\n{format_sexpression(axiom)}```\n")
     print(f"### In-depth syntactic explanation")
