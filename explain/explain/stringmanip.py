@@ -14,7 +14,7 @@ def repair_latex(text: str) -> str:
 
     # Iterate through matches and escape underscores inside \text{} macros
     for match in matches:
-        print(f"match: {match}")
+        # print(f"match: {match}")
         text_inside_macro = match.group(1)
         repaired_text_inside_macro = text_inside_macro.replace("_", r"\_").replace(
             r"\\_", r"\_"
@@ -25,15 +25,15 @@ def repair_latex(text: str) -> str:
     return text
 
 
-print(
-    repair_latex(
-        r"""$
-$
-\left(\left(\text{FIRST} \left(\left(\left(e_1 \text{ is } \left(\text{Sending TAG}\right)\right) \lor \left(e_1 \text{ is } \left(\text{Sending PTAG}\right)\right)\right) \land \left(\text{Federate}\left(e_1\right) = \text{Federate}\left(e_2\right)\right) \land \left(\text{Tag}\left(e_1\right) + \left(\text{largest delay of a connection going out of the federate of } e_1\right) \geq \text{Tag}\left(e_2\right)\right)\right)\right) \land \left(\left(\left(e_2 \text{ is } \left(\text{Receiving PORT\_ABS}\right)\right) \lor \left(e_2 \text{ is } \left(\text{Receiving TAGGED_MSG}\right)\right)\right) \land \neg\left(\left(\text{Fed}\left(e_2\right) \text{ has no upstream with delay } \leq \text{Tag}\left(e_2\right)\right)\right)\right)\right) \Rightarrow \left(e_1 \prec e_2\right)
-$
-"""
-    )
-)
+# print(
+#     repair_latex(
+#         r"""$
+# $
+# \left(\left(\text{FIRST} \left(\left(\left(e_1 \text{ is } \left(\text{Sending TAG}\right)\right) \lor \left(e_1 \text{ is } \left(\text{Sending PTAG}\right)\right)\right) \land \left(\text{Federate}\left(e_1\right) = \text{Federate}\left(e_2\right)\right) \land \left(\text{Tag}\left(e_1\right) + \left(\text{largest delay of a connection going out of the federate of } e_1\right) \geq \text{Tag}\left(e_2\right)\right)\right)\right) \land \left(\left(\left(e_2 \text{ is } \left(\text{Receiving PORT\_ABS}\right)\right) \lor \left(e_2 \text{ is } \left(\text{Receiving TAGGED_MSG}\right)\right)\right) \land \neg\left(\left(\text{Fed}\left(e_2\right) \text{ has no upstream with delay } \leq \text{Tag}\left(e_2\right)\right)\right)\right)\right) \Rightarrow \left(e_1 \prec e_2\right)
+# $
+# """
+#     )
+# )
 
 
 def format_llm_output(s: str, min_heading_depth=4) -> str:
@@ -149,6 +149,6 @@ def format_sexpression(input_str: str) -> str:
 
 
 # Example usage:
-sexpression_str = "(((FIRST ((((e1 is (Sending PTAG))) ∧ ((Federate of e1 is upstream of federate of e2 via a zero-delay connection)) ∧ ((Tag e1) = (Tag e2))) ∨ ((((e1 is (Receiving NET))) ∨ ((e1 is (Sending STOP_GRN)))) ∧ ((Federate(e1) = Federate(e2)) ∨ ((Federate of e1 is directly upstream of federate of e2))) ∧ ((Tag e1) = (Tag e2)))))) ∧ (((e2 is (Sending PTAG))) ∧ ((Tag e2) ≠ 0))) ⇒ (e1 ≺ e2)"
-formatted_sexpression = format_sexpression(sexpression_str)
-print(formatted_sexpression)
+# sexpression_str = "(((FIRST ((((e1 is (Sending PTAG))) ∧ ((Federate of e1 is upstream of federate of e2 via a zero-delay connection)) ∧ ((Tag e1) = (Tag e2))) ∨ ((((e1 is (Receiving NET))) ∨ ((e1 is (Sending STOP_GRN)))) ∧ ((Federate(e1) = Federate(e2)) ∨ ((Federate of e1 is directly upstream of federate of e2))) ∧ ((Tag e1) = (Tag e2)))))) ∧ (((e2 is (Sending PTAG))) ∧ ((Tag e2) ≠ 0))) ⇒ (e1 ≺ e2)"
+# formatted_sexpression = format_sexpression(sexpression_str)
+# print(formatted_sexpression)

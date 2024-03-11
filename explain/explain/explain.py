@@ -74,25 +74,27 @@ syntax_explanation = """
 
 Formulas are stated in an S-expression-like format. For example, where we write `(f e_1)`, we mean "f of $e_1$".
 
-All events are described from the perspective of the RTI. For example, where we write `(e_1 is (Receiving PORT_ABS))`, we mean that $e_1$ is an event in which the RTI receives a PORT_ABS message from a federate; in other words, the federate informed the RTI about when a port is going to be absent. Similarly, where we write `((e_1 is (Sending PORT_ABS)))`, we mean that `e_1` is an event in which the RTI is sending a PORT_ABS to a federate; in other words, the RTI is informing the federate about when one of the ports of that federate is going to be absent.
-
-A formula of the form `(FIRST X)`, where $X$ is some predicate, says that $e_1$ is the first event such that the predicate X is true of $e_1$ and $e_2$.
-
-A formula of the form `(FedwiseFIRST X)`, where `X` is some predicate, says that $e_1$ is the first event occurring at a given federate such that the predicate `X` is true of $e_1$ and $e_2$.
-
-Formulas that use `FIRST` and `FedwiseFIRST` are useful for describing the first event $e_1$ that could possibly cause some other event $e_2$. When we know that $e_2$ must have a cause, but there are multiple events that could have caused $e_2$, we know that the first possible cause of $e_2$ would have had to happen before $e_2$. For example, when we write `(FIRST (X e1))`, where $X$ is some predicate, probably the set of events that make $X$ true is the set of events that could potentially cause some other event $e_2$, and `(FIRST (X e_1))` denotes the first event that could potentially cause $e_2$.
+All events are described from the perspective of the RTI. For example, where we write `(e_1 is (Receiving PORT_ABS))`, we mean that $e_1$ is an event in which a federate sends a PORT_ABS message, and the RTI receives the PORT_ABS message. Similarly, where we write `((e_1 is (Sending PORT_ABS)))`, we mean that `e_1` is an event in which the RTI is sends a PORT_ABS message, and a federate receives the PORT_ABS message.
 """
+
+# A formula of the form `(FIRST X)`, where $X$ is some predicate, says that $e_1$ is the first event such that the predicate X is true of $e_1$ and $e_2$.
+
+# A formula of the form `(FedwiseFIRST X)`, where `X` is some predicate, says that $e_1$ is the first event occurring at a given federate such that the predicate `X` is true of $e_1$ and $e_2$.
+
+# Formulas that use `FIRST` and `FedwiseFIRST` are useful for describing the first event $e_1$ that could possibly cause some other event $e_2$. When we know that $e_2$ must have a cause, but there are multiple events that could have caused $e_2$, we know that the first possible cause of $e_2$ would have had to happen before $e_2$. For example, when we write `(FIRST (X e1))`, where $X$ is some predicate, probably the set of events that make $X$ true is the set of events that could potentially cause some other event $e_2$, and `(FIRST (X e_1))` denotes the first event that could potentially cause $e_2$.
 
 context = f"""
 {lf_context}
 
 {syntax_explanation}
 """
-
+# Logical operators include the binary operators `∧`, `∨`, and `⇒`, as well as the unary operators `¬`, `FIRST`, and `FedwiseFIRST`. Remember to address the subformula that results from each application of an operator, including the FIRST or FedwiseFIRST operators, and be extra careful when you address the subexpressions that result from FIRST or FedwiseFIRST operators.
 subformulas_prompt = """
-Break the formula down into its sub-formulas to analyze when its sub-formulas are true. Start by stating when the atomic sub-formulas are true; then, state when the larger sub-formulas that are constructed from the atomic sub-formulas are true, and then state when the sub-formulas constructed from those larger sub-formulas are true, and so on, until you have stated when even the largest sub-formulas are true. Logical operators include the binary operators `∧`, `∨`, and `⇒`, as well as the unary operators `¬`, `FIRST`, and `FedwiseFIRST`. Remember to address the subformula that results from each application of an operator, including the FIRST or FedwiseFIRST operators, and be extra careful when you address the subexpressions that result from FIRST or FedwiseFIRST operators.
+Break the formula down into its sub-formulas to analyze when its sub-formulas are true. Start by stating when the atomic sub-formulas are true; then, state when the larger sub-formulas that are constructed from the atomic sub-formulas are true, and then state when the sub-formulas constructed from those larger sub-formulas are true, and so on, until you have stated when even the largest sub-formulas are true. When you are stating when some sub-formula is true, you should start by stating the whole sub-formula, without any abbreviations or omissions, before you state when it is true.
 
-Use LaTeX where appropriate. Stop short of discussing the meaning of the whole formula, but do provide a self-contained explanation of when each sub-formula is true, even if that means restating facts about some of the smaller sub-formulas.
+Remember, every use of the binary operators `∧`, `∨`, and `⇒`, as well as the unary operators `¬`, `first e1 satisfying`, and `first e1 in a given federate satisfying`, corresponds to a sub-formula. For instance, a sub-formula of the form `((...) ∧ (...) ∧ (...))` represents one use of the operator `∧`. Similarly, a sub-formula of the form `(first e1 in a given federate satisfying (...))` represents a use of the operator `first e1 in a given federate satisfying`.
+
+Use LaTeX where appropriate. Provide a detailed, self-contained explanation of when each sub-formula is true, even if that means restating facts about some of the smaller sub-formulas.
 """
 # If there are expressions of the form `(FIRST X)` or `(FedwiseFIRST X)` for some predicate $X$, don't forget to explain those subexpressions, too.
 
@@ -100,6 +102,8 @@ Use LaTeX where appropriate. Stop short of discussing the meaning of the whole f
 # It is guaranteed that the formula given above is always true. That is, for all events $e_1$ and $e_2$ satisfy the antecedent of the implication, $e_1$ is guaranteed to occur before $e_2$ whenever both occur in the execution of a federated program.
 whole_formula_prompt = """
 Use your analysis of the formula to carefully state what would need to be true about $e_1$ and $e_2$ in order for the formula to guarantee that in any execution of the program where $e_1$ and $e_2$ both happen in the RTI, $e_1$ must occur before $e_2$. Remember, the formula makes this guarantee when $e_1$ and $e_2$ satisfy the antecedent of the implication.
+
+Don't ignore how operators like `first e1 satisfying` affect the meaning of the formula. Remember that "sending" means that the RTI is sending a message whereas a federate is receiving the message, and remember that "receiving" means that the RTI is receiving a message whereas a federate is sending the message. Don't leave any ambiguity about which entity is sending or receiving a given message.
 
 Don't include extraneous information about what you think is important. Don't try to relate the formula to any broader themes. Please just answer the question.
 """
