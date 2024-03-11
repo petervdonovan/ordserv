@@ -116,11 +116,11 @@ Use LaTeX where appropriate. Provide a detailed, self-contained explanation of w
 # Use your analysis of the formula to carefully state what would need to be true about $e_1$ and $e_2$ in order for the formula to guarantee that in any physical, real-life execution of the program where $e_1$ and $e_2$ both happen in the RTI, $e_1$ must occur before $e_2$ in physical time. Remember, the formula makes this guarantee when $e_1$ and $e_2$ satisfy the antecedent of the implication.
 
 whole_formula_prompt = """
-We guarantee that the formula given above is true for all $e_1$ and $e_2$. Explain what this guarantee means.
+We guarantee that the formula given above is true for all $e_1$ and $e_2$. Explain what the formula means. You can refer to your analysis above, but make sure that your explanation touches upon all details of the formula's meaning without needing the analysis above in order to make sense.
 
 Don't ignore how operators like `first e1 satisfying` affect the meaning of the formula. Remember that "sending" means that the RTI is sending a message whereas a federate is receiving the message, and remember that "receiving" means that the RTI is receiving a message whereas a federate is sending the message. Don't leave any ambiguity about which entity is sending or receiving a given message.
 
-Don't include extraneous information about what you think is important. Don't try to relate the formula to any broader themes. Please just answer the question.
+Don't include extraneous information about what you think is important. Don't try to relate the formula to any broader themes. Only include information that is specific to this particular formula.
 """
 
 rationale_prompt = """
@@ -269,7 +269,9 @@ def prune_between_axioms(c: Messages) -> Messages:
 
 def print_time():
     global t0
-    print(f"\n\n_(This answer was generated in {round(time.time() - t0)} seconds.)_\n")
+    print(
+        f"\n\n_(This explanation was generated in {round(time.time() - t0)} seconds.)_\n"
+    )
     t0 = time.time()
 
 
@@ -280,9 +282,6 @@ if dry_run:
     print("\n\ndoing a dry run because an argument was passed.\n\n\n")
 # axioms_sorted = sorted(axioms, key=lambda x: -len(x))
 
-print(
-    "In the following, human-generated text or text that is otherwise known to be correct is presented in _italics_."
-)
 print("## Background: LF Federated Execution")
 print()
 print(lf_context)
@@ -290,9 +289,15 @@ print()
 print("## Preliminary Syntax Explanation")
 print()
 print(syntax_explanation)
+
+
+print(
+    '\n---\n\n**The above context, which was provided to an LLM, was written by a human. However, most of the remaining text in this document is machine-generated. Human-generated text or commentary that does not come from an LLM will be presented in _italics_. Be warned that some of the content produced by the LLM, _especially_ the content labeled as "high-level justification," may contain conceptual mistakes that in a human would indicate a lack of deep understanding.**\n'
+)
+
 t0 = time.time()
-for i, axiom in enumerate(axioms, start=1):
-    conversation: Messages = start_conversation()
+conversation: Messages = start_conversation()
+for i, axiom in enumerate(axioms[:4], start=1):
     print(f"## Formula {i}\n")
     print(f"Formula {i} states:\n```\n{format_sexpression(axiom)}```\n")
     print(f"### In-depth syntactic explanation")
@@ -305,9 +310,9 @@ for i, axiom in enumerate(axioms, start=1):
     print_time()
     conversation = prune_between_axioms(conversation)
     print(f"### High-level justification\n")
-    print(
-        "_Warning: The following text is especially likely to contain conceptual mistakes._"
-    )
+    # print(
+    #     "_Warning: The following text is a response to an especially complex question and is therefore likely to contain conceptual mistakes._\n"
+    # )
     answer, conversation = get_rationale_explanation(conversation, axiom)
     print(answer)
     print_time()
