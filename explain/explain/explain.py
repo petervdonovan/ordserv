@@ -156,7 +156,7 @@ Consider the following formula:
         },
     }
     messages = messages + [question]
-    answer = do_query(messages, 0.1)
+    answer = do_query(messages, 0.1, "gpt-3.5-turbo-0125")
     return (
         answer,
         messages
@@ -179,7 +179,7 @@ def get_whole_formula_explanation(
         },
     }
     messages = messages + [question]
-    answer = do_query(messages, 0.3)
+    answer = do_query(messages, 0.3, "gpt-3.5-turbo-0125")
     return (
         answer,
         messages
@@ -203,7 +203,7 @@ def get_rationale_explanation(messages: Messages, _axiom: str) -> tuple[str, Mes
         },
     }
     messages = messages + [question]
-    answer = do_query(messages, 0.3)
+    answer = do_query(messages, 0.3, "gpt-4-0125-preview")
     return (
         answer,
         messages
@@ -216,7 +216,11 @@ def get_rationale_explanation(messages: Messages, _axiom: str) -> tuple[str, Mes
     )
 
 
-def do_query(messages: Messages, temperature: float) -> str:
+def do_query(
+    messages: Messages,
+    temperature: float,
+    model: Literal["gpt-4-0125-preview", "gpt-3.5-turbo-0125"],
+) -> str:
     global raw_answers
     llm_messages = [message["message"] for message in messages]
     answer: str | None
@@ -225,7 +229,7 @@ def do_query(messages: Messages, temperature: float) -> str:
         answer = "<LLM answer here>"
     else:
         reply = client.chat.completions.create(
-            model="gpt-4-0125-preview",
+            model=model,
             messages=llm_messages,
             temperature=temperature,  # 0.3 has been recommended for code comment generation, which is kind of like what we are doing here. However, it is not clear how much performance actually depends on temperature for this use case.
         ).choices[0]
