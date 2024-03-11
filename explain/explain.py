@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
+from typing import Callable
 from openai import OpenAI
+from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
 
 import subprocess
 import re
@@ -52,17 +54,17 @@ TAGGED_MSG messages that are received from an upstream federate while the upstre
 
 
 syntax_explanation = """
-`e_1 ≺ e_2` means that it is not possible, under any execution of the federated program, for `e_1` to occur after `e_2`.
+`e_1 ≺ e_2` means that it is not possible, under any physical, real-life execution of the federated program, for `e_1` to occur after `e_2`.
 
 Sentences are stated in an S-expression-like format. For example, where we write `(f e_1)`, we mean "f of $e_1$".
 
 All events are described from the perspective of the RTI. For example, where we write `(e_1 is (Receiving PORT_ABS))`, we mean that $e_1$ is an event in which the RTI receives a PORT_ABS message from a federate; in other words, the federate informed the RTI about when a port is going to be absent. Similarly, where we write `((e_1 is (Sending PORT_ABS)))`, we mean that `e_1` is an event in which the RTI is sending a PORT_ABS to a federate; in other words, the RTI is informing the federate about when one of the ports of that federate is going to be absent.
 
-An expression of the form `(FIRST X)`, where $X$ is some predicate, says that $e_1$ is the first event such that the predicate X is true of $e_1$ and $e_2$.
+A formula of the form `(FIRST X)`, where $X$ is some predicate, says that $e_1$ is the first event such that the predicate X is true of $e_1$ and $e_2$.
 
-An expression of the form `(FedwiseFIRST X)`, where `X` is some predicate, says that $e_1$ is the first event occurring at a given federate such that the predicate `X` is true of $e_1$ and $e_2$.
+A formula of the form `(FedwiseFIRST X)`, where `X` is some predicate, says that $e_1$ is the first event occurring at a given federate such that the predicate `X` is true of $e_1$ and $e_2$.
 
-Expressions like that use `FIRST` and `FedwiseFIRST` are useful for describing the first event $e_1$ that could possibly cause some other event $e_2$. When we know that $e_2$ must have a cause, but there are multiple events that could have caused $e_2$, we know that the first possible cause of $e_2$ would have had to happen before $e_2$. For example, when we write `(FIRST (X e1))`, where $X$ is some predicate, probably the set of events that make $X$ true is the set of events that could potentially cause some other event $e_2$, and `(FIRST (X e_1))` denotes the first event that could potentially cause $e_2$.
+Formulas that use `FIRST` and `FedwiseFIRST` are useful for describing the first event $e_1$ that could possibly cause some other event $e_2$. When we know that $e_2$ must have a cause, but there are multiple events that could have caused $e_2$, we know that the first possible cause of $e_2$ would have had to happen before $e_2$. For example, when we write `(FIRST (X e1))`, where $X$ is some predicate, probably the set of events that make $X$ true is the set of events that could potentially cause some other event $e_2$, and `(FIRST (X e_1))` denotes the first event that could potentially cause $e_2$.
 """
 
 context = f"""
@@ -70,58 +72,86 @@ context = f"""
 
 {syntax_explanation}
 """
+# Process the sentence in a post-order traversal that recurses down to the atomic formulas and finishes with the entire sentence. In the post-order traversal, a node is a formula (which may be true or false depending on $e_1$ and $e_2$). When you visit a node/formula, state the conditions under which the formula is true.
 
-full_explanation_prompt = """
-In the following tasks, use some LaTeX where appropriate.
+subformulas_prompt = """
+Break the sentence down into its sub-formulas to analyze when its subformulas are true. Start by stating when the atomic sub-formulas are true and progress up to larger formulas using the logical operators. Logical operators include the binary operators `∧`, `∨`, and `⇒`, as well as the unary operators `¬`, `FIRST`, and `FedwiseFIRST`. Remember to address the subformula that results from each application of an operator, including the FIRST or FedwiseFIRST operators.
 
-Recursively list out the subexpressions that appear in the sentence, and while you do that, state the conditions under which the subexpression is true. Focus on the most complex subexpressions, not just the smallest ones. If there are expressions of the form `(FIRST X)` or `(FedwiseFIRST X)` for some predicate $X$, don't forget to explain those subexpressions, too.
+Use LaTeX where appropriate. Don't provide any extra explanation, and stop short of discussing the meaning of the whole sentence.
+"""
+# If there are expressions of the form `(FIRST X)` or `(FedwiseFIRST X)` for some predicate $X$, don't forget to explain those subexpressions, too.
 
-Then, use your analysis of the subexpressions to carefully state what would need to be true in order for the sentence to guarantee that in any execution of the program where $e_1$ and $e_2$ both happen in the RTI, $e_1$ must occur before $e_2$. Note that the sentence makes this guarantee whenever its largest subexpression (the expression preceding the ⇒ symbol) is true.
 
-Then, use the meaning of the messages and the rules that the RTI and the federates have to follow to briefly describe why we should expect the sentence to provide a correct guarantee about the behavior of federated programs.
+# It is guaranteed that the sentence given above is always true. That is, for all events $e_1$ and $e_2$ satisfy the antecedent of the implication, $e_1$ is guaranteed to occur before $e_2$ whenever both occur in the execution of a federated program.
+whole_formula_prompt = """
+Use your analysis of the sentence to carefully state what would need to be true about $e_1$ and $e_2$ in order for the sentence to guarantee that in any execution of the program where $e_1$ and $e_2$ both happen in the RTI, $e_1$ must occur before $e_2$. Remember, the sentence makes this guarantee when $e_1$ and $e_2$ satisfy the antecedent of the implication.
+"""
+
+rationale_prompt = """
+Use the meaning of the messages and the rules that the RTI and the federates have to follow to briefly describe why we should expect the sentence to provide a correct guarantee about the behavior of federated programs.
 """
 
 # Either state this expectation in terms of a causal relationship, or explain why we need it to be true in order for the federated program to comply with its basic rules of operation.
 
 
-def get_explanation(axiom):
+def get_explanation(
+    axiom: str,
+) -> tuple[str, Callable[[str], list[ChatCompletionMessageParam]]]:
     main_question = f"""
 
 Consider the following sentence:
 
 {repair_axiom(axiom)}
 
-{full_explanation_prompt}
+{subformulas_prompt}
 """
-    print(main_question)
-    return client.chat.completions.create(
-        model="gpt-4-0125-preview",
-        messages=[
-            {
-                "role": "system",
-                "content": "You are good at getting straight to the point.",
-            },
-            {
-                "role": "user",
-                "content": context,
-            },
-            {
-                "role": "user",
-                "content": main_question,
-            },
-        ],
-        temperature=0.3,  # 0.3 has been recommended for code comment generation, which is kind of like what we are doing here. However, it is not clear how much performance actually depends on temperature for this use case.
+    messages: list[ChatCompletionMessageParam] = [
+        {
+            "role": "system",
+            "content": "You are good at getting straight to the point.",
+        },
+        {
+            "role": "user",
+            "content": context,
+        },
+        {
+            "role": "user",
+            "content": main_question,
+        },
+    ]
+    print(messages)  # DEBUG
+    answer: str | None = (
+        client.chat.completions.create(
+            model="gpt-4-0125-preview",
+            messages=messages,
+            temperature=0.1,  # 0.3 has been recommended for code comment generation, which is kind of like what we are doing here. However, it is not clear how much performance actually depends on temperature for this use case.
+        )
+        .choices[0]
+        .message.content
+    )
+    if answer is None:
+        raise RuntimeError("did not get an answer from the LLM")
+    print(answer)
+    print()
+    answer = format_llm_output(answer)
+
+    def get_next(question: str) -> list[ChatCompletionMessageParam]:
+        return messages + [{"role": "assistant"}, {"role": "user", "content": question}]
+
+    return (
+        answer,
+        get_next,
     )
 
 
 # axioms_sorted = sorted(axioms, key=lambda x: -len(x))
 
 
-def repair_axiom(axiom):
+def repair_axiom(axiom: str) -> str:
     return axiom.replace("e1", "e_1").replace("e2", "e_2")
 
 
-def repair_latex(text):
+def repair_latex(text: str) -> str:
     # Define a regular expression pattern to find \text{} macros
     text_macro_pattern = re.compile(r"\\text\{([^{}]*)\}")
 
@@ -140,10 +170,14 @@ def repair_latex(text):
     return text
 
 
-def format_llm_output(s):
+def format_llm_output(s: str, min_heading_depth=4) -> str:
     ret = "  " + s.replace("\n", "\n  ").replace("\(", "$").replace("\)", "$").replace(
         "\[", "$"
     ).replace("\]", "$")
+    for depth in range(1, min_heading_depth):
+        ret = ret.replace(
+            "\n" + "#" * depth + " ", "\n" + "#" * min_heading_depth + " "
+        )
     return repair_latex(ret)
 
 
@@ -157,8 +191,11 @@ print(syntax_explanation)
 for i, axiom in enumerate(axioms[5:6], start=1):
     print(f"## Sentence {i}\n")
     print(f"Sentence {i} states:\n`{axiom}`\n")
-    print(
-        f"Here is an LLM's explanation of when sentence {i} will make a guarantee about two events, $e_1$ and $e_2$:\n"
-    )
-    print(format_llm_output(get_explanation(axiom).choices[0].message.content))
+    print(f"### In-depth syntactic explanation")
+    answer, conversation = get_explanation(axiom)
+    print(answer)
+    print(f"### Summary of the meaning of sentence {i}")
+    # TODO
+    print(f"### High-level justification")
+    # TODO
     print("\n")
