@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 
-from typing import Any, Callable, Iterable, Literal, TypedDict
+from typing import Any, Iterable, Literal, TypedDict
 from openai import OpenAI
 from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
 
 import subprocess
-import re
+from explain.stringmanip import (
+    format_sexpression,
+    repair_axiom,
+    format_llm_output,
+)
 
 client = OpenAI()
 
@@ -153,14 +157,18 @@ Consider the following sentence:
     messages = messages + [question]
     llm_messages = [message["message"] for message in messages]
     print(debug_conversation(llm_messages))  # DEBUG
-    reply = client.chat.completions.create(
-        model="gpt-4-0125-preview",
-        messages=llm_messages,
-        temperature=0.1,  # 0.3 has been recommended for code comment generation, which is kind of like what we are doing here. However, it is not clear how much performance actually depends on temperature for this use case.
-    ).choices[0]
-    answer: str | None = reply.message.content
-    if answer is None:
-        raise RuntimeError("did not get an answer from the LLM")
+    answer: str | None
+    if dry_run:
+        answer = "<LLM answer here>"
+    else:
+        reply = client.chat.completions.create(
+            model="gpt-4-0125-preview",
+            messages=llm_messages,
+            temperature=0.1,  # 0.3 has been recommended for code comment generation, which is kind of like what we are doing here. However, it is not clear how much performance actually depends on temperature for this use case.
+        ).choices[0]
+        answer = reply.message.content
+        if answer is None:
+            raise RuntimeError("did not get an answer from the LLM")
     print(answer)
     print()
     answer = format_llm_output(answer)
@@ -174,41 +182,9 @@ Consider the following sentence:
     )
 
 
+dry_run = False
+
 # axioms_sorted = sorted(axioms, key=lambda x: -len(x))
-
-
-def repair_axiom(axiom: str) -> str:
-    return axiom.replace("e1", "e_1").replace("e2", "e_2")
-
-
-def repair_latex(text: str) -> str:
-    # Define a regular expression pattern to find \text{} macros
-    text_macro_pattern = re.compile(r"\\text\{([^{}]*)\}")
-
-    # Find all matches of \text{} macros in the input text
-    matches = text_macro_pattern.finditer(text)
-
-    # Iterate through matches and escape underscores inside \text{} macros
-    for match in matches:
-        text_inside_macro = match.group(1)
-        repaired_text_inside_macro = text_inside_macro.replace("_", r"\_").replace(
-            r"\\_", r"\_"
-        )
-        repaired_macro = f"\\text{{{repaired_text_inside_macro}}}"
-        text = text.replace(match.group(0), repaired_macro)
-
-    return text
-
-
-def format_llm_output(s: str, min_heading_depth=4) -> str:
-    ret = "  " + s.replace("\n", "\n  ").replace("\(", "$").replace("\)", "$").replace(
-        "\[", "$"
-    ).replace("\]", "$")
-    for depth in range(1, min_heading_depth):
-        ret = ret.replace(
-            "\n" + "#" * depth + " ", "\n" + "#" * min_heading_depth + " "
-        )
-    return repair_latex(ret)
 
 
 print("## Background: LF Federated Execution")
@@ -221,7 +197,7 @@ print(syntax_explanation)
 conversation: Messages = start_conversation()
 for i, axiom in enumerate(axioms[5:6], start=1):
     print(f"## Sentence {i}\n")
-    print(f"Sentence {i} states:\n`{axiom}`\n")
+    print(f"Sentence {i} states:\n`{format_sexpression(axiom)}`\n")
     print(f"### In-depth syntactic explanation")
     answer, conversation = get_explanation(conversation, axiom)
     print(answer)
