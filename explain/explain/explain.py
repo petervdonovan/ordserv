@@ -269,7 +269,7 @@ def prune_between_axioms(c: Messages) -> Messages:
 
 def print_time():
     global t0
-    print(f"\n\n(This answer was generated in {round(time.time() - t0)} seconds.)\n")
+    print(f"\n\n_(This answer was generated in {round(time.time() - t0)} seconds.)_\n")
     t0 = time.time()
 
 
@@ -280,7 +280,9 @@ if dry_run:
     print("\n\ndoing a dry run because an argument was passed.\n\n\n")
 # axioms_sorted = sorted(axioms, key=lambda x: -len(x))
 
-
+print(
+    "In the following, human-generated text or text that is otherwise known to be correct is presented in _italics_."
+)
 print("## Background: LF Federated Execution")
 print()
 print(lf_context)
@@ -289,10 +291,10 @@ print("## Preliminary Syntax Explanation")
 print()
 print(syntax_explanation)
 t0 = time.time()
-for i, axiom in enumerate(axioms[3:5], start=1):
+for i, axiom in enumerate(axioms, start=1):
     conversation: Messages = start_conversation()
     print(f"## Formula {i}\n")
-    print(f"Formula {i} states:\n`{format_sexpression(axiom)}`\n")
+    print(f"Formula {i} states:\n```\n{format_sexpression(axiom)}```\n")
     print(f"### In-depth syntactic explanation")
     answer, conversation = get_subformulas_explanation(conversation, axiom)
     print(answer)
@@ -302,7 +304,10 @@ for i, axiom in enumerate(axioms[3:5], start=1):
     print(answer)
     print_time()
     conversation = prune_between_axioms(conversation)
-    print(f"### High-level justification")
+    print(f"### High-level justification\n")
+    print(
+        "_Warning: The following text is especially likely to contain conceptual mistakes._"
+    )
     answer, conversation = get_rationale_explanation(conversation, axiom)
     print(answer)
     print_time()
