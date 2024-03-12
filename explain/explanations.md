@@ -43,7 +43,7 @@ All events are described from the perspective of the RTI. For example, where we 
 
 ---
 
-**The above context, which was provided to an LLM, was written by a human. However, most of the remaining text in this document is machine-generated. Human-generated text or commentary that does not come from an LLM will be presented in _italics_. Be warned that some of the content produced by the LLM, _especially_ the content labeled as "high-level justification," may contain conceptual mistakes that in a human would indicate a lack of deep understanding.**
+**The above context, which was provided to an LLM, was written by a human. However, most of the remaining text in this document is machine-generated. Human-generated text or commentary that does not come from an LLM will be presented in _italics_. Be warned that some of the content produced by the LLM, especially the content labeled as "high-level justification," may contain conceptual mistakes that in a human would indicate a lack of deep understanding.**
 
 ## Formula 1
 
