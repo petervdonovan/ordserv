@@ -423,30 +423,15 @@ impl AccumulatingTracesState {
           guard.done = true;
         }
         break;
-      } else if true {
+      } else {
         guard.pair_iterator =
           BigSmallIterator::new(OgRank(guard.pair_iterator.max_ogrank_strict().0));
         guard.initial_cumsum_in_current_pass = guard.strans_out.cumsum();
         continue;
-      } else {
-        info!("Marking test {} as fully explored.", id);
-        guard.done = true;
-        (before, after) = (OgRank(1), OgRank(0)); // Placeholder. This should only happen once because the test is now marked as done.
-                                                  // (before, after) = guard
-                                                  //   .strans_hook
-                                                  //   .random_unobserved_ordering(RANDOM_ORDERING_GEOMETRIC_R, filter);
-        break;
       }
     }
     assert!(before > after);
     ConstraintList::singleton(after, before, self.kcs.metadata(id).hic.len() as u32)
-    // let mut befores_and_afters = [(OgRank(0), OgRank(0)); DELAY_VECTOR_CHUNK_SIZE];
-    // for ptr in befores_and_afters.iter_mut() {
-    //   *ptr = guard
-    //     .strans_hook
-    //     .random_unobserved_ordering(RANDOM_ORDERING_GEOMETRIC_R, filter);
-    // }
-    // ConstraintList::new_from_block(&befores_and_afters, self.kcs.metadata(id).hic.len() as u32)
   }
   async fn get_run(
     &self,

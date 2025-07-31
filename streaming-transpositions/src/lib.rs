@@ -179,6 +179,7 @@ impl StreamingTranspositions {
             all_ancestors: Some(Box::new(start)),
         }
     }
+    /// Update ancestors and start a fresh delta for future data
     pub fn update_ancestors(&mut self) {
         if self.all_ancestors.is_none() {
             self.all_ancestors = Some(Box::new(self.empty()));
